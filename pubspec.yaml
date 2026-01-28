@@ -1,0 +1,31 @@
+name: rfeed_flutter
+description: RFeed Automação - Flutter
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  dio: ^5.7.0
+  intl: ^0.19.0
+  uuid: ^4.4.0
+  shared_preferences: ^2.2.3
+
+  network_info_plus: ^6.0.1
+  permission_handler: ^11.3.1
+  app_settings: ^5.1.1
+  fl_chart: ^0.66.0
+
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo_rfeed.png
+    - assets/images/bg_boi_tech.png

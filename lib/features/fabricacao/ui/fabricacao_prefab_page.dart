@@ -1,0 +1,205 @@
+import "package:flutter/material.dart";
+
+import "../../../repo/user_repo.dart";
+import "../../../repo/dieta_repo.dart";
+import "../../../repo/session_repo.dart";
+import "../../../repo/config_repo.dart";
+
+import "../data/fabricacao_repo.dart";
+import "fabricacao_weigh_page.dart";
+import "../services/fabricacao_create_service.dart";
+
+class FabricacaoPreFabPage extends StatefulWidget {
+  const FabricacaoPreFabPage({super.key, required this.repo});
+  final FabricacaoRepo repo;
+
+  @override
+  State<FabricacaoPreFabPage> createState() => _FabricacaoPreFabPageState();
+}
+
+class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
+  final _dietaRepo = DietaRepo();
+  final _userRepo = UserRepo();
+  final _sess = SessionRepo();
+  final _cfg = ConfigRepo();
+
+  bool _loading = false;
+
+  List<Map<String, Object?>> _dietas = [];
+  List<Map<String, Object?>> _users = [];
+
+  String? _dietaId;
+  String? _operadorId;
+
+  final _tratoCtrl = TextEditingController();
+  final _kgCtrl = TextEditingController(text: "0");
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCombos();
+  }
+
+  Future<void> _loadCombos() async {
+    setState(() => _loading = true);
+    try {
+      // se você quiser filtrar dieta por fazenda selecionada:
+      final idFazendaSel = await _cfg.getIdFazendaSelecionada();
+      final dietas = await _dietaRepo.listAll(idFazenda: idFazendaSel);
+
+      final users = await _userRepo.listAll();
+
+      setState(() {
+        _dietas = dietas;
+        _users = users;
+
+        if (_dietas.isNotEmpty) _dietaId = (_dietas.first["ID"] ?? "").toString();
+        if (_users.isNotEmpty) _operadorId = (_users.first["ID"] ?? "").toString();
+      });
+    } finally {
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tratoCtrl.dispose();
+    _kgCtrl.dispose();
+    super.dispose();
+  }
+
+  void _msg(String m) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+  }
+
+  Future<void> _onFabricar() async {
+    if ((_dietaId ?? "").isEmpty) return _msg("Selecione a dieta.");
+    if ((_operadorId ?? "").isEmpty) return _msg("Selecione o operador.");
+
+    final trato = int.tryParse(_tratoCtrl.text.trim());
+    if (trato == null || trato <= 0) return _msg("Informe o trato.");
+
+    final kg = double.tryParse(_kgCtrl.text.trim().replaceAll(",", "."));
+    if (kg == null || kg <= 0) return _msg("Informe o previsto em KG.");
+
+    // ✅ 1) Se existe fabricação em aberto (FINALIZADA=0), pergunta
+    final aberto = await widget.repo.getFabricacaoEmAberto();
+    if (aberto != null) {
+      final ok = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text("Fabricação em aberto"),
+          content: const Text("Existe uma fabricação em aberto. Deseja continuar de onde parou?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Não")),
+            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Sim")),
+          ],
+        ),
+      );
+
+      if (ok == true) {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+        );
+      }
+      return;
+    }
+
+    // ✅ 2) Se não tem em aberto, cria e popula tabelas e vai pra tela fabricar
+    setState(() => _loading = true);
+    try {
+      final idUsuarioLogado = await _sess.getUserId();
+      if (idUsuarioLogado == null || idUsuarioLogado.isEmpty) {
+        throw Exception("Sessão vazia. Faça login novamente.");
+      }
+
+      final idFazenda = await _cfg.getIdFazendaSelecionada();
+      if (idFazenda == null || idFazenda.isEmpty) {
+        throw Exception("Nenhuma fazenda selecionada na CONFIG.");
+      }
+
+      final service = FabricacaoCreateService();
+      await service.criarFabricacao(
+        idDieta: _dietaId!,
+        idOperador: _operadorId!,
+        idUsuarioLogado: idUsuarioLogado,
+        idFazenda: idFazenda,
+        trato: trato,
+        totalKg: kg,
+      );
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+      );
+    } catch (e) {
+      _msg("Erro ao criar fabricação: $e");
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Nova Fabricação")),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: _dietaId,
+                    items: _dietas
+                        .map((d) => DropdownMenuItem(
+                              value: (d["ID"] ?? "").toString(),
+                              child: Text((d["NOME"] ?? "").toString()),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setState(() => _dietaId = v),
+                    decoration: const InputDecoration(labelText: "Dieta"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _tratoCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "Trato"),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _kgCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "Quantidade total (KG)"),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _operadorId,
+                    items: _users
+                        .map((u) => DropdownMenuItem(
+                              value: (u["ID"] ?? "").toString(),
+                              child: Text((u["NOME"] ?? "").toString()),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setState(() => _operadorId = v),
+                    decoration: const InputDecoration(labelText: "Operador"),
+                  ),
+                  const Spacer(),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _onFabricar,
+                      child: const Text("Fabricar"),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
