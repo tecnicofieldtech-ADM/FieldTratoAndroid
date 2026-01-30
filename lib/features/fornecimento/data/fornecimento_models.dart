@@ -1,188 +1,199 @@
-// lib/features/fornecimento/domain/fornecimento_models.dart
+// lib/features/fornecimento/data/fornecimento_models.dart
 
-enum ModeloBalanca { topcon, dinamica, alfa }
-
+/// Representa o previsto de fornecimento por curral
 class CurralPrev {
-  CurralPrev({
-    required this.idBaia,
-    required this.nomeLocal,
-    required this.linha,
-    required this.previstoKg,
-    required this.realizadoKg,
-    required this.trato,
-    required this.data,
-    required this.idFornecimento,
-    this.rfid,
-    required this.idLote,
-    this.idRacao,
-  });
-
+  // IDs / identificação
   final String idBaia;
+  final String nomeBaia;
+
+  // dados de localização
   final String nomeLocal;
-  final String linha;
-  final double previstoKg;
-  final double realizadoKg;
-  final int trato;
-  final String data; // yyyy-mm-dd
-  final String idFornecimento;
-  final String? rfid;
-  final String idLote;
-  final String? idRacao;
-
-  double get faltaKg => (previstoKg - realizadoKg);
-  bool get concluido => realizadoKg >= (previstoKg - 0.001);
-}
-
-class CurralSnapshot {
-  CurralSnapshot({
-    required this.idFornecimento,
-    required this.idCurral,
-    required this.nome,
-    required this.linha,
-    required this.idLote,
-    required this.rfid,
-    required this.previstoKg,
-    required this.realizadoKg,
-    this.idRacao,
-  });
-
-  final String idFornecimento;
-  final String idCurral;
-  final String nome;
-  final String linha;
-  final String idLote;
+  final int linha;
   final String rfid;
+
+  // ração / valores
+  final String racaoNome;
   final double previstoKg;
   final double realizadoKg;
-  final String? idRacao;
-}
 
-class FornecimentoAbertoMini {
-  FornecimentoAbertoMini({
-    required this.idCadastro,
-    required this.pesoInicio,
-    required this.horaInicio,
-    required this.previsto,
-    required this.idUsuario,
-    required this.idFabricacao,
-  });
-
-  final String idCadastro;
-  final double pesoInicio;
-  final String horaInicio;
-  final double previsto;
-  final String idUsuario;
-  final String idFabricacao;
-}
-
-class FornecimentoRow {
-  FornecimentoRow({
-    required this.id,
-    required this.idFornecimento,
-    required this.idFabricacao,
-    required this.idBaia,
-    required this.data,
-    required this.horaInicio,
-    this.horaFim,
-    required this.pesoInicio,
-    required this.pesoFim,
-    required this.previsto,
-    this.realizado,
-    required this.flagSync,
-    required this.trato,
-    required this.idUsuario,
-    this.idDieta,
-  });
-
-  final String id;
-  final String idFornecimento;
-  final String idFabricacao;
-  final String idBaia;
-  final String data;
-  final String horaInicio;
-  final String? horaFim;
-  final double pesoInicio;
-  final double pesoFim;
-  final double previsto;
-  final double? realizado;
-  final int flagSync;
+  // controle
   final int trato;
-  final String idUsuario;
+  final bool sincronizado;
+
+  // extras (algumas telas/DAO usam)
+  final String? idFornecimento;
+  final String? idLote;
   final String? idDieta;
+  final String? dataIso;
+  final String? idRacao;
 
-  factory FornecimentoRow.fromMap(Map<String, Object?> m) => FornecimentoRow(
-        id: (m["ID"] ?? "").toString(),
-        idFornecimento: (m["ID_FORNECIMENTO"] ?? "").toString(),
-        idFabricacao: (m["ID_FABRICACAO"] ?? "").toString(),
-        idBaia: (m["ID_BAIA"] ?? "").toString(),
-        data: (m["DATA"] ?? "").toString(),
-        horaInicio: (m["HORA_INICIO"] ?? "").toString(),
-        horaFim: (m["HORA_FIM"] as String?),
-        pesoInicio: (m["PESO_INICIO"] as num?)?.toDouble() ?? 0,
-        pesoFim: (m["PESO_FIM"] as num?)?.toDouble() ?? 0,
-        previsto: (m["PREVISTO"] as num?)?.toDouble() ?? 0,
-        realizado: (m["REALIZADO"] as num?)?.toDouble(),
-        flagSync: (m["FLAG_SYNC"] as num?)?.toInt() ?? 0,
-        trato: (m["TRATO"] as num?)?.toInt() ?? 1,
-        idUsuario: (m["ID_USUARIO"] ?? "").toString(),
-        idDieta: (m["ID_DIETA"] as String?),
-      );
+  CurralPrev({
+    // ✅ NOVOS (opcionais para não quebrar DAO antigo)
+    String? idBaia,
+    String? nomeBaia,
+    String? nomeLocal,
+    int? linha,
+    String? rfid,
+    String? racaoNome,
+    double? previstoKg,
+    double? realizadoKg,
+    int? trato,
+    bool? sincronizado,
 
-  Map<String, Object?> toMap() => {
-        "ID": id,
-        "ID_FORNECIMENTO": idFornecimento,
-        "ID_FABRICACAO": idFabricacao,
-        "ID_BAIA": idBaia,
-        "DATA": data,
-        "HORA_INICIO": horaInicio,
-        "HORA_FIM": horaFim,
-        "PESO_INICIO": pesoInicio,
-        "PESO_FIM": pesoFim,
-        "PREVISTO": previsto,
-        "REALIZADO": realizado,
-        "FLAG_SYNC": flagSync,
-        "TRATO": trato,
-        "ID_USUARIO": idUsuario,
-        "ID_DIETA": idDieta,
-      };
+    // ✅ extras (opcionais)
+    this.idFornecimento,
+    this.idLote,
+    this.idDieta,
+    this.dataIso,
+    this.idRacao,
+
+    // ✅ NOMES ANTIGOS que seu DAO está usando
+    String? idCurral,
+    String? nome,
+    int? linhaOld,
+    String? racao,
+    double? previsto,
+    double? realizado,
+    String? data,
+    String? local,
+    int? sync,
+  })  : idBaia = (idBaia ?? idCurral ?? '').toString(),
+        nomeBaia = (nomeBaia ?? nome ?? '').toString(),
+        nomeLocal = (nomeLocal ?? local ?? '').toString(),
+        linha = (linha ?? linhaOld ?? 0),
+        rfid = (rfid ?? '').toString(),
+        racaoNome = (racaoNome ?? racao ?? '').toString(),
+        previstoKg = (previstoKg ?? previsto ?? 0).toDouble(),
+        realizadoKg = (realizadoKg ?? realizado ?? 0).toDouble(),
+        trato = (trato ?? 0),
+        sincronizado = (sincronizado ?? ((sync ?? 0) == 1));
+
+  /// ✅ para atualizar valores em memória sem mexer em `final`
+  CurralPrev copyWith({
+    String? idBaia,
+    String? nomeBaia,
+    String? nomeLocal,
+    int? linha,
+    String? rfid,
+    String? racaoNome,
+    double? previstoKg,
+    double? realizadoKg,
+    int? trato,
+    bool? sincronizado,
+    String? idFornecimento,
+    String? idLote,
+    String? idDieta,
+    String? dataIso,
+    String? idRacao,
+  }) {
+    return CurralPrev(
+      idBaia: idBaia ?? this.idBaia,
+      nomeBaia: nomeBaia ?? this.nomeBaia,
+      nomeLocal: nomeLocal ?? this.nomeLocal,
+      linha: linha ?? this.linha,
+      rfid: rfid ?? this.rfid,
+      racaoNome: racaoNome ?? this.racaoNome,
+      previstoKg: previstoKg ?? this.previstoKg,
+      realizadoKg: realizadoKg ?? this.realizadoKg,
+      trato: trato ?? this.trato,
+      sincronizado: sincronizado ?? this.sincronizado,
+      idFornecimento: idFornecimento ?? this.idFornecimento,
+      idLote: idLote ?? this.idLote,
+      idDieta: idDieta ?? this.idDieta,
+      dataIso: dataIso ?? this.dataIso,
+      idRacao: idRacao ?? this.idRacao,
+    );
+  }
+
+  // getters usados no card
+  double get faltaKg {
+    final f = previstoKg - realizadoKg;
+    return f > 0 ? f : 0;
+  }
+
+  bool get concluido => faltaKg <= 0;
+
+  bool get pendente => previstoKg > 0 && realizadoKg <= 0;
+
+  bool get irregular =>
+      realizadoKg > 0 && previstoKg > 0 && realizadoKg != previstoKg;
+
+  // ✅ aliases p/ compatibilidade com código antigo
+  String get idCurral => idBaia;
+  String get nome => nomeBaia;
+  String get racao => racaoNome;
+
+  factory CurralPrev.fromMap(Map<String, dynamic> map) {
+    double toD(Object? v) {
+      if (v == null) return 0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+    }
+
+    int toI(Object? v) {
+      if (v == null) return 0;
+      if (v is int) return v;
+      return int.tryParse(v.toString()) ?? 0;
+    }
+
+    String toS(Object? v) => (v ?? "").toString();
+
+    return CurralPrev(
+      idBaia: toS(map['idBaia'] ?? map['idCurral'] ?? map['id_baia']),
+      nomeBaia: toS(map['nomeBaia'] ?? map['nome'] ?? map['baia']),
+      nomeLocal: toS(map['nomeLocal'] ?? map['local'] ?? map['nome_local']),
+      linha: toI(map['linha'] ?? map['linhaOld'] ?? map['linha_local']),
+      rfid: toS(map['rfid'] ?? map['tag'] ?? map['epc']),
+      racaoNome: toS(map['racaoNome'] ?? map['racao'] ?? map['nomeRacao']),
+      previstoKg: toD(map['previstoKg'] ?? map['previsto'] ?? map['previsto_kg']),
+      realizadoKg: toD(map['realizadoKg'] ?? map['realizado'] ?? map['realizado_kg']),
+      trato: toI(map['trato'] ?? map['orderTrato'] ?? map['ordem_trato']),
+      sincronizado: toI(map['sync'] ?? map['sincronizado'] ?? map['flagSync']) == 1,
+      idFornecimento: (map['idFornecimento'] ?? map['id_fornecimento'])?.toString(),
+      idLote: (map['idLote'] ?? map['id_lote'])?.toString(),
+      idDieta: (map['idDieta'] ?? map['id_dieta'])?.toString(),
+      dataIso: (map['dataIso'] ?? map['data'] ?? map['data_iso'])?.toString(),
+      idRacao: (map['idRacao'] ?? map['id_racao'])?.toString(),
+    );
+  }
 }
 
-class BaiaRow {
-  BaiaRow({
-    required this.id,
-    required this.nomeLocal,
-    this.linha,
-    this.orderTrato,
-    this.rfid,
-    this.idLote,
-    this.idFazenda,
-  });
-
+/// Header simples do fornecimento (compatível com DAO antigo)
+class FornecimentoHeader {
   final String id;
-  final String nomeLocal;
-  final String? linha;
-  final int? orderTrato;
-  final String? rfid;
-  final String? idLote;
-  final String? idFazenda;
+  final DateTime data;
+  final int trato;
+  final bool sincronizado;
 
-  factory BaiaRow.fromMap(Map<String, Object?> m) => BaiaRow(
-        id: (m["ID"] ?? "").toString(),
-        nomeLocal: (m["NOME_LOCAL"] ?? "").toString(),
-        linha: (m["LINHA"] as String?),
-        orderTrato: (m["ORDER_TRATO"] as num?)?.toInt(),
-        rfid: (m["RFID"] as String?),
-        idLote: (m["ID_LOTE"] as String?),
-        idFazenda: (m["ID_FAZENDA"] as String?),
-      );
+  // extras comuns
+  final String? dataIso;
 
-  Map<String, Object?> toMap() => {
-        "ID": id,
-        "NOME_LOCAL": nomeLocal,
-        "LINHA": linha,
-        "ORDER_TRATO": orderTrato,
-        "RFID": rfid,
-        "ID_LOTE": idLote,
-        "ID_FAZENDA": idFazenda,
-      };
+  FornecimentoHeader({
+    String? id,
+    DateTime? data,
+    int? trato,
+    bool? sincronizado,
+    this.dataIso,
+
+    // ✅ nomes antigos que podem aparecer
+    String? idCadastro,
+    String? dataStr,
+    int? sync,
+  })  : id = (id ?? idCadastro ?? '').toString(),
+        data = data ??
+            (DateTime.tryParse((dataIso ?? dataStr ?? '').toString()) ??
+                DateTime.now()),
+        trato = (trato ?? 0),
+        sincronizado = (sincronizado ?? ((sync ?? 0) == 1));
+
+  factory FornecimentoHeader.fromMap(Map<String, dynamic> map) {
+    final raw = (map['data'] ?? map['dataIso'] ?? map['data_iso'] ?? map['dataStr'] ?? '').toString();
+    return FornecimentoHeader(
+      id: (map['id'] ?? map['idCadastro'] ?? '').toString(),
+      data: raw.isEmpty ? DateTime.now() : DateTime.parse(raw),
+      trato: (map['trato'] ?? 0) as int,
+      sincronizado: (map['sync'] ?? map['sincronizado'] ?? 0) == 1,
+      dataIso: (map['dataIso'] ?? map['data_iso'])?.toString(),
+    );
+  }
 }

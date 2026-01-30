@@ -1,4 +1,5 @@
-import "package:sqflite/sqflite.dart";
+import "package:sqflite/sqflite.dart"; // Database / DatabaseExecutor / Transaction
+
 import "../data/fornecimento_sync_dao.dart";
 import "fornecimento_api.dart";
 
@@ -8,12 +9,13 @@ class FornecimentoSyncService {
     required this.api,
   }) : dao = FornecimentoSyncDao(db);
 
-  final Database db;
+  /// ✅ agora é DatabaseExecutor (funciona com Database e Transaction)
+  final DatabaseExecutor db;
+
   final FornecimentoApi api;
   final FornecimentoSyncDao dao;
 
   static String _toDateOnly(dynamic v) {
-    // v pode vir "2025-01-01" ou "2025-01-01T00:00:00Z"
     final s = (v ?? "").toString().trim();
     if (s.isEmpty) return "";
     return s.length >= 10 ? s.substring(0, 10) : s;
@@ -32,6 +34,19 @@ class FornecimentoSyncService {
     return int.tryParse(v.toString()) ?? 0;
   }
 
+  /// ✅ executa em transação quando possível
+  Future<T> _runInTxn<T>(Future<T> Function(DatabaseExecutor exec) fn) async {
+    final exec = db;
+
+    // se veio Database, podemos abrir transaction de verdade
+    if (exec is Database) {
+      return exec.transaction((txn) async => fn(txn));
+    }
+
+    // se já veio Transaction (ou outro executor), executa direto
+    return fn(exec);
+  }
+
   // =========================
   // PREVISAO_TRATO -> PREVISAO
   // =========================
@@ -40,20 +55,24 @@ class FornecimentoSyncService {
     required String dataPrev, // yyyy-mm-dd
     required void Function(String) log,
   }) async {
-    final list = await api.getPrevisaoTrato(idFazenda: idFazenda, dataPrev: dataPrev);
+    final list = await api.getPrevisaoTrato(
+      idFazenda: idFazenda,
+      dataPrev: dataPrev,
+    );
 
-    return db.transaction((txn) async {
-      final tdao = FornecimentoSyncDao(txn);
+    return _runInTxn((exec) async {
+      final tdao = FornecimentoSyncDao(exec);
 
-      await FornecimentoSyncDao.ensureTables(txn);
+      await FornecimentoSyncDao.ensureTables(exec);
       await tdao.clearPrevisao();
 
-      int count = 0;
+      var count = 0;
+
       for (final item in list) {
         if (item is! Map) continue;
 
         final idFornecimento = (item["idFornecimento"] ?? "").toString();
-        final idBaia = (item["id"] ?? "").toString(); // igual seu Delphi
+        final idBaia = (item["id"] ?? "").toString(); // igual Delphi
         final trato = _toInt(item["trato"]);
         final idDieta = (item["idDieta"] ?? "").toString();
         final previsto = _toDouble(item["previsto"]);
@@ -61,7 +80,6 @@ class FornecimentoSyncService {
         final dataIso = _toDateOnly(item["data"]);
 
         if (idFornecimento.isEmpty || idBaia.isEmpty || dataIso.isEmpty) {
-          // ignora registros inválidos
           continue;
         }
 
@@ -92,13 +110,14 @@ class FornecimentoSyncService {
   }) async {
     final list = await api.getDietasDetalhes(idFazenda: idFazenda);
 
-    return db.transaction((txn) async {
-      final tdao = FornecimentoSyncDao(txn);
+    return _runInTxn((exec) async {
+      final tdao = FornecimentoSyncDao(exec);
 
-      await FornecimentoSyncDao.ensureTables(txn);
+      await FornecimentoSyncDao.ensureTables(exec);
       await tdao.clearDietasDetalhes();
 
-      int count = 0;
+      var count = 0;
+
       for (final item in list) {
         if (item is! Map) continue;
 
@@ -112,7 +131,6 @@ class FornecimentoSyncService {
         final mnPerc = _toDouble(item["mnPerc"]);
         final ordem = _toInt(item["ordem"]);
 
-        // prePesagem null/N/S -> 0/1
         final pre = (item["prePesagem"] ?? "").toString().trim().toUpperCase();
         final prePesado = (pre == "S") ? 1 : 0;
 

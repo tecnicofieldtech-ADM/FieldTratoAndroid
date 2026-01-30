@@ -227,8 +227,9 @@ class MirrorClient {
       if (x is List) return "[${x.map(norm).join(",")}]";
       if (x is Map) {
         final keys = x.keys.map((e) => e.toString()).toList()..sort();
-        return "{${keys.map((k) => "${jsonEncode(k)}:${norm((x as Map)[k])}").join(",")}}";
+        return "{${keys.map((k) => "${jsonEncode(k)}:${norm(x[k])}").join(",")}}";
       }
+
       return jsonEncode(x.toString());
     }
 

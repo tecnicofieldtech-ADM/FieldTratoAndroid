@@ -37,6 +37,12 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     return DateTime.now().difference(dt).inSeconds <= 2;
   }
 
+  // ✅ troca withOpacity (deprecated) por withValues(alpha: ...)
+  Color _alpha(Color color, double opacity) {
+    final o = opacity.clamp(0.0, 1.0);
+    return color.withValues(alpha: o);
+  }
+
   String _fmtTime(DateTime? dt) {
     if (dt == null) return "--:--:--";
     final h = dt.hour.toString().padLeft(2, "0");
@@ -48,7 +54,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   Widget _wrapPop(Widget child) {
     return PopScope(
       canPop: true,
-      onPopInvoked: (didPop) async {
+      // ✅ Flutter novo: onPopInvokedWithResult (remove warning deprecated_member_use)
+      onPopInvokedWithResult: (didPop, result) async {
         if (_reconnecting) return;
         await c.shutdown();
       },
@@ -200,11 +207,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         nome: ing.insumoNome,
         previstoKg: ing.previstoKg,
         onConfirm: (realizado) async {
-          if (c.idx >= 0 && c.idx < c.ingredientes.length) {
-            final atual = c.ingredientes[c.idx];
-            c.ingredientes[c.idx] = atual.copyWith(realizadoKg: realizado);
-            c.notifyListeners();
-          }
+          // ✅ não chame notifyListeners() na UI
+          c.setRealizadoLocalByDetId(ing.idDet, realizado);
 
           try {
             await c.confirmarIngredientePrePesado(realizado);
@@ -357,21 +361,15 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         ),
         body: Column(
           children: [
-            // ✅ 1) CARD BALANÇA NO TOPO (compacto)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: _cardBalancaTopCompact(previstoKg: prev, tolPct: tolPct),
             ),
-
-            // ✅ 2) CARD INGREDIENTE + PRÓXIMO
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
               child: _cardIngredienteTop(ing: ing, nextIng: nextIng),
             ),
-
             const SizedBox(height: 10),
-
-            // ✅ 3) DIFERENÇA OCUPA O RESTO DA TELA
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
@@ -386,14 +384,10 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                 ),
               ),
             ),
-
-            // ✅ 4) LISTA NO BOTTOM (ACIMA DO BOTÃO PRÓXIMO)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: _bottomListaBar(),
             ),
-
-            // ✅ 5) BOTÃO PRÓXIMO (FIXO NO BOTTOM)
             _bottomNav(isLast: isLast),
           ],
         ),
@@ -410,7 +404,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     final connecting = c.scaleConnecting;
     final recebendo = _recebendoAgora;
 
-    // status espelho
     final mirrorOn = c.mirrorEnabled;
     final mirrorOk = c.mirrorConnected;
 
@@ -444,7 +437,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
           children: [
-            // ✅ TOPO: peso ao lado do botão reconectar
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -473,10 +465,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                 ),
               ],
             ),
-
             const SizedBox(height: 8),
-
-            // ✅ RODAPÉ: Balança e Espelho lado a lado
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -537,9 +526,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  // =========================
-  // Card Ingrediente (2º card)
-  // =========================
   Widget _cardIngredienteTop({
     required FabIngrediente ing,
     required FabIngrediente? nextIng,
@@ -614,12 +600,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  // =========================
-  // Diferença - ocupa área toda
-  // ✅ Ajuste: status (Faltando/No alvo) alinhado no bottom da linha
-  // ✅ Ajuste: chip do Pulo no topo direito SEM estourar
-  // ✅ Ajuste: cards Prev/Real menor altura (compact)
-  // =========================
   Widget _cardDiferencaPrincipalFill({
     required int prev,
     required int real,
@@ -650,16 +630,15 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.all(12), // ⬅️ menor
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: difColor.withOpacity(0.35)),
-        color: difColor.withOpacity(0.08),
+        border: Border.all(color: _alpha(difColor, 0.35)),
+        color: _alpha(difColor, 0.08),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ✅ TOPO: título + Pulo
           Row(
             children: [
               const Icon(Icons.swap_horiz),
@@ -681,10 +660,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
             ],
           ),
-
           const SizedBox(height: 6),
-
-          // ✅ MIolo ocupa o espaço disponível (sem Spacer -> sem overflow)
           Expanded(
             child: Center(
               child: FittedBox(
@@ -702,10 +678,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
             ),
           ),
-
           const SizedBox(height: 10),
-
-          // ✅ barra
           Stack(
             alignment: Alignment.center,
             children: [
@@ -725,10 +698,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
             ],
           ),
-
           const SizedBox(height: 10),
-
-          // ✅ Prev/Real mais compactos
           Row(
             children: [
               Expanded(child: _midKvCenteredCompact("Previsto", "$prev kg")),
@@ -736,17 +706,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               Expanded(child: _midKvCenteredCompact("Realizado", "$real kg")),
             ],
           ),
-
           const SizedBox(height: 8),
-
-          // ✅ RODAPÉ: status full-width (mais baixo)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 8), // ⬅️ menor
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              color: Colors.white.withOpacity(0.75),
+              color: _alpha(Colors.white, 0.75),
               border: Border.all(color: Colors.grey.shade300),
             ),
             child: Row(
@@ -793,9 +759,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  // =========================
-  // Barra inferior da lista (acima do botão Próximo)
-  // =========================
   Widget _bottomListaBar() {
     final total = c.ingredientes.length;
     final pos = (c.idx + 1).clamp(1, total);
@@ -821,9 +784,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  // =========================
-  // Components
-  // =========================
   Widget _chip({required IconData icon, required String label}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -846,52 +806,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  Widget _midKvCentered(String k, String v) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade300),
-        color: Colors.white.withOpacity(0.7),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Text(
-            k,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.grey.shade700,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            v,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 24,
-              height: 1.0,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ✅ compacto (resolve overflow)
   Widget _midKvCenteredCompact(String k, String v) {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 10), // ⬅️ menor
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.grey.shade300),
-        color: Colors.white.withOpacity(0.7),
+        color: _alpha(Colors.white, 0.70),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -924,9 +845,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  // =========================
-  // Bottom
-  // =========================
   Widget _bottomNav({required bool isLast}) {
     return SafeArea(
       top: false,
@@ -1046,6 +964,11 @@ class _PulseChipState extends State<_PulseChip>
     duration: const Duration(milliseconds: 850),
   )..repeat(reverse: true);
 
+  Color _alpha(Color color, double opacity) {
+    final o = opacity.clamp(0.0, 1.0);
+    return color.withValues(alpha: o);
+  }
+
   @override
   void dispose() {
     _ac.dispose();
@@ -1079,7 +1002,7 @@ class _PulseChipState extends State<_PulseChip>
               borderRadius: BorderRadius.circular(999),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.orange.withOpacity(glow),
+                  color: _alpha(Colors.orange, glow),
                   blurRadius: 18,
                   spreadRadius: 2,
                 ),
@@ -1088,8 +1011,8 @@ class _PulseChipState extends State<_PulseChip>
             child: _chipBase(
               icon: widget.icon,
               label: widget.label,
-              color: Colors.orange.withOpacity(0.15),
-              border: Colors.orange.withOpacity(0.45),
+              color: _alpha(Colors.orange, 0.15),
+              border: _alpha(Colors.orange, 0.45),
               iconColor: Colors.deepOrange,
               textColor: Colors.deepOrange,
             ),

@@ -63,6 +63,28 @@ class FabricacaoController extends ChangeNotifier {
           ? null
           : ingredientes[idx];
 
+  // =========================================================
+  // ✅ API pública para UI (não chamar notifyListeners() na UI)
+  // =========================================================
+
+  /// Atualiza localmente o realizado do ingrediente atual e notifica.
+  /// Usado pela UI (ex.: pré-pesado).
+  void setRealizadoLocalDoIngredienteAtual(int realizadoKg) {
+    if (ingredientes.isEmpty || idx < 0 || idx >= ingredientes.length) return;
+    final atualIng = ingredientes[idx];
+    ingredientes[idx] = atualIng.copyWith(realizadoKg: realizadoKg);
+    notifyListeners();
+  }
+
+  /// Versão mais segura: atualiza pelo idDet (caso idx mude).
+  void setRealizadoLocalByDetId(String idDet, int realizadoKg) {
+    final i = ingredientes.indexWhere((e) => e.idDet == idDet);
+    if (i < 0) return;
+    final atualIng = ingredientes[i];
+    ingredientes[i] = atualIng.copyWith(realizadoKg: realizadoKg);
+    notifyListeners();
+  }
+
   // =========================
   // Balança (status)
   // =========================
@@ -171,8 +193,8 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================
-// ✅ STATE ENXUTO (1 estado “oficial”)
-// =========================
+  // ✅ STATE ENXUTO (1 estado “oficial”)
+  // =========================
   Map<String, dynamic>? _buildMirrorState() {
     final h = header;
     final a = atual;
@@ -192,8 +214,6 @@ class FabricacaoController extends ChangeNotifier {
 
     return {
       "t": "state",
-      // ✅ recomendo trocar para "fabricacao" (novo) e manter compat na Pá
-      // se você quiser manter, pode deixar "fabricacao_resumo"
       "stream": "fabricacao_resumo",
 
       "fabId": h.id,
@@ -201,10 +221,9 @@ class FabricacaoController extends ChangeNotifier {
       "dieta": h.dietaNome,
       "finalizada": h.finalizada,
 
-      // ✅ pulo/contagem para a Pá (sempre manda, mesmo zerado)
       "auto": {
         "enabled": autoOn ? 1 : 0,
-        "countdown": autoOn ? _autoCountdown : 0, // segundos
+        "countdown": autoOn ? _autoCountdown : 0,
         "fromPos": idx + 1,
         "toPos": (idx < ingredientes.length - 1) ? (idx + 2) : (idx + 1),
         "ts": DateTime.now().toIso8601String(),
@@ -339,20 +358,19 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   void _cancelAutoPulo() {
-  final had = _autoTimer != null;
+    final had = _autoTimer != null;
 
-  _autoTimer?.cancel();
-  _autoTimer = null;
-  _autoCountdown = 0;
+    _autoTimer?.cancel();
+    _autoTimer = null;
+    _autoCountdown = 0;
 
-  if (had) {
-    _sendMirrorEvent("auto_pulo_cancel", {
-      "ts": DateTime.now().toIso8601String(),
-    });
-    _sendMirrorState(force: true); // ✅ limpa overlay na Pá
+    if (had) {
+      _sendMirrorEvent("auto_pulo_cancel", {
+        "ts": DateTime.now().toIso8601String(),
+      });
+      _sendMirrorState(force: true);
+    }
   }
-}
-
 
   // =========================================================
   // BALANÇA
@@ -722,11 +740,9 @@ class FabricacaoController extends ChangeNotifier {
 
     final s = secs <= 0 ? 1 : secs;
 
-    // ✅ inicia contagem
     _autoCountdown = s;
     notifyListeners();
 
-    // ✅ 1) Evento: Pá abre overlay/animação na hora
     _sendMirrorEvent("auto_pulo", {
       "seconds": s,
       "fromPos": idx + 1,
@@ -738,7 +754,6 @@ class FabricacaoController extends ChangeNotifier {
       "ts": DateTime.now().toIso8601String(),
     });
 
-    // ✅ 2) State forçado: Pá já mostra countdown = s imediatamente
     _sendMirrorState(force: true);
 
     _autoTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -747,7 +762,6 @@ class FabricacaoController extends ChangeNotifier {
 
       notifyListeners();
 
-      // ✅ 3) State forçado: atualiza o número na Pá (1,2,3…)
       _sendMirrorState(force: true);
 
       if (_autoCountdown <= 0) {
@@ -755,19 +769,17 @@ class FabricacaoController extends ChangeNotifier {
         t.cancel();
         _autoTimer = null;
 
-        // ✅ 4) Evento opcional: “acabou” (pra Pá fazer um flash / trocar texto)
         _sendMirrorEvent("auto_pulo_end", {
           "fromPos": idx + 1,
           "toPos": (idx < ingredientes.length - 1) ? (idx + 2) : (idx + 1),
           "ts": DateTime.now().toIso8601String(),
         });
 
-        // ✅ 5) State final: limpa overlay antes do next (zera auto)
         _sendMirrorState(force: true);
 
         () async {
           try {
-            await next(); // seu next() já deve mandar _sendMirrorState(force:true)
+            await next();
           } catch (_) {}
         }();
       }
@@ -849,7 +861,6 @@ class FabricacaoController extends ChangeNotifier {
 
     notifyListeners();
 
-    // ✅ evento finalizada + state
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
 
@@ -863,7 +874,7 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================================================
-  // Finalização completa (mantive igual + evento)
+  // Finalização completa
   // =========================================================
   Future<void> finalizarFabricacao() async {
     final h = header;
@@ -967,7 +978,7 @@ class FabricacaoController extends ChangeNotifier {
     final pesoFabricado = totalReal;
     final pesoCarregado = (tipoTrabalho == 0) ? totalReal : 0.0;
 
-    final idDieta = (h.idDieta ?? "").toString();
+    final idDieta = (h.idDieta).toString();
     final uid = _genIdUnico();
 
     try {
@@ -981,7 +992,6 @@ class FabricacaoController extends ChangeNotifier {
       );
     } catch (_) {}
 
-    // ✅ evento finalizada + state
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
   }
@@ -997,7 +1007,7 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================================================
-  // BOOT helper (opcional)
+  // BOOT helper
   // =========================================================
   Future<bool> bootTruckSide() async {
     final ok = await resumeOpenIfAny();

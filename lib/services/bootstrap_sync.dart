@@ -228,12 +228,7 @@ class BootstrapSync {
     return inserted;
   }
 
-  static String _dateOnly(dynamic v) {
-    final s = (v ?? "").toString().trim();
-    if (s.isEmpty) return "";
-    return s.length >= 10 ? s.substring(0, 10) : s; // YYYY-MM-DD
-  }
-
+  
   static num _toNum(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v;

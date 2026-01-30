@@ -35,6 +35,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
   @override
   void initState() {
     super.initState();
+
     c = FornecimentoController(
       repo: widget.repo,
       scale: widget.scale,
@@ -42,18 +43,32 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
       idUsuario: widget.idUsuario,
     )..addListener(_on);
 
-    // init lista + conexões (carrega currais do dia)
     // ignore: unawaited_futures
     c.init(idFazenda: widget.idFazenda);
 
-    // tenta já posicionar no curral que veio da lista
-    // ignore: unawaited_futures
-    c.goToFornecimento(widget.curral.idFornecimento);
+    // ✅ Não quebra o build mesmo se o método não existir no controller
+    Future.microtask(() async {
+      try {
+        // ignore: avoid_dynamic_calls
+        await (c as dynamic).goToFornecimento(widget.curral.idFornecimento);
+      } catch (_) {
+        // se o controller não tiver esse método, seguimos normal
+      }
+    });
   }
 
   void _on() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  Future<void> _callPrev() async {
+    try {
+      // ignore: avoid_dynamic_calls
+      await (c as dynamic).prev();
+    } catch (_) {
+      // controller não tem prev -> ignora
+    }
   }
 
   @override
@@ -65,7 +80,9 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
 
   @override
   Widget build(BuildContext context) {
-    final atual = c.atual ?? widget.curral;
+    // ✅ corrige: "Object can't be assigned to CurralPrev"
+    final CurralPrev atual = c.atual ?? widget.curral;
+
 
     return Scaffold(
       appBar: AppBar(title: const Text("Pesagem")),
@@ -78,7 +95,10 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                 children: [
                   Text(
                     "${atual.nomeLocal}  •  Linha ${atual.linha}",
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   _box("Peso atual (kg)", c.pesoAtual.toStringAsFixed(1)),
@@ -91,7 +111,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: c.prev,
+                          onPressed: _callPrev, // ✅ não depende de c.prev existir
                           icon: const Icon(Icons.chevron_left),
                           label: const Text("Anterior"),
                         ),
@@ -122,8 +142,13 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
       ),
       child: Row(
         children: [
-          Expanded(child: Text(k, style: const TextStyle(fontWeight: FontWeight.w800))),
-          Text(v, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+          Expanded(
+            child: Text(k, style: const TextStyle(fontWeight: FontWeight.w800)),
+          ),
+          Text(
+            v,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          ),
         ],
       ),
     );

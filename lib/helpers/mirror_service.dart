@@ -1,4 +1,3 @@
-// lib/helpers/mirror_service.dart
 import "dart:async";
 
 import "mirror_client.dart";
@@ -25,9 +24,11 @@ class MirrorService {
   MirrorOnMessage? _externalOnMessage;
 
   Map<String, dynamic>? _lastState;
-  String? _lastStateStream; // opcional, só pra debugar/filtrar
 
-  // evita "storm" de recreate quando configure é chamado várias vezes
+  /// usado para filtrar/deduplicar resposta de `req_state`
+  String? _lastStateStream;
+
+  /// evita "storm" de recreate quando configure é chamado várias vezes
   Timer? _debounceStart;
 
   /// Configure e liga (se host/port válidos).
@@ -43,7 +44,7 @@ class MirrorService {
     final h = host.trim();
     final p = port;
 
-    // se config inválida => desliga
+    // config inválida => desliga
     if (h.isEmpty || p <= 0) {
       await stop();
       _enabled = false;
@@ -59,7 +60,6 @@ class MirrorService {
     _port = p;
 
     if (same) {
-      // já está configurado; só garante start
       _ensureStartedSoon();
       return;
     }
@@ -71,17 +71,28 @@ class MirrorService {
       host: _host,
       port: _port,
       onMessage: (msg) {
-        // ✅ auto-resposta pro "req_state"
         final t = (msg["t"] ?? msg["cmd"] ?? "").toString();
+
+        // 🔁 auto-resposta ao pedido de estado
         if (t == "req_state") {
           final st = _lastState;
           if (st != null) {
-            // devolve o último state sem dedup (forçado)
-            _client?.sendLine(st);
+            final reqStream =
+                (msg["stream"] ?? "").toString().trim();
+            final lastStream =
+                (_lastStateStream ?? "").trim();
+
+            // responde se:
+            // - não pediu stream específico
+            // - ou stream bate com o último enviado
+            if (reqStream.isEmpty || reqStream == lastStream) {
+              _client?.sendLine(st); // resposta forçada
+            }
           }
+          return; // não repassa para controller
         }
 
-        // repassa pro controller (comandos next/prev etc)
+        // demais mensagens seguem fluxo normal
         _externalOnMessage?.call(msg);
       },
     );
@@ -99,9 +110,9 @@ class MirrorService {
     });
   }
 
-  /// Envia state.
-  /// - `force=true`: manda sempre
-  /// - `force=false`: dedup (manda só se mudou)
+  /// Envia um state para o espelho.
+  /// - force=true  → envia sempre
+  /// - force=false → envia só se mudou (dedup)
   void sendState(Map<String, dynamic> state, {bool force = false}) {
     if (!_enabled) return;
 

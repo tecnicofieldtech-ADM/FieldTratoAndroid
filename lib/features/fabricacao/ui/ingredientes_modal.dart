@@ -70,7 +70,6 @@ class _IngredientesModalState extends State<IngredientesModal> {
               ],
             ),
             const SizedBox(height: 8),
-
             if (_loading)
               const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (_itens.isEmpty)
@@ -97,11 +96,20 @@ class _IngredientesModalState extends State<IngredientesModal> {
                         ),
                         child: ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: Colors.blueGrey.withOpacity(0.12),
-                            child: Text("${i + 1}", style: const TextStyle(fontWeight: FontWeight.w900)),
+                            // withOpacity deprecated -> withValues
+                            backgroundColor:
+                                Colors.blueGrey.withValues(alpha: 0.12),
+                            child: Text(
+                              "${i + 1}",
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900),
+                            ),
                           ),
                           title: Text(
-                            (it.insumoNome ?? "").trim().isEmpty ? "Ingrediente ${i + 1}" : (it.insumoNome ?? "").trim(),
+                            // remove ?? "" se insumoNome não for nullable
+                            it.insumoNome.trim().isEmpty
+                                ? "Ingrediente ${i + 1}"
+                                : it.insumoNome.trim(),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w900),
@@ -143,7 +151,8 @@ class _IngredientesModalState extends State<IngredientesModal> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Previsto x Realizado (por ingrediente)", style: TextStyle(fontWeight: FontWeight.w900)),
+            const Text("Previsto x Realizado (por ingrediente)",
+                style: TextStyle(fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
 
             // resumo totals
@@ -180,13 +189,18 @@ class _IngredientesModalState extends State<IngredientesModal> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withOpacity(0.30)),
+        border: Border.all(
+          color: color.withValues(alpha: 0.30),
+        ),
       ),
       child: Text(
         "$label $value",
-        style: TextStyle(fontWeight: FontWeight.w900, color: color),
+        style: TextStyle(
+          fontWeight: FontWeight.w900,
+          color: color,
+        ),
       ),
     );
   }
@@ -208,13 +222,16 @@ class _IngredientesModalState extends State<IngredientesModal> {
         gridData: FlGridData(show: true),
         borderData: FlBorderData(show: true),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
               reservedSize: 40,
-              getTitlesWidget: (v, meta) => Text(v.toStringAsFixed(0), style: const TextStyle(fontSize: 10)),
+              getTitlesWidget: (v, meta) => Text(v.toStringAsFixed(0),
+                  style: const TextStyle(fontSize: 10)),
             ),
           ),
           bottomTitles: AxisTitles(
@@ -237,8 +254,10 @@ class _IngredientesModalState extends State<IngredientesModal> {
             x: i,
             barsSpace: 6,
             barRods: [
-              BarChartRodData(toY: previstos[i], width: 10, color: Colors.blueGrey),
-              BarChartRodData(toY: realizados[i], width: 10, color: Colors.green),
+              BarChartRodData(
+                  toY: previstos[i], width: 10, color: Colors.blueGrey),
+              BarChartRodData(
+                  toY: realizados[i], width: 10, color: Colors.green),
             ],
           );
         }),
@@ -257,9 +276,13 @@ class _LegendDot extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 6),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+        Text(label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
       ],
     );
   }

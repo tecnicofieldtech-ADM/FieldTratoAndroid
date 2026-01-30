@@ -1,11 +1,12 @@
-// lib/features/fornecimento/ui/fornecimento_list_page.dart
 import "package:flutter/material.dart";
 
 import "../data/fornecimento_repo.dart";
-import "../domain/fornecimento_models.dart";
 import "../services/scale_tcp_service.dart";
 import "../services/rfid_tcp_service.dart";
+import "../domain/fornecimento_models.dart";
 import "fornecimento_pre_page.dart";
+
+enum _StatusFiltro { todos, realizados, pendentes }
 
 class FornecimentoListPage extends StatefulWidget {
   const FornecimentoListPage({
@@ -29,20 +30,48 @@ class FornecimentoListPage extends StatefulWidget {
 
 class _FornecimentoListPageState extends State<FornecimentoListPage> {
   bool _loading = true;
+
+  DateTime _date = DateTime.now();
+  _StatusFiltro _status = _StatusFiltro.todos;
+
+  int? _trato; // null = todos
+  String? _racao; // filtro texto (nome da ração)
+  final TextEditingController _curralCtrl = TextEditingController();
+
+  // ✅ agora é CurralPrev
   List<CurralPrev> _items = const [];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _buscar();
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _curralCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _buscar() async {
     setState(() => _loading = true);
     try {
-      final list = await widget.repo.listCurraisPrevistosHoje(
+      final bool? realizadoMaiorZero = switch (_status) {
+        _StatusFiltro.todos => null,
+        _StatusFiltro.realizados => true,
+        _StatusFiltro.pendentes => false,
+      };
+
+      final list = await widget.repo.listPrevisao(
         idFazenda: widget.idFazenda,
+        data: _date,
+        trato: _trato,
+        racaoNome: (_racao == null || _racao!.trim().isEmpty) ? null : _racao!.trim(),
+        curralNome: _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
+        realizadoMaiorZero: realizadoMaiorZero,
       );
+
+      if (!mounted) return;
       setState(() => _items = list);
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -65,43 +94,408 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
     );
   }
 
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(now.year - 2),
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked != null) {
+      setState(() => _date = picked);
+      await _buscar();
+    }
+  }
+
+  String _fmtDate(DateTime d) {
+    String two(int x) => x.toString().padLeft(2, "0");
+    return "${two(d.day)}/${two(d.month)}/${d.year}";
+  }
+
+  List<int> get _tratoOptions {
+    final set = <int>{};
+    for (final i in _items) {
+      set.add(i.trato);
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  num get _totalPrev => _items.fold<num>(0, (a, b) => a + b.previstoKg);
+  num get _totalReal => _items.fold<num>(0, (a, b) => a + b.realizadoKg);
+  num get _totalDif => _totalPrev - _totalReal;
+
+  String _money(num v) => v.toStringAsFixed(2).replaceAll(".", ",");
+
+  // ✅ AJUSTE: label não quebra mais (Realizado / Previsto)
+  Widget _pill({
+    required String title,
+    required String value,
+    required List<Color> gradient,
+  }) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 16,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: Text(
+                title,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              gradient: LinearGradient(colors: gradient),
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                maxLines: 1,
+                softWrap: false,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterBar() {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide(color: Colors.black.withOpacity(0.10)),
+    );
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.black.withOpacity(0.10)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  flex: 4,
+                  child: InkWell(
+                    onTap: _pickDate,
+                    borderRadius: BorderRadius.circular(10),
+                    child: InputDecorator(
+                      decoration: InputDecoration(
+                        labelText: "Data",
+                        border: border,
+                        enabledBorder: border,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        suffixIcon: const Icon(Icons.arrow_drop_down),
+                      ),
+                      child: Text(_fmtDate(_date)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
+                  child: DropdownButtonFormField<int?>(
+                    value: _trato,
+                    decoration: InputDecoration(
+                      labelText: "Trato",
+                      border: border,
+                      enabledBorder: border,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text("Todos")),
+                      ..._tratoOptions.map((t) => DropdownMenuItem(value: t, child: Text(t.toString()))),
+                    ],
+                    onChanged: (v) => setState(() => _trato = v),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  flex: 4,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      labelText: "Ração (opcional)",
+                      border: border,
+                      enabledBorder: border,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    onChanged: (v) => _racao = v,
+                    onSubmitted: (_) => _buscar(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 4,
+                  child: TextField(
+                    controller: _curralCtrl,
+                    decoration: InputDecoration(
+                      labelText: "Curral",
+                      border: border,
+                      enabledBorder: border,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    ),
+                    onSubmitted: (_) => _buscar(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 46,
+                  width: 46,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: _buscar,
+                    child: const Icon(Icons.search),
+                  ),
+                )
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _radio("Todos", _StatusFiltro.todos),
+                const SizedBox(width: 10),
+                _radio("Realizados", _StatusFiltro.realizados),
+                const SizedBox(width: 10),
+                _radio("Pendentes", _StatusFiltro.pendentes),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _radio(String label, _StatusFiltro v) {
+    return InkWell(
+      onTap: () async {
+        setState(() => _status = v);
+        await _buscar();
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Radio<_StatusFiltro>(
+            value: v,
+            groupValue: _status,
+            onChanged: (x) async {
+              setState(() => _status = x ?? _StatusFiltro.todos);
+              await _buscar();
+            },
+          ),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _itemCard(CurralPrev c) {
+    final racaoTxt = (c.racao ?? c.idRacao ?? "").trim().isEmpty ? "-" : (c.racao ?? c.idRacao)!.trim();
+
+    return InkWell(
+      onTap: () => _open(c),
+      child: Card(
+        elevation: 0,
+        margin: const EdgeInsets.symmetric(horizontal: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: Colors.black.withOpacity(0.08)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                children: [
+                  const Icon(Icons.local_shipping, size: 34, color: Colors.blueGrey),
+                  const SizedBox(height: 6),
+                  Icon(Icons.wifi, size: 18, color: Colors.blue.withOpacity(0.75)),
+                ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Trato : ${c.trato}  Ração : $racaoTxt",
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      "Curral : ${c.nomeLocal}",
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Linha : ${c.linha}",
+                      style: TextStyle(color: Colors.black.withOpacity(0.70)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // ✅ AJUSTE: aumentei um pouco a largura e garanti label sem quebra
+              SizedBox(
+                width: 136,
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        _pill(
+                          title: "Previsto",
+                          value: c.previstoKg.toStringAsFixed(0),
+                          gradient: const [Color(0xFF2F6BFF), Color(0xFF0B45D6)],
+                        ),
+                        const SizedBox(width: 6),
+                        _pill(
+                          title: "Realizado",
+                          value: c.realizadoKg.toStringAsFixed(0),
+                          gradient: const [Color(0xFF19A36B), Color(0xFF0B7D53)],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Icon(
+                        c.concluido ? Icons.check_circle : Icons.arrow_forward_ios,
+                        size: 18,
+                        color: c.concluido ? Colors.green : Colors.black.withOpacity(0.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _totaisBar() {
+    Widget box(String title, String value) {
+      return Expanded(
+        child: Container(
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.black.withOpacity(0.10)),
+            color: Colors.white,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Row(
+        children: [
+          box("Total Previsto", _money(_totalPrev)),
+          const SizedBox(width: 8),
+          box("Total Realizado", _money(_totalReal)),
+          const SizedBox(width: 8),
+          box("Diferença", _money(_totalDif)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Fornecimento"),
         actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: _buscar, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
-              ? const Center(child: Text("Sem previsão para hoje."))
-              : ListView.separated(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (_, i) {
-                    final c = _items[i];
-                    return ListTile(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        side: BorderSide(color: Colors.black.withOpacity(0.06)),
+      body: Column(
+        children: [
+          _filterBar(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _items.isEmpty
+                    ? const Center(child: Text("Sem previsão para os filtros selecionados."))
+                    : ListView.separated(
+                        padding: const EdgeInsets.only(top: 6, bottom: 6),
+                        itemCount: _items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (_, i) => _itemCard(_items[i]),
                       ),
-                      title: Text("${c.nomeLocal}  •  Linha ${c.linha}"),
-                      subtitle: Text(
-                        "Prev: ${c.previstoKg.toStringAsFixed(0)} kg  |  Real: ${c.realizadoKg.toStringAsFixed(0)} kg  |  Falta: ${c.faltaKg.toStringAsFixed(0)} kg",
-                      ),
-                      trailing: Icon(
-                        c.concluido ? Icons.check_circle : Icons.arrow_forward_ios,
-                        size: 18,
-                        color: c.concluido ? Colors.green : null,
-                      ),
-                      onTap: () => _open(c),
-                    );
-                  },
-                ),
+          ),
+          _totaisBar(),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: SizedBox(
+            height: 54,
+            width: double.infinity,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: () {
+                if (_items.isNotEmpty) _open(_items.first);
+              },
+              icon: const Icon(Icons.local_shipping),
+              label: const Text(
+                "Novo Fornecimento",
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

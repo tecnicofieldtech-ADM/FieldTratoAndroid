@@ -1,4 +1,3 @@
-// lib/features/fornecimento/ui/fornecimento_pre_page.dart
 import "package:flutter/material.dart";
 
 import "../data/fornecimento_repo.dart";
@@ -25,8 +24,17 @@ class FornecimentoPrePage extends StatelessWidget {
   final ScaleTcpService scale;
   final RfidTcpService rfid;
 
+  String _s(Object? v, {String dash = "-"}) {
+    if (v == null) return dash;
+    final t = v.toString().trim();
+    return t.isEmpty ? dash : t;
+  }
+
   @override
   Widget build(BuildContext context) {
+    // ✅ curral.racao pode ser String? (ou nem existir em algumas versões)
+    final racaoTxt = _s(curral.racao);
+
     return Scaffold(
       appBar: AppBar(title: const Text("Pré-Fornecimento")),
       body: Padding(
@@ -36,7 +44,8 @@ class FornecimentoPrePage extends StatelessWidget {
           children: [
             _kv("Curral", curral.nomeLocal),
             _kv("Linha", curral.linha),
-            _kv("Trato", curral.trato.toString()),
+            _kv("Trato", curral.trato),
+            _kv("Ração", racaoTxt),
             _kv("Previsto (kg)", curral.previstoKg.toStringAsFixed(0)),
             _kv("Realizado (kg)", curral.realizadoKg.toStringAsFixed(0)),
             _kv("Falta (kg)", curral.faltaKg.toStringAsFixed(0)),
@@ -66,12 +75,17 @@ class FornecimentoPrePage extends StatelessWidget {
     );
   }
 
-  Widget _kv(String k, String v) => Padding(
+  Widget _kv(String k, Object? v) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           children: [
-            Expanded(child: Text(k, style: const TextStyle(fontWeight: FontWeight.w700))),
-            Text(v),
+            Expanded(
+              child: Text(
+                k,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            Text(_s(v)),
           ],
         ),
       );

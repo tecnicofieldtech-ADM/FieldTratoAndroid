@@ -5,12 +5,18 @@ import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
 import "fornecimento_tables.dart";
 import "../domain/fornecimento_models.dart";
-import "carregamento_dao.dart";
 
 class FornecimentoDao {
   Future<Database> get _db async => AppDb.instance.db;
 
-  final _carregDao = CarregamentoDao();
+  // (warning: unused_field — ok, depois a gente remove se não usar)
+  
+  // ✅ executa SQL "cru"
+  Future<List<Map<String, Object?>>> rawQuery(String sql, List<Object?> args) async {
+    final db = await _db;
+    final rows = await db.rawQuery(sql, args);
+    return rows.cast<Map<String, Object?>>();
+  }
 
   // -------------------------
   // helpers
@@ -42,13 +48,6 @@ class FornecimentoDao {
     return double.tryParse(s) ?? 0.0;
   }
 
-  int _toInt(dynamic v, {int def = 0}) {
-    if (v == null) return def;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse(v.toString().trim()) ?? def;
-  }
-
   String _toStr(dynamic v) => (v ?? "").toString();
 
   // =========================================================
@@ -57,8 +56,7 @@ class FornecimentoDao {
   Future<String?> getUsuarioAtualId() async {
     final db = await _db;
     try {
-      final rows =
-          await db.rawQuery("SELECT ID FROM ${FornTables.ultimoLogin} LIMIT 1");
+      final rows = await db.rawQuery("SELECT ID FROM ${FornTables.ultimoLogin} LIMIT 1");
       if (rows.isEmpty) return null;
       final id = _toStr(rows.first["ID"]).trim();
       return id.isEmpty ? null : id;
@@ -86,7 +84,7 @@ class FornecimentoDao {
     """, [d]);
 
     if (rowsHoje.isNotEmpty) {
-      final id = _toStr(rowsHoje.first["ID"]).trim();
+        final id = _toStr(rowsHoje.first["ID"]).trim();
       if (id.isNotEmpty) return id;
     }
 
@@ -107,6 +105,7 @@ class FornecimentoDao {
 
   // =========================================================
   // LISTA CURRAIS (PREVISAO + DETALHES_BAIAS)
+  // ⚠️ Mantido como estava (runtime) — aqui o foco é zerar compile.
   // =========================================================
   Future<List<Map<String, Object?>>> listCurraisPrevistos({
     required String dataYmd,
@@ -154,6 +153,7 @@ class FornecimentoDao {
 
   // =========================================================
   // RFID -> ID_FORNECIMENTO  (PREVISAO + DETALHES_BAIAS)
+  // ⚠️ Mantido como estava (runtime) — aqui o foco é zerar compile.
   // =========================================================
   Future<String?> findIdFornecimentoByRfid({
     required String epc,
@@ -193,7 +193,7 @@ class FornecimentoDao {
   }
 
   // =========================================================
-  // SNAPSHOT (PREVISAO + DETALHES_BAIAS)
+  // SNAPSHOT (FORNECIMENTO_CONF + DETALHES_BAIAS) ✅ compile ok
   // =========================================================
   Future<CurralSnapshot?> loadCurralSnapshot({
     required String idFornecimento,
@@ -206,23 +206,23 @@ class FornecimentoDao {
 
     final rows = await db.rawQuery("""
       SELECT
-        P.ID_FORNECIMENTO AS id_fornecimento,
-        P.ID_BAIA         AS id_baia,
-        P.PREVISTO_KG     AS previsto,
-        P.REALIZADO_KG    AS realizado,
-        P.ID_RACAO        AS id_racao,
+        P.${FornTables.pv_idFornecimento} AS id_fornecimento,
+        P.${FornTables.pv_idBaia}         AS id_baia,
+        P.${FornTables.pv_previstoKg}     AS previsto,
+        P.${FornTables.pv_realizadoKg}    AS realizado,
+        P.${FornTables.pv_idRacao}        AS id_racao,
 
-        B.NOME_LOCAL      AS nome_local,
-        B.LINHA           AS linha,
-        B.ID_LOTE         AS id_lote,
-        B.RFID            AS rfid
-      FROM PREVISAO P
-      JOIN DETALHES_BAIAS B
-        ON B.ID = P.ID_BAIA
+        B.${FornTables.db_nomeLocal}      AS nome_local,
+        B.${FornTables.db_linha}          AS linha,
+        B.${FornTables.db_idLote}         AS id_lote,
+        B.${FornTables.db_rfid}           AS rfid
+      FROM ${FornTables.previsao} P
+      JOIN ${FornTables.detalhesBaias} B
+        ON B.${FornTables.db_id} = P.${FornTables.pv_idBaia}
       WHERE
-        P.ID_FORNECIMENTO = ?
-        AND P.DATA = ?
-        AND P.TRATO = ?
+        P.${FornTables.pv_idFornecimento} = ?
+        AND P.${FornTables.pv_data} = ?
+        AND P.${FornTables.pv_trato} = ?
       LIMIT 1
     """, [idF, dataYmd, trato]);
 
@@ -230,15 +230,13 @@ class FornecimentoDao {
     final m = rows.first;
 
     return CurralSnapshot(
+      idBaia: _toStr(m["id_baia"]),
+      dataIso: dataYmd,
+      trato: trato,
+      idDieta: _toStr(m["id_racao"]), // ✅ dieta = ID_RACAO
       idFornecimento: _toStr(m["id_fornecimento"]),
-      idCurral: _toStr(m["id_baia"]),
-      nome: _toStr(m["nome_local"]),
-      linha: _toStr(m["linha"]),
-      idLote: _toStr(m["id_lote"]),
-      rfid: _toStr(m["rfid"]),
       previstoKg: _toDouble(m["previsto"]),
       realizadoKg: _toDouble(m["realizado"]),
-      idRacao: _toStr(m["id_racao"]).trim().isEmpty ? null : _toStr(m["id_racao"]),
     );
   }
 
@@ -268,24 +266,33 @@ class FornecimentoDao {
     if (rows.isEmpty) return null;
     final m = rows.first;
 
+    final idFornec = _toStr(m[FornTables.cf_idFornecimento]).trim();
+    final idDieta = _toStr(m[FornTables.cf_idDieta]).trim();
+    if (idFornec.isEmpty || idDieta.isEmpty) {
+      // evita passar String vazia para required String
+      return null;
+    }
+
     return FornecimentoAberto(
-      id: _toStr(m[FornTables.cf_id]),
-      idFornecimento: _toStr(m[FornTables.cf_idFornecimento]),
-      idFabricacao: _toStr(m[FornTables.cf_idFabricacao]),
+      idFornecimento: idFornec,
       idBaia: _toStr(m[FornTables.cf_idBaia]),
-      data: _toStr(
-          _toStr(m[FornTables.cf_data]).isEmpty ? d : m[FornTables.cf_data]),
+      idDieta: idDieta,
+      dataIso: _toStr(_toStr(m[FornTables.cf_data]).isEmpty ? d : m[FornTables.cf_data]),
       trato: (m[FornTables.cf_trato] as num?)?.toInt() ?? trato,
-      previsto: _toDouble(m[FornTables.cf_previsto]),
+      idUsuario: _toStr(m[FornTables.cf_idUsuario]).trim().isEmpty
+          ? null
+          : _toStr(m[FornTables.cf_idUsuario]),
+      idFabricacao: _toStr(m[FornTables.cf_idFabricacao]).trim().isEmpty
+          ? null
+          : _toStr(m[FornTables.cf_idFabricacao]),
       pesoInicio: _toDouble(m[FornTables.cf_pesoInicio]),
-      horaInicio: (m[FornTables.cf_horaInicio] as String?),
-      idUsuario: _toStr(m[FornTables.cf_idUsuario]),
-      idDieta: (m[FornTables.cf_idDieta] as String?),
+      horaInicio: _toStr(m[FornTables.cf_horaInicio]),
+      previstoKg: _toDouble(m[FornTables.cf_previsto]),
     );
   }
 
   // =========================================================
-  // FORNECIMENTO ABERTO (Mini)
+  // FORNECIMENTO ABERTO (Mini) ✅ (model tem só 2 campos)
   // =========================================================
   Future<FornecimentoAbertoMini?> getFornecimentoAberto({
     required String idFornecimento,
@@ -312,13 +319,12 @@ class FornecimentoDao {
     if (rows.isEmpty) return null;
     final m = rows.first;
 
+    final idFornec = _toStr(m[FornTables.cf_idFornecimento]).trim();
+    final idBaiaDb = _toStr(m[FornTables.cf_idBaia]).trim();
+
     return FornecimentoAbertoMini(
-      idCadastro: _toStr(m[FornTables.cf_id]),
-      pesoInicio: _toDouble(m[FornTables.cf_pesoInicio]),
-      horaInicio: _toStr(m[FornTables.cf_horaInicio]),
-      previsto: _toDouble(m[FornTables.cf_previsto]),
-      idUsuario: _toStr(m[FornTables.cf_idUsuario]),
-      idFabricacao: _toStr(m[FornTables.cf_idFabricacao]),
+      idFornecimento: idFornec.isEmpty ? idFornecimento : idFornec,
+      idBaia: idBaiaDb.isEmpty ? idBaia : idBaiaDb,
     );
   }
 
@@ -459,7 +465,7 @@ class FornecimentoDao {
   }
 
   // =========================================================
-  // REALIZADO ACUMULADO (PREVISAO)
+  // REALIZADO ACUMULADO (FORNECIMENTO_CONF)
   // =========================================================
   Future<double> getRealizadoAcumulado({
     required String idFornecimento,
@@ -488,7 +494,7 @@ class FornecimentoDao {
   }
 
   // =========================================================
-  // ATUALIZAR REALIZADO NA PREVISAO
+  // ATUALIZAR REALIZADO NA PREVISAO (FORNECIMENTO_CONF)
   // =========================================================
   Future<void> setPrevRealizado({
     required DateTime data,
@@ -522,26 +528,26 @@ class FornecimentoDao {
 
     return db.rawQuery("""
       SELECT
-        F.${FornTables.cf_id}            AS id,
-        F.${FornTables.cf_idFornecimento} AS id_fornecimento,
-        F.${FornTables.cf_idFabricacao} AS id_fabricacao,
-        F.${FornTables.cf_idBaia}       AS id_baia,
-        F.${FornTables.cf_data}         AS data,
-        F.${FornTables.cf_horaInicio}   AS hora_inicio,
-        F.${FornTables.cf_horaFim}      AS hora_fim,
-        F.${FornTables.cf_pesoInicio}   AS peso_inicio,
-        F.${FornTables.cf_pesoFim}      AS peso_fim,
-        F.${FornTables.cf_previsto}     AS previsto,
-        F.${FornTables.cf_realizado}    AS realizado,
-        F.${FornTables.cf_flagSync}     AS flag_sync,
-        F.${FornTables.cf_trato}        AS trato,
-        F.${FornTables.cf_idUsuario}    AS id_usuario,
-        F.${FornTables.cf_idDieta}      AS id_dieta,
+        F.${FornTables.cf_id}              AS id,
+        F.${FornTables.cf_idFornecimento}  AS id_fornecimento,
+        F.${FornTables.cf_idFabricacao}    AS id_fabricacao,
+        F.${FornTables.cf_idBaia}          AS id_baia,
+        F.${FornTables.cf_data}            AS data,
+        F.${FornTables.cf_horaInicio}      AS hora_inicio,
+        F.${FornTables.cf_horaFim}         AS hora_fim,
+        F.${FornTables.cf_pesoInicio}      AS peso_inicio,
+        F.${FornTables.cf_pesoFim}         AS peso_fim,
+        F.${FornTables.cf_previsto}        AS previsto,
+        F.${FornTables.cf_realizado}       AS realizado,
+        F.${FornTables.cf_flagSync}        AS flag_sync,
+        F.${FornTables.cf_trato}           AS trato,
+        F.${FornTables.cf_idUsuario}       AS id_usuario,
+        F.${FornTables.cf_idDieta}         AS id_dieta,
 
-        B.${FornTables.db_nomeLocal}    AS nome_local,
-        B.${FornTables.db_linha}        AS linha,
-        B.${FornTables.db_idLote}       AS id_lote,
-        B.${FornTables.db_rfid}         AS rfid
+        B.${FornTables.db_nomeLocal}       AS nome_local,
+        B.${FornTables.db_linha}           AS linha,
+        B.${FornTables.db_idLote}          AS id_lote,
+        B.${FornTables.db_rfid}            AS rfid
       FROM ${FornTables.cadastroFornecimento} F
       LEFT JOIN ${FornTables.detalhesBaias} B
         ON B.${FornTables.db_id} = F.${FornTables.cf_idBaia}

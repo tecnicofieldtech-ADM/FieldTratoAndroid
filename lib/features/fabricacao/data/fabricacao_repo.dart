@@ -201,7 +201,8 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
 
     // tenta joinar com DIETA se existir tabela e se existir idDietaCol
     final hasDieta = await _hasTable("DIETA");
-    final canJoin = hasDieta && idDietaCol != null;
+    final canJoin = hasDieta;
+
 
     final join = canJoin ? "LEFT JOIN DIETA di ON di.ID = f.$idDietaCol" : "";
 
@@ -211,7 +212,7 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     final select = """
     SELECT
       f.$idCol AS id,
-      ${sel("id_dieta", idDietaCol != null ? "f.$idDietaCol" : null, "''")},
+      ${sel("id_dieta", "f.$idDietaCol", "''")},
       $dietaNomeExpr AS dieta_nome,
       ${sel("trato", tratoCol != null ? "f.$tratoCol" : null, "0")},
       ${sel("qtd_prevista", prevCol != null ? "f.$prevCol" : null, "0")},

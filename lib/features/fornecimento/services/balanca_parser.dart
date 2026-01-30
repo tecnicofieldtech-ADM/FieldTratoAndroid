@@ -1,6 +1,4 @@
 // lib/features/fornecimento/services/balanca_parser.dart
-//
-// ✅ IMPORTA O ENUM ÚNICO DO DOMÍNIO
 import "../domain/fornecimento_models.dart";
 
 class BalancaParser {
@@ -12,15 +10,17 @@ class BalancaParser {
 
     switch (modelo) {
       case ModeloBalanca.topcon:
-        // exemplos comuns: "  1234.50 kg", "W:1234.5", etc
         return _extractNumber(s);
 
       case ModeloBalanca.dinamica:
-        // exemplos: "ST,GS,  1234.50kg", "1234.50"
         return _extractNumber(s);
 
       case ModeloBalanca.alfa:
-        // exemplos: "N 001234.50", "001234.50"
+        return _extractNumber(s);
+
+      // ✅ se você tiver mais modelos no enum (generale/hook/outro),
+      // isso evita erro e mantém funcionando.
+      default:
         return _extractNumber(s);
     }
   }
@@ -33,14 +33,9 @@ class BalancaParser {
     return double.tryParse(norm);
   }
 
-  // =========================================================
-  // helpers internos
-  // =========================================================
-
   /// Extrai o primeiro número com sinal opcional e decimal opcional.
   /// Aceita negativos.
   static String _extractNumber(String s) {
-    // pega tipo: -1234.56 ou 1234,56 ou 1234
     final re = RegExp(r"[-+]?\d+(?:[.,]\d+)?");
     final m = re.firstMatch(s);
     if (m == null) return "";

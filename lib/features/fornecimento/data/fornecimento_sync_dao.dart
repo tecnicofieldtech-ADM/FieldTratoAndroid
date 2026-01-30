@@ -1,14 +1,16 @@
-import "package:sqflite/sqflite.dart";
+// lib/features/fornecimento/data/fornecimento_sync_dao.dart
+import "package:sqflite/sqflite.dart"; // DatabaseExecutor, ConflictAlgorithm
 
 class FornecimentoSyncDao {
   FornecimentoSyncDao(this.db);
-  final Database db;
+
+  // ✅ DatabaseExecutor aceita Database OU Transaction
+  final DatabaseExecutor db;
 
   // =========================
   // CREATE TABLES (se precisar)
   // =========================
-
-  static Future<void> ensureTables(Database db) async {
+  static Future<void> ensureTables(DatabaseExecutor db) async {
     await db.execute("""
 CREATE TABLE IF NOT EXISTS PREVISAO (
   ID_FORNECIMENTO TEXT,
@@ -34,12 +36,25 @@ CREATE TABLE IF NOT EXISTS DETALHES_DIETAS (
   PRE_PESADO INTEGER
 );
 """);
+
+    // (opcional, mas recomendado) índices pra acelerar filtros
+    await db.execute("""
+CREATE INDEX IF NOT EXISTS IDX_PREVISAO_DATA_TRATO
+ON PREVISAO (DATA, TRATO);
+""");
+    await db.execute("""
+CREATE INDEX IF NOT EXISTS IDX_PREVISAO_BAIA
+ON PREVISAO (ID_BAIA);
+""");
+    await db.execute("""
+CREATE INDEX IF NOT EXISTS IDX_DET_DIETAS_DIETA
+ON DETALHES_DIETAS (ID_DIETA);
+""");
   }
 
   // =========================
   // CLEAR
   // =========================
-
   Future<void> clearPrevisao() async {
     await db.delete("PREVISAO");
   }
@@ -51,7 +66,6 @@ CREATE TABLE IF NOT EXISTS DETALHES_DIETAS (
   // =========================
   // INSERT PREVISAO
   // =========================
-
   Future<void> insertPrevisao({
     required String idFornecimento,
     required String dataIso, // yyyy-mm-dd
@@ -79,7 +93,6 @@ CREATE TABLE IF NOT EXISTS DETALHES_DIETAS (
   // =========================
   // UPSERT DETALHES_DIETAS
   // =========================
-
   Future<void> upsertDietaDetalhe({
     required String id,
     required String idDieta,

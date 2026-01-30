@@ -53,8 +53,10 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         _dietas = dietas;
         _users = users;
 
-        if (_dietas.isNotEmpty) _dietaId = (_dietas.first["ID"] ?? "").toString();
-        if (_users.isNotEmpty) _operadorId = (_users.first["ID"] ?? "").toString();
+        if (_dietas.isNotEmpty)
+          _dietaId = (_dietas.first["ID"] ?? "").toString();
+        if (_users.isNotEmpty)
+          _operadorId = (_users.first["ID"] ?? "").toString();
       });
     } finally {
       setState(() => _loading = false);
@@ -90,10 +92,15 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         barrierDismissible: false,
         builder: (_) => AlertDialog(
           title: const Text("Fabricação em aberto"),
-          content: const Text("Existe uma fabricação em aberto. Deseja continuar de onde parou?"),
+          content: const Text(
+              "Existe uma fabricação em aberto. Deseja continuar de onde parou?"),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Não")),
-            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("Sim")),
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Não")),
+            ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Sim")),
           ],
         ),
       );
@@ -102,7 +109,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+          MaterialPageRoute(
+              builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
         );
       }
       return;
@@ -117,7 +125,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       }
 
       final idFazenda = await _cfg.getIdFazendaSelecionada();
-      if (idFazenda == null || idFazenda.isEmpty) {
+      if (idFazenda.isEmpty) {
         throw Exception("Nenhuma fazenda selecionada na CONFIG.");
       }
 
@@ -134,7 +142,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+        MaterialPageRoute(
+            builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
       );
     } catch (e) {
       _msg("Erro ao criar fabricação: $e");
@@ -174,7 +183,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                   TextField(
                     controller: _kgCtrl,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "Quantidade total (KG)"),
+                    decoration: const InputDecoration(
+                        labelText: "Quantidade total (KG)"),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(

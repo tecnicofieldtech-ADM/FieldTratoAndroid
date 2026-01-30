@@ -1,3 +1,4 @@
+// lib/services/api_service.dart
 import "dart:convert";
 import "package:dio/dio.dart";
 
@@ -11,9 +12,23 @@ class ApiService {
             connectTimeout: const Duration(milliseconds: 2500),
             receiveTimeout: const Duration(milliseconds: 8000),
             sendTimeout: const Duration(milliseconds: 8000),
-            headers: {"Accept": "application/json"},
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+            },
           ),
-        );
+        ) {
+    // ✅ log completo no console (ajuda MUITO a achar 500 com {erro:"..."})
+    _dio.interceptors.add(
+      LogInterceptor(
+        requestBody: true,
+        responseBody: true,
+        requestHeader: true,
+        responseHeader: false,
+        error: true,
+      ),
+    );
+  }
 
   /// equivalente ao QuickPing + /GetTeste
   Future<bool> getTeste() async {
@@ -74,23 +89,126 @@ class ApiService {
     return jsonDecode(r.data.toString()) as List;
   }
 
-  Future<bool> postGravaTag(Map<String, dynamic> body) async {
-    final r = await _dio.post("/Post/GravaTag", data: body);
-    return r.statusCode == 200;
+  Future<bool> postGravaTag(Map<String, dynamic> body, {void Function(String)? log}) async {
+    try {
+      final r = await _dio.post(
+        "/Post/GravaTag",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null, // ✅ não lança em 500
+          contentType: Headers.jsonContentType,
+        ),
+      );
+
+      if (r.statusCode == 200) return true;
+
+      log?.call("❌ /Post/GravaTag HTTP ${r.statusCode}");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${r.data}");
+      return false;
+    } on DioException catch (e) {
+      log?.call("❌ /Post/GravaTag EXC HTTP ${e.response?.statusCode}");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${e.response?.data ?? e.message}");
+      return false;
+    } catch (e) {
+      log?.call("❌ /Post/GravaTag ERRO: $e");
+      log?.call("📤 Req: $body");
+      return false;
+    }
   }
 
-  Future<bool> postFabricacao(Map<String, dynamic> body) async {
-    final r = await _dio.post("/Post/Fabricacao", data: body);
-    return r.statusCode == 200;
+  Future<bool> postFabricacao(Map<String, dynamic> body, {void Function(String)? log}) async {
+    try {
+      final r = await _dio.post(
+        "/Post/Fabricacao",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null, // ✅ não lança em 500
+          contentType: Headers.jsonContentType,
+        ),
+      );
+
+      if (r.statusCode == 200) return true;
+
+      log?.call("❌ /Post/Fabricacao HTTP ${r.statusCode}");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${r.data}");
+      return false;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final data = e.response?.data;
+
+      log?.call("❌ /Post/Fabricacao EXCEPTION HTTP $status");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${data ?? e.message}");
+      return false;
+    } catch (e) {
+      log?.call("❌ /Post/Fabricacao ERRO: $e");
+      log?.call("📤 Req: $body");
+      return false;
+    }
   }
 
-  Future<bool> postFabricacaoInsumo(Map<String, dynamic> body) async {
-    final r = await _dio.post("/Post/Fabricacao_Insumo", data: body);
-    return r.statusCode == 200;
+  Future<bool> postFabricacaoInsumo(Map<String, dynamic> body, {void Function(String)? log}) async {
+    try {
+      final r = await _dio.post(
+        "/Post/Fabricacao_Insumo",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null, // ✅ não lança em 500
+          contentType: Headers.jsonContentType,
+        ),
+      );
+
+      if (r.statusCode == 200) return true;
+
+      log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode}");
+      final itens = (body["itens"] is List) ? (body["itens"] as List) : const [];
+      log?.call("📤 Req: itens=${itens.length} (primeiro=${itens.isNotEmpty ? itens.first : "—"})");
+      log?.call("📥 Resp: ${r.data}");
+      return false;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final data = e.response?.data;
+
+      log?.call("❌ /Post/Fabricacao_Insumo EXCEPTION HTTP $status");
+      final itens = (body["itens"] is List) ? (body["itens"] as List) : const [];
+      log?.call("📤 Req: itens=${itens.length} (primeiro=${itens.isNotEmpty ? itens.first : "—"})");
+      log?.call("📥 Resp: ${data ?? e.message}");
+      return false;
+    } catch (e) {
+      log?.call("❌ /Post/Fabricacao_Insumo ERRO: $e");
+      return false;
+    }
   }
 
-  Future<bool> postFornecimento(Map<String, dynamic> body) async {
-    final r = await _dio.post("/Post/Fornecimento", data: body);
-    return r.statusCode == 200;
+  Future<bool> postFornecimento(Map<String, dynamic> body, {void Function(String)? log}) async {
+    try {
+      final r = await _dio.post(
+        "/Post/Fornecimento",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null, // ✅ não lança em 500
+          contentType: Headers.jsonContentType,
+        ),
+      );
+
+      if (r.statusCode == 200) return true;
+
+      log?.call("❌ /Post/Fornecimento HTTP ${r.statusCode}");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${r.data}");
+      return false;
+    } on DioException catch (e) {
+      log?.call("❌ /Post/Fornecimento EXC HTTP ${e.response?.statusCode}");
+      log?.call("📤 Req: $body");
+      log?.call("📥 Resp: ${e.response?.data ?? e.message}");
+      return false;
+    } catch (e) {
+      log?.call("❌ /Post/Fornecimento ERRO: $e");
+      log?.call("📤 Req: $body");
+      return false;
+    }
   }
 }
