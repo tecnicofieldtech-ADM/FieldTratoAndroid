@@ -1,7 +1,9 @@
 import "package:flutter/material.dart";
+
 import "../repo/config_repo.dart";
 import "../repo/user_repo.dart";
 import "../widgets/app_logo.dart";
+import "../services/session_service.dart"; // ✅ NOVO
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -27,7 +29,18 @@ class _SplashPageState extends State<SplashPage> {
     // 1) carrega config (se existir)
     await _cfgRepo.getConfig();
 
-    // 2) checa usuários
+    // 2) restaura sessão (SharedPreferences)
+    await SessionService.instance.restore();
+
+    if (!mounted) return;
+
+    // ✅ se já tem sessão, vai direto pro menu
+    if (SessionService.instance.isLogged) {
+      Navigator.pushReplacementNamed(context, "/menu");
+      return;
+    }
+
+    // 3) checa usuários no SQLite (pra decidir config vs login)
     final hasUser = await _userRepo.hasAnyUser();
 
     if (!mounted) return;

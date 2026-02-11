@@ -1,4 +1,3 @@
-// lib/main.dart
 import "package:flutter/material.dart";
 
 import "pages/splash_page.dart";
@@ -19,11 +18,20 @@ import "features/fornecimento/ui/fornecimento_pre_page.dart";
 import "features/fornecimento/ui/fornecimento_weigh_page.dart";
 import "features/fornecimento/domain/fornecimento_models.dart";
 import "features/fornecimento/data/fornecimento_repo.dart";
-import "features/fornecimento/services/scale_tcp_service.dart";
-import "features/fornecimento/services/rfid_tcp_service.dart";
 
-void main() {
+// ✅ helpers
+import "package:rfeed_flutter/helpers/scale_comm.dart";
+import "package:rfeed_flutter/helpers/rfid_comm.dart";
+
+// ✅ sessão global
+import "services/session_service.dart";
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ carrega sessão do SharedPreferences (se tiver)
+  await SessionService.instance.restore();
+
   runApp(const RFeedApp());
 }
 
@@ -48,14 +56,23 @@ class RFeedApp extends StatelessWidget {
     );
 
     final fabRepo = FabricacaoRepo();
-
-    // ✅ singletons fornecimento
     final fornRepo = FornecimentoRepo();
-    final scale = ScaleTcpService();
-    final rfid = RfidTcpService();
 
-    // ✅ coloque aqui de onde você pega o usuário logado (por enquanto vazio compila)
-    const String idUsuario = "";
+    // ✅ singletons de comunicação
+    final scale = ScaleComm(
+      host: "0.0.0.0",
+      port: 0,
+      model: ScaleModel.topcom,
+      allowNegative: true,
+    );
+
+    final rfid = RfidComm(
+      host: "0.0.0.0",
+      port: 0,
+      autoReconnect: true,
+    );
+
+    bool isLogged() => SessionService.instance.userId?.trim().isNotEmpty == true;
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -74,7 +91,25 @@ class RFeedApp extends StatelessWidget {
         "/fabricacao/nova": (_) => FabricacaoPreFabPage(repo: fabRepo),
         "/fabricacao/pesagem": (_) => FabricacaoWeighPage(repo: fabRepo),
       },
+
       onGenerateRoute: (settings) {
+        // ✅ protege fornecimento (e qualquer outra rota que você quiser)
+        bool requireLogin() {
+          const protected = {
+            "/fornecimento",
+            "/fornecimento/pre",
+            "/fornecimento/pesagem",
+          };
+          return protected.contains(settings.name);
+        }
+
+        if (requireLogin() && !isLogged()) {
+          return MaterialPageRoute(
+            builder: (_) => const LoginPage(),
+            settings: const RouteSettings(name: "/login"),
+          );
+        }
+
         switch (settings.name) {
           case "/fornecimento": {
             final args = (settings.arguments as Map?) ?? const {};
@@ -83,7 +118,8 @@ class RFeedApp extends StatelessWidget {
             return MaterialPageRoute(
               builder: (_) => FornecimentoListPage(
                 idFazenda: idFazenda,
-                idUsuario: idUsuario,
+                // ✅ pega da sessão global (não depende de tabela)
+                idUsuario: SessionService.instance.userId ?? "",
                 repo: fornRepo,
                 scale: scale,
                 rfid: rfid,
@@ -94,11 +130,12 @@ class RFeedApp extends StatelessWidget {
 
           case "/fornecimento/pre": {
             final args = settings.arguments as Map;
+
             return MaterialPageRoute(
               builder: (_) => FornecimentoPrePage(
                 curral: args["curral"] as CurralPrev,
                 idFazenda: args["idFazenda"] as String,
-                idUsuario: idUsuario,
+                idUsuario: SessionService.instance.userId ?? "",
                 repo: fornRepo,
                 scale: scale,
                 rfid: rfid,
@@ -109,11 +146,12 @@ class RFeedApp extends StatelessWidget {
 
           case "/fornecimento/pesagem": {
             final args = settings.arguments as Map;
+
             return MaterialPageRoute(
               builder: (_) => FornecimentoWeighPage(
                 curral: args["curral"] as CurralPrev,
                 idFazenda: args["idFazenda"] as String,
-                idUsuario: idUsuario,
+                idUsuario: SessionService.instance.userId ?? "",
                 repo: fornRepo,
                 scale: scale,
                 rfid: rfid,

@@ -1,0 +1,332 @@
+// lib/features/fornecimento/domain/fornecimento_models.dart
+
+enum ModeloBalanca { topcon, dinamica, alfa, generale, hook, outro }
+
+// =========================================================
+// CURRAL PREV (card do curral / previsto do trato)
+// =========================================================
+class CurralPrev {
+  CurralPrev({
+    required this.idBaia,
+    required this.trato,
+    required this.dataIso, // YYYY-MM-DD
+    required this.previstoKg,
+    this.realizadoKg = 0,
+    this.faltaKg = 0,
+    this.concluido = false,
+    this.rfid,
+    this.idLote,
+    this.nomeLocal,
+    this.linha,
+    this.idRacao,
+    this.racao,
+    this.idFornecimento,
+    this.idDieta,
+  });
+
+  final String idBaia;
+  final int trato;
+  final String dataIso;
+
+  final double previstoKg;
+
+  double realizadoKg;
+  double faltaKg;
+  bool concluido;
+
+  final String? rfid;
+  final String? idLote;
+
+  // usados na UI
+  final String? nomeLocal;
+  final int? linha;
+
+  // usados na UI / DAO
+  final String? idRacao;
+  final String? racao;
+
+  // fluxo de fornecimento aberto
+  final String? idFornecimento;
+
+  // dieta
+  final String? idDieta;
+
+  CurralPrev copyWith({
+    double? realizadoKg,
+    double? faltaKg,
+    bool? concluido,
+    String? idFornecimento,
+    String? idRacao,
+    String? racao,
+    String? nomeLocal,
+    int? linha,
+  }) {
+    return CurralPrev(
+      idBaia: idBaia,
+      trato: trato,
+      dataIso: dataIso,
+      previstoKg: previstoKg,
+      realizadoKg: realizadoKg ?? this.realizadoKg,
+      faltaKg: faltaKg ?? this.faltaKg,
+      concluido: concluido ?? this.concluido,
+      rfid: rfid,
+      idLote: idLote,
+      nomeLocal: nomeLocal ?? this.nomeLocal,
+      linha: linha ?? this.linha,
+      idRacao: idRacao ?? this.idRacao,
+      racao: racao ?? this.racao,
+      idFornecimento: idFornecimento ?? this.idFornecimento,
+      idDieta: idDieta,
+    );
+  }
+
+  // =======================================================
+  // FACTORY
+  // =======================================================
+  static CurralPrev fromMap(Map<String, Object?> m) {
+    String s(String k) => (m[k] ?? "").toString();
+
+    String? sn(String k) {
+      final v = m[k];
+      if (v == null) return null;
+      final t = v.toString().trim();
+      return t.isEmpty ? null : t;
+    }
+
+    int i(String k) {
+      final v = m[k];
+      if (v == null) return 0;
+      if (v is int) return v;
+      return int.tryParse(v.toString()) ?? 0;
+    }
+
+    int? iNull(String k) {
+      final v = m[k];
+      if (v == null) return null;
+      if (v is int) return v;
+      return int.tryParse(v.toString());
+    }
+
+    double d(String k) {
+      final v = m[k];
+      if (v == null) return 0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+    }
+
+    bool b(String k) {
+      final v = m[k];
+      if (v == null) return false;
+      if (v is bool) return v;
+      final ss = v.toString();
+      return ss == "1" || ss.toLowerCase() == "true";
+    }
+
+    // aceita nomes antigos/novos
+    final idBaia = sn("idBaia") ?? sn("idCurral") ?? s("id_baia");
+    final dataIso = sn("dataIso") ?? sn("data") ?? s("data_iso");
+    final trato = i("trato");
+
+    return CurralPrev(
+      idBaia: idBaia,
+      trato: trato,
+      dataIso: dataIso,
+      previstoKg: d("previstoKg") != 0 ? d("previstoKg") : d("previsto"),
+      realizadoKg:
+          d("realizadoKg") != 0 ? d("realizadoKg") : d("realizado"),
+      faltaKg: d("faltaKg"),
+      concluido: b("concluido"),
+      rfid: sn("rfid"),
+      idLote: sn("idLote"),
+      nomeLocal: sn("nomeLocal") ?? sn("nome") ?? sn("nomeBaia"),
+      linha: iNull("linha"),
+      idRacao: sn("idRacao"),
+      racao: sn("racao"),
+      idFornecimento: sn("idFornecimento"),
+      idDieta: sn("idDieta"),
+    );
+  }
+}
+
+// =========================================================
+// SNAPSHOT (estado do curral)
+// =========================================================
+class CurralSnapshot {
+  CurralSnapshot({
+    required this.idBaia,
+    required this.dataIso,
+    required this.trato,
+    required this.idDieta,
+    required this.idFornecimento,
+    required this.previstoKg,
+    required this.realizadoKg,
+  });
+
+  final String idBaia;
+  final String dataIso;
+  final int trato;
+  final String idDieta;
+  final String idFornecimento;
+
+  final double previstoKg;
+  final double realizadoKg;
+}
+
+// =========================================================
+// FORNECIMENTO ABERTO
+// =========================================================
+class FornecimentoAberto {
+  FornecimentoAberto({
+    required this.idFornecimento,
+    required this.idBaia,
+    required this.idDieta,
+    required this.dataIso,
+    required this.trato,
+    this.idUsuario,
+    this.idFabricacao,
+    this.pesoInicio,
+    this.horaInicio,
+    this.previstoKg,
+  });
+
+  final String idFornecimento;
+  final String idBaia;
+  final String idDieta;
+  final String dataIso;
+  final int trato;
+
+  final String? idUsuario;
+  final String? idFabricacao;
+
+  final double? pesoInicio;
+  final String? horaInicio;
+  final double? previstoKg;
+}
+
+// =========================================================
+// FORNECIMENTO ABERTO MINI
+// =========================================================
+class FornecimentoAbertoMini {
+  FornecimentoAbertoMini({
+    required this.idFornecimento,
+    required this.idBaia,
+  });
+
+  final String idFornecimento;
+  final String idBaia;
+
+  // compatibilidade com código antigo
+  String get idCadastro => idFornecimento;
+}
+
+// =========================================================
+// ROWS (DAO)
+// =========================================================
+class FornecimentoRow {
+  FornecimentoRow({
+    required this.id,
+    required this.idFornecimento,
+    required this.idBaia,
+    required this.idDieta,
+    required this.dataIso,
+    required this.trato,
+    required this.previstoKg,
+    required this.realizadoKg,
+  });
+
+  final String id;
+  final String idFornecimento;
+  final String idBaia;
+  final String idDieta;
+  final String dataIso;
+  final int trato;
+  final double previstoKg;
+  final double realizadoKg;
+
+  static FornecimentoRow fromMap(Map<String, Object?> m) {
+    String s(String k) => (m[k] ?? "").toString();
+    int i(String k) => int.tryParse((m[k] ?? "0").toString()) ?? 0;
+
+    double d(String k) {
+      final v = m[k];
+      if (v == null) return 0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+    }
+
+    return FornecimentoRow(
+      id: s("id"),
+      idFornecimento: s("idFornecimento"),
+      idBaia: s("idBaia"),
+      idDieta: s("idDieta"),
+      dataIso: s("dataIso"),
+      trato: i("trato"),
+      previstoKg: d("previstoKg"),
+      realizadoKg: d("realizadoKg"),
+    );
+  }
+
+  Map<String, Object?> toMap() => {
+        "id": id,
+        "idFornecimento": idFornecimento,
+        "idBaia": idBaia,
+        "idDieta": idDieta,
+        "dataIso": dataIso,
+        "trato": trato,
+        "previstoKg": previstoKg,
+        "realizadoKg": realizadoKg,
+      };
+}
+
+// =========================================================
+// BAIA ROW
+// =========================================================
+class BaiaRow {
+  BaiaRow({
+    required this.id,
+    required this.nomeLocal,
+    this.linha,
+    this.orderTrato,
+    this.rfid,
+    this.idLote,
+  });
+
+  final String id;
+  final String nomeLocal;
+  final int? linha;
+  final int? orderTrato;
+  final String? rfid;
+  final String? idLote;
+
+  static BaiaRow fromMap(Map<String, Object?> m) {
+    String s(String k) => (m[k] ?? "").toString();
+
+    int? iNull(String k) =>
+        m[k] == null ? null : int.tryParse(m[k].toString());
+
+    String? sNull(String k) {
+      final v = m[k];
+      if (v == null) return null;
+      final t = v.toString().trim();
+      return t.isEmpty ? null : t;
+    }
+
+    return BaiaRow(
+      id: s("id"),
+      nomeLocal: s("nomeLocal"),
+      linha: iNull("linha"),
+      orderTrato: iNull("orderTrato"),
+      rfid: sNull("rfid"),
+      idLote: sNull("idLote"),
+    );
+  }
+
+  Map<String, Object?> toMap() => {
+        "id": id,
+        "nomeLocal": nomeLocal,
+        "linha": linha,
+        "orderTrato": orderTrato,
+        "rfid": rfid,
+        "idLote": idLote,
+      };
+}

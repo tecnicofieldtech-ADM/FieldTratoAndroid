@@ -16,6 +16,14 @@ class FabricacaoController extends ChangeNotifier {
 
   final FabricacaoRepo repo;
 
+  bool _isDisposing = false;
+  bool _isDisposed = false;
+
+  void _safeNotify() {
+    if (_isDisposed || _isDisposing) return;
+    notifyListeners();
+  }
+
   // =========================
   // ✅ CONFIG
   // =========================
@@ -64,11 +72,8 @@ class FabricacaoController extends ChangeNotifier {
           : ingredientes[idx];
 
   // =========================================================
-  // ✅ API pública para UI (não chamar notifyListeners() na UI)
+  // ✅ API pública para UI
   // =========================================================
-
-  /// Atualiza localmente o realizado do ingrediente atual e notifica.
-  /// Usado pela UI (ex.: pré-pesado).
   void setRealizadoLocalDoIngredienteAtual(int realizadoKg) {
     if (ingredientes.isEmpty || idx < 0 || idx >= ingredientes.length) return;
     final atualIng = ingredientes[idx];
@@ -76,7 +81,6 @@ class FabricacaoController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Versão mais segura: atualiza pelo idDet (caso idx mude).
   void setRealizadoLocalByDetId(String idDet, int realizadoKg) {
     final i = ingredientes.indexWhere((e) => e.idDet == idDet);
     if (i < 0) return;
@@ -117,7 +121,7 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================
-  // ✅ ESPELHO (compat UI)
+  // ✅ ESPELHO
   // =========================
   bool get mirrorEnabled => MirrorService.instance.enabled;
   bool get mirrorConnected => MirrorService.instance.connected;
@@ -140,20 +144,20 @@ class FabricacaoController extends ChangeNotifier {
         final t = (msg["t"] ?? msg["cmd"] ?? "").toString();
 
         if (t == "next") {
-          () async {
+          unawaited(() async {
             try {
               await next();
             } catch (_) {}
-          }();
+          }());
           return;
         }
 
         if (t == "prev") {
-          () async {
+          unawaited(() async {
             try {
               await prev();
             } catch (_) {}
-          }();
+          }());
           return;
         }
 
@@ -193,7 +197,7 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================
-  // ✅ STATE ENXUTO (1 estado “oficial”)
+  // ✅ STATE ENXUTO
   // =========================
   Map<String, dynamic>? _buildMirrorState() {
     final h = header;
@@ -215,12 +219,10 @@ class FabricacaoController extends ChangeNotifier {
     return {
       "t": "state",
       "stream": "fabricacao_resumo",
-
       "fabId": h.id,
       "trato": h.trato,
       "dieta": h.dietaNome,
       "finalizada": h.finalizada,
-
       "auto": {
         "enabled": autoOn ? 1 : 0,
         "countdown": autoOn ? _autoCountdown : 0,
@@ -228,7 +230,6 @@ class FabricacaoController extends ChangeNotifier {
         "toPos": (idx < ingredientes.length - 1) ? (idx + 2) : (idx + 1),
         "ts": DateTime.now().toIso8601String(),
       },
-
       "scale": {
         "connected": scaleConnected ? 1 : 0,
         "receiving": receivingNow ? 1 : 0,
@@ -236,7 +237,6 @@ class FabricacaoController extends ChangeNotifier {
         "lastAt": lastPacketAt?.toIso8601String(),
         "raw": lastRaw,
       },
-
       "atual": {
         "nome": a.insumoNome,
         "prev": prev,
@@ -246,7 +246,6 @@ class FabricacaoController extends ChangeNotifier {
         "pos": idx + 1,
         "total": ingredientes.length,
       },
-
       "prox": prox == null
           ? null
           : {
@@ -254,7 +253,6 @@ class FabricacaoController extends ChangeNotifier {
               "prev": prox.previstoKg,
               "prePesado": prox.isPrePesado ? 1 : 0,
             },
-
       "ts": DateTime.now().toIso8601String(),
     };
   }
@@ -263,10 +261,8 @@ class FabricacaoController extends ChangeNotifier {
 
   void _sendMirrorState({bool force = false}) {
     if (_closed) return;
-
     final st = _buildMirrorState();
     if (st == null) return;
-
     MirrorService.instance.sendState(st, force: force);
   }
 
@@ -274,19 +270,25 @@ class FabricacaoController extends ChangeNotifier {
   // SHUTDOWN (sai da tela)
   // =========================
   Future<void> shutdown() async {
+    if (_isDisposed || _isDisposing) return;
+
+    _isDisposing = true;
     _closed = true;
+
+    // cancela timers
     _cancelAutoPulo();
 
+    // para mirror/scale (podem ter await)
     try {
       await stopMirror();
     } catch (_) {}
-
     try {
       await stopScale();
     } catch (_) {}
 
-    _setScaleDisconnected();
-    notifyListeners();
+    // ✅ não chama notify se já foi disposed
+    _isDisposing = false;
+    _safeNotify();
   }
 
   // =========================
@@ -384,7 +386,7 @@ class FabricacaoController extends ChangeNotifier {
     _incPeso = inc.clamp(1, 10);
 
     if (host.isEmpty || port <= 0) {
-      _setScaleDisconnected();
+      _setScaleDisconnected(notify: true);
       _sendMirrorState();
       return;
     }
@@ -462,7 +464,7 @@ class FabricacaoController extends ChangeNotifier {
     } catch (e) {
       scaleConnecting = false;
       lastRaw = e.toString();
-      _setScaleDisconnected();
+      _setScaleDisconnected(notify: true);
       _sendMirrorState();
     }
   }
@@ -513,15 +515,15 @@ class FabricacaoController extends ChangeNotifier {
       } catch (_) {}
     }
 
-    _setScaleDisconnected();
+    _setScaleDisconnected(notify: true);
   }
 
-  void _setScaleDisconnected() {
+  void _setScaleDisconnected({bool notify = false}) {
     scaleConnecting = false;
     scaleConnected = false;
     scaleReceiving = false;
     lastPacketAt = null;
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   ScaleModel _scaleModelFromInt(int v) {
@@ -761,7 +763,6 @@ class FabricacaoController extends ChangeNotifier {
       if (_autoCountdown < 0) _autoCountdown = 0;
 
       notifyListeners();
-
       _sendMirrorState(force: true);
 
       if (_autoCountdown <= 0) {
@@ -777,11 +778,11 @@ class FabricacaoController extends ChangeNotifier {
 
         _sendMirrorState(force: true);
 
-        () async {
+        unawaited(() async {
           try {
             await next();
           } catch (_) {}
-        }();
+        }());
       }
     });
   }
@@ -962,6 +963,9 @@ class FabricacaoController extends ChangeNotifier {
       );
     }
 
+    header = h.copyWith(finalizada: 1, qtdRealizada: totalReal);
+    notifyListeners();
+
     int tipoTrabalho = 0;
     String idVagao = "";
     try {
@@ -970,7 +974,7 @@ class FabricacaoController extends ChangeNotifier {
       tipoTrabalho = 0;
     }
     try {
-      idVagao = (await _cfgRepo.getIdVagao()).toString();
+      idVagao = (await _cfgRepo.getIdVagao()).toString().trim();
     } catch (_) {
       idVagao = "";
     }
@@ -981,16 +985,38 @@ class FabricacaoController extends ChangeNotifier {
     final idDieta = (h.idDieta).toString();
     final uid = _genIdUnico();
 
-    try {
-      await db.execute(
-        """
-        INSERT INTO $carreg(
-          ID, ID_FABRICACAO, ID_DIETA, PESO_FABRICADO, PESO_CARREGADO, ID_VAGAO
-        ) VALUES(?,?,?,?,?,?)
-        """,
-        [uid, h.id, idDieta, pesoFabricado, pesoCarregado, idVagao],
-      );
-    } catch (_) {}
+    final dataRegistro = DateTime.now().toIso8601String();
+
+    final vagaoIdInt = int.tryParse(idVagao) ?? 0;
+    if (vagaoIdInt <= 0) {
+      throw Exception(
+          "Vagão não configurado. Selecione um vagão nas configurações.");
+    }
+
+    await db.execute(
+      """
+      INSERT INTO $carreg(
+        ID,
+        DATA_REGISTRO,
+        STATUS,
+        ID_FABRICACAO,
+        ID_DIETA,
+        PESO_FABRICADO,
+        PESO_CARREGADO,
+        ID_VAGAO
+      ) VALUES(?,?,?,?,?,?,?,?)
+      """,
+      [
+        uid,
+        dataRegistro,
+        1, // ✅ ABERTO
+        h.id,
+        idDieta,
+        pesoFabricado,
+        pesoCarregado,
+        vagaoIdInt,
+      ],
+    );
 
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
@@ -1025,16 +1051,34 @@ class FabricacaoController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_isDisposed) return;
+    _isDisposing = true;
+    _isDisposed = true;
+    _closed = true;
+
+    // cancela timers
     _cancelAutoPulo();
 
-    () async {
-      try {
-        await stopMirror();
-      } catch (_) {}
-      try {
-        await _stopScale();
-      } catch (_) {}
-    }();
+    // ✅ cancela streams imediatamente (sem notify)
+    try {
+      _stSub?.cancel();
+    } catch (_) {}
+    try {
+      _wSub?.cancel();
+    } catch (_) {}
+    _stSub = null;
+    _wSub = null;
+
+    // ✅ mata scale sem await
+    try {
+      _scale?.stopNow();
+    } catch (_) {}
+    _scale = null;
+
+    // ✅ mata mirror sem await
+    try {
+      MirrorService.instance.stop();
+    } catch (_) {}
 
     super.dispose();
   }

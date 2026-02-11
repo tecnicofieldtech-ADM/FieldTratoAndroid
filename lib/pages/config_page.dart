@@ -42,6 +42,8 @@ class _ConfigPageState extends State<ConfigPage> {
   final _ipRfidCtrl = TextEditingController();
   final _portaRfidCtrl = TextEditingController();
   final _ipEspelhoCtrl = TextEditingController();
+  final _hostEstacionarioCtrl = TextEditingController();
+  final _portaEstacionarioCtrl = TextEditingController();
 
   // NOVOS CONTROLES
   final _incrementoBalancaCtrl = TextEditingController();
@@ -113,6 +115,8 @@ class _ConfigPageState extends State<ConfigPage> {
     _ipRfidCtrl.dispose();
     _portaRfidCtrl.dispose();
     _ipEspelhoCtrl.dispose();
+    _hostEstacionarioCtrl.dispose();
+    _portaEstacionarioCtrl.dispose();
 
     _incrementoBalancaCtrl.dispose();
     _tempoPuloCtrl.dispose();
@@ -191,6 +195,8 @@ class _ConfigPageState extends State<ConfigPage> {
       _portaRfidCtrl.text = _asStr(cfg["PORTA_RFID"]);
 
       _ipEspelhoCtrl.text = _asStr(cfg["IP_ESPELHO"]);
+      _hostEstacionarioCtrl.text = _asStr(cfg["HOST_ESTACIONARIO"]);
+      _portaEstacionarioCtrl.text = _asStr(cfg["PORTA_ESTACIONARIO"]);
 
       _idVagao = _asStr(cfg["ID_VAGAO"]).trim().isEmpty
           ? null
@@ -223,6 +229,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
       _tempoMisturaCtrl.text = "0";
       _toleranciaCarregCtrl.text = "0.000";
+      _portaEstacionarioCtrl.text = "8080";
     }
 
     await _reloadCombos();
@@ -299,6 +306,9 @@ class _ConfigPageState extends State<ConfigPage> {
       "NOME_VAGAO": _nomeVagao ?? "",
       "ID_FAZENDA": _idFazenda ?? "",
       "IP_ESPELHO": _ipEspelhoCtrl.text.trim(),
+      "HOST_ESTACIONARIO": _hostEstacionarioCtrl.text.trim(),
+      "PORTA_ESTACIONARIO":
+          int.tryParse(_portaEstacionarioCtrl.text.trim()) ?? 8080,
       "PULO_AUTOMATICO": pulo,
       "TEMPO_EM_SEGUNDOS_PULO": tempo,
       "INCREMENTO_PESO": inc,
@@ -585,8 +595,6 @@ class _ConfigPageState extends State<ConfigPage> {
     await comm.connect();
   }
 
-  // ============================
-
   Future<void> _onBaixarVagao() async {
     if (!_validateBase()) return;
 
@@ -625,11 +633,6 @@ class _ConfigPageState extends State<ConfigPage> {
     }
   }
 
-  // ============================================================
-  // ✅ CONFIRMAR:
-  // - 1º acesso (sem usuários locais): baixa usuários e vai pro /login
-  // - caso contrário: NÃO baixa e vai pro /menu
-  // ============================================================
   Future<void> _onConfirmar() async {
     if (!_validateBase()) return;
 
@@ -648,17 +651,13 @@ class _ConfigPageState extends State<ConfigPage> {
       await _cfgRepo.saveConfig(cfg);
 
       final hasUser = await _userRepo.hasAnyUser();
-
       if (!mounted) return;
 
       if (!hasUser) {
-        // ✅ Primeiro acesso
         await _bootstrap.baixarUsuarios(cfg, _idFazenda!);
-
         if (!mounted) return;
         Navigator.of(context).pushNamedAndRemoveUntil("/login", (_) => false);
       } else {
-        // ✅ Já tem usuário
         Navigator.of(context).pushNamedAndRemoveUntil("/menu", (_) => false);
       }
     } catch (e) {
@@ -715,10 +714,11 @@ class _ConfigPageState extends State<ConfigPage> {
         ? _idFazenda
         : null;
 
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
         await _handleBack();
-        return false;
       },
       child: Scaffold(
         appBar: AppBar(
@@ -767,7 +767,9 @@ class _ConfigPageState extends State<ConfigPage> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<int>(
-                        value: _backend,
+                        // ✅ key única (evita Duplicate keys)
+                        key: ValueKey("backend:$_backend"),
+                        initialValue: _backend,
                         items: ConfigOptions.backends.entries
                             .map((e) => DropdownMenuItem(
                                   value: e.key,
@@ -784,7 +786,9 @@ class _ConfigPageState extends State<ConfigPage> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: DropdownButtonFormField<int>(
-                        value: _operacao,
+                        // ✅ key única (evita Duplicate keys)
+                        key: ValueKey("operacao:$_operacao"),
+                        initialValue: _operacao,
                         items: ConfigOptions.operacoes.entries
                             .map((e) => DropdownMenuItem(
                                   value: e.key,
@@ -807,7 +811,8 @@ class _ConfigPageState extends State<ConfigPage> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _vagoes.isEmpty ? null : validVagaoValue,
+                        key: ValueKey("vagao:$validVagaoValue"),
+                        initialValue: _vagoes.isEmpty ? null : validVagaoValue,
                         items: _vagoes
                             .map((e) {
                               final id = _vagaoId(e);
@@ -827,7 +832,8 @@ class _ConfigPageState extends State<ConfigPage> {
                               orElse: () => {},
                             );
                             _nomeVagao = _vagaoNome(row);
-                            if (_nomeVagao != null && _nomeVagao!.trim().isEmpty) {
+                            if (_nomeVagao != null &&
+                                _nomeVagao!.trim().isEmpty) {
                               _nomeVagao = null;
                             }
                           });
@@ -847,7 +853,8 @@ class _ConfigPageState extends State<ConfigPage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Vagão"),
@@ -862,7 +869,9 @@ class _ConfigPageState extends State<ConfigPage> {
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _fazendas.isEmpty ? null : validFazendaValue,
+                        key: ValueKey("fazenda:$validFazendaValue"),
+                        initialValue:
+                            _fazendas.isEmpty ? null : validFazendaValue,
                         items: _fazendas
                             .map(
                               (e) => DropdownMenuItem(
@@ -887,7 +896,8 @@ class _ConfigPageState extends State<ConfigPage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Fazendas"),
@@ -900,9 +910,11 @@ class _ConfigPageState extends State<ConfigPage> {
                 // ========= BALANÇA =========
                 _sectionTitle("Balança"),
                 DropdownButtonFormField<int>(
-                  value: _modeloBalanca,
+                  key: ValueKey("modeloBalanca:$_modeloBalanca"),
+                  initialValue: _modeloBalanca,
                   items: ConfigOptions.modelosBalanca.entries
-                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                      .map((e) =>
+                          DropdownMenuItem(value: e.key, child: Text(e.value)))
                       .toList(),
                   onChanged: (v) => setState(() => _modeloBalanca = v ?? 0),
                   decoration: const InputDecoration(
@@ -1007,9 +1019,11 @@ class _ConfigPageState extends State<ConfigPage> {
                 // ========= RFID =========
                 _sectionTitle("RFID"),
                 DropdownButtonFormField<int>(
-                  value: _modeloRfid,
+                  key: ValueKey("modeloRfid:$_modeloRfid"),
+                  initialValue: _modeloRfid,
                   items: ConfigOptions.modelosRfid.entries
-                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                      .map((e) =>
+                          DropdownMenuItem(value: e.key, child: Text(e.value)))
                       .toList(),
                   onChanged: (v) => setState(() => _modeloRfid = v ?? 0),
                   decoration: const InputDecoration(
@@ -1097,7 +1111,8 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _toleranciaCarregCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(
                     labelText: "Tolerância da fabricação (%)",
                     helperText: "Ex: 2,5 = 2.5% (aceita vírgula).",
@@ -1116,6 +1131,29 @@ class _ConfigPageState extends State<ConfigPage> {
                   ),
                 ),
                 const SizedBox(height: 22),
+
+                if (_operacao == 2) ...[
+                  _sectionTitle("Integração Estacionário"),
+                  TextField(
+                    controller: _hostEstacionarioCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "IP do Estacionário (Bridge)",
+                      helperText: "Ex: 192.168.4.1",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Porta fixa: 8080",
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                ],
 
                 SizedBox(
                   width: double.infinity,

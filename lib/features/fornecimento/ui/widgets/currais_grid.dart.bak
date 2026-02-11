@@ -1,0 +1,47 @@
+// lib/features/fornecimento/ui/widgets/currais_grid.dart
+import "package:flutter/material.dart";
+import "../../data/fornecimento_models.dart";
+import "curral_card.dart";
+
+class CurraisGrid extends StatelessWidget {
+  const CurraisGrid({
+    super.key,
+    required this.items,
+    required this.onTap,
+  });
+
+  final List<CurralPrev> items;
+  final void Function(CurralPrev item) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+
+    var crossAxisCount = 2;
+    if (w >= 1100) {
+      crossAxisCount = 4;
+    } else if (w >= 800) {
+      crossAxisCount = 3;
+    } else {
+      crossAxisCount = 2;
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1.35,
+      ),
+      itemCount: items.length,
+      itemBuilder: (_, i) {
+        final item = items[i];
+        return CurralCard(
+          item: item,
+          onTap: () => onTap(item),
+        );
+      },
+    );
+  }
+}

@@ -1,7 +1,8 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'dart:math';
+// lib/helpers/scale_comm.dart
+import "dart:async";
+import "dart:convert";
+import "dart:io";
+import "dart:math";
 
 enum ScaleModel { topcom, dg500, alfa, raw }
 
@@ -43,7 +44,9 @@ class ScaleComm {
         _minIntervalMs = minIntervalMs,
         _connectTimeout = connectTimeout,
         _reconnectDelay = reconnectDelay,
-        _autoReconnect = autoReconnect;
+        _autoReconnect = autoReconnect {
+    _reconnectEnabled = autoReconnect;
+  }
 
   String _host;
   int _port;
@@ -53,35 +56,31 @@ class ScaleComm {
   double _minDelta;
   int _minIntervalMs;
 
-  Duration _connectTimeout;
+  final Duration _connectTimeout;
   Duration _reconnectDelay;
-  bool _autoReconnect;
+
+  final bool _autoReconnect;
+  bool _reconnectEnabled = true;
 
   Socket? _socket;
   StreamSubscription<List<int>>? _sub;
 
-  // ✅ timer cancelável do reconnect
   Timer? _reconnectTimer;
 
-  // lock anti-dupla-conexão
   bool _connecting = false;
   bool _shuttingDown = false;
 
-  // buffer de texto
-  String _buf = '';
+  String _buf = "";
   static const int _maxBuf = 8192;
 
-  // throttle
   double _lastPosted = -1.0e12;
   int _lastPostAtMs = 0;
   final Stopwatch _sw = Stopwatch();
 
-  // snapshot (último peso)
   double? _lastWeight;
   DateTime? _lastReadAt;
   bool _hasNew = false;
 
-  // streams
   final _statusCtrl = StreamController<ScaleEvent>.broadcast();
   final _weightCtrl = StreamController<ScaleWeightEvent>.broadcast();
 
@@ -91,23 +90,19 @@ class ScaleComm {
   double? get lastWeight => _lastWeight;
   DateTime? get lastReadAt => _lastReadAt;
 
-  // ✅ para tudo IMEDIATO (sem await)
   void stopNow() {
     _shuttingDown = true;
-    _autoReconnect = false;
+    _reconnectEnabled = false;
 
-    // cancela reconnect pendente
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
 
-    // cancela stream sem travar
     try {
       // ignore: unawaited_futures
       _sub?.cancel();
     } catch (_) {}
     _sub = null;
 
-    // mata socket agora
     try {
       _socket?.destroy();
     } catch (_) {}
@@ -120,7 +115,10 @@ class ScaleComm {
     if (!_hasNew || _lastWeight == null || _lastReadAt == null) return null;
     _hasNew = false;
     return ScaleWeightEvent(
-        weight: _lastWeight!, readAt: _lastReadAt!, rawLine: '');
+      weight: _lastWeight!,
+      readAt: _lastReadAt!,
+      rawLine: "",
+    );
   }
 
   void configure({
@@ -141,7 +139,7 @@ class ScaleComm {
   }
 
   void setReconnect({bool? autoReconnect, Duration? reconnectDelay}) {
-    if (autoReconnect != null) _autoReconnect = autoReconnect;
+    if (autoReconnect != null) _reconnectEnabled = autoReconnect;
     if (reconnectDelay != null) _reconnectDelay = reconnectDelay;
   }
 
@@ -149,10 +147,15 @@ class ScaleComm {
   // ✅ START
   // =========================================================
   Future<void> connect() async {
-    if (_connecting) return;
-    if (_shuttingDown) return;
+    // ✅ RECONEXÃO MANUAL: destrava stopNow()
+    // Se o usuário apertou "Reconectar", a intenção é religar.
+    _shuttingDown = false;
 
-    // ✅ se tinha reconnect pendente, cancela
+    // ✅ volta pro padrão runtime (permite auto-reconnect de novo)
+    _reconnectEnabled = _autoReconnect;
+
+    if (_connecting) return;
+
     _cancelReconnectTimer();
 
     _connecting = true;
@@ -171,9 +174,10 @@ class ScaleComm {
       sock.setOption(SocketOption.tcpNoDelay, true);
       _socket = sock;
 
-      _buf = '';
+      _buf = "";
       _lastPosted = -1.0e12;
       _lastPostAtMs = 0;
+
       if (!_sw.isRunning) _sw.start();
       _sw.reset();
       _sw.start();
@@ -191,7 +195,7 @@ class ScaleComm {
       await _stopReader();
       await _safeCloseSocket();
 
-      if (_autoReconnect && !_shuttingDown) {
+      if (_autoReconnect && _reconnectEnabled && !_shuttingDown) {
         _scheduleReconnect();
       }
     } finally {
@@ -205,8 +209,7 @@ class ScaleComm {
   Future<void> stop() async {
     _shuttingDown = true;
 
-    // ✅ desliga reconexão e cancela qualquer agendamento pendente
-    _autoReconnect = false;
+    _reconnectEnabled = false;
     _cancelReconnectTimer();
 
     _emitStatus(ScaleStatus.disconnected);
@@ -215,7 +218,6 @@ class ScaleComm {
     await _safeCloseSocket();
   }
 
-  // mantive disconnect por compat, mas agora chama stop()
   Future<void> disconnect() async => stop();
 
   Future<void> dispose() async {
@@ -237,9 +239,9 @@ class ScaleComm {
       _buf = _buf.substring(_buf.length - _maxBuf);
     }
 
-    final parts = _buf.split(RegExp(r'[\r\n]+', multiLine: true));
+    final parts = _buf.split(RegExp(r"[\r\n]+", multiLine: true));
     if (parts.length <= 1) {
-      _buf = parts.isEmpty ? '' : parts.first;
+      _buf = parts.isEmpty ? "" : parts.first;
       return;
     }
 
@@ -270,7 +272,11 @@ class ScaleComm {
 
       if (!_weightCtrl.isClosed) {
         _weightCtrl.add(
-          ScaleWeightEvent(weight: weight, readAt: _lastReadAt!, rawLine: line),
+          ScaleWeightEvent(
+            weight: weight,
+            readAt: _lastReadAt!,
+            rawLine: line,
+          ),
         );
       }
     }
@@ -279,29 +285,35 @@ class ScaleComm {
   void _onSocketError(Object e) {
     if (_shuttingDown) return;
     _emitStatus(ScaleStatus.error, message: e.toString());
+    // ignore: unawaited_futures
     _stopReader();
+    // ignore: unawaited_futures
     _safeCloseSocket();
-    if (_autoReconnect) _scheduleReconnect();
+    if (_autoReconnect && _reconnectEnabled) _scheduleReconnect();
   }
 
   void _onSocketDone() {
     if (_shuttingDown) return;
     _emitStatus(ScaleStatus.disconnected);
+    // ignore: unawaited_futures
     _stopReader();
+    // ignore: unawaited_futures
     _safeCloseSocket();
-    if (_autoReconnect) _scheduleReconnect();
+    if (_autoReconnect && _reconnectEnabled) _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
     if (_shuttingDown) return;
     if (!_autoReconnect) return;
+    if (!_reconnectEnabled) return;
 
-    // ✅ evita múltiplos agendamentos
     if (_reconnectTimer?.isActive == true) return;
 
     _reconnectTimer = Timer(_reconnectDelay, () {
       if (_shuttingDown) return;
       if (!_autoReconnect) return;
+      if (!_reconnectEnabled) return;
+      // ignore: unawaited_futures
       connect();
     });
   }
@@ -336,7 +348,7 @@ class ScaleComm {
       if (code == 10 || code == 13) {
         sb.writeCharCode(code);
       } else if (code < 32) {
-        sb.write('\n');
+        sb.write("\n");
       } else {
         sb.writeCharCode(code);
       }
@@ -352,7 +364,7 @@ class ScaleComm {
     final tryDot = double.tryParse(s);
     if (tryDot != null) return tryDot;
 
-    final sComma = s.replaceAll(',', '.');
+    final sComma = s.replaceAll(",", ".");
     return double.tryParse(sComma);
   }
 
@@ -363,7 +375,8 @@ class ScaleComm {
       final b = StringBuffer();
       for (int i = 0; i < x.length; i++) {
         final c = x[i];
-        if (c.codeUnitAt(0) >= 48 && c.codeUnitAt(0) <= 57) b.write(c);
+        final u = c.codeUnitAt(0);
+        if (u >= 48 && u <= 57) b.write(c);
       }
       return b.toString();
     }
@@ -371,55 +384,52 @@ class ScaleComm {
     try {
       switch (_model) {
         case ScaleModel.topcom:
-          {
-            final up = s.toUpperCase();
-            final p = up.indexOf('K');
-            if (p > 0) return onlyDigits(s.substring(0, p));
-            return null;
-          }
+          final up = s.toUpperCase();
+          final p = up.indexOf("K");
+          if (p > 0) return onlyDigits(s.substring(0, p));
+          return null;
 
         case ScaleModel.dg500:
-          {
-            final up = s.toUpperCase();
-            int p = up.indexOf('PB:');
-            if (p >= 0) {
-              p += 3;
-            } else {
-              p = s.indexOf(':');
-              if (p < 0) return null;
-              p += 1;
-            }
-
-            while (p < s.length && s[p] == ' ') p++;
-
-            String sign = '';
-            if (p < s.length && (s[p] == '+' || s[p] == '-')) {
-              sign = s[p];
-              p++;
-            }
-
-            int i = p;
-            int count = 0;
-            while (i < s.length && count < 6) {
-              final ch = s[i];
-              final cu = ch.codeUnitAt(0);
-              final isDigit = cu >= 48 && cu <= 57;
-              if (!isDigit) break;
-              i++;
-              count++;
-            }
-
-            if (count == 0) return null;
-            final num = s.substring(p, p + count);
-            return sign.isEmpty ? num : (sign + num);
+          final up = s.toUpperCase();
+          int p = up.indexOf("PB:");
+          if (p >= 0) {
+            p += 3;
+          } else {
+            p = s.indexOf(":");
+            if (p < 0) return null;
+            p += 1;
           }
+
+          while (p < s.length && s[p] == " ") {
+            p++;
+          }
+
+          String sign = "";
+          if (p < s.length && (s[p] == "+" || s[p] == "-")) {
+            sign = s[p];
+            p++;
+          }
+
+          int i = p;
+          int count = 0;
+          while (i < s.length && count < 6) {
+            final ch = s[i];
+            final cu = ch.codeUnitAt(0);
+            final isDigit = cu >= 48 && cu <= 57;
+            if (!isDigit) break;
+            i++;
+            count++;
+          }
+
+          if (count == 0) return null;
+          final num = s.substring(p, p + count);
+          return sign.isEmpty ? num : "$sign$num";
 
         case ScaleModel.alfa:
-          {
-            if (s.length >= 9)
-              return onlyDigits(s.substring(4, min(9, s.length)));
-            return onlyDigits(s);
+          if (s.length >= 9) {
+            return onlyDigits(s.substring(4, min(9, s.length)));
           }
+          return onlyDigits(s);
 
         case ScaleModel.raw:
           return s;

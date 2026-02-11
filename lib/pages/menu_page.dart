@@ -1,9 +1,44 @@
-// lib/pages/menu_page.dart
+﻿// lib/pages/menu_page.dart
 import "package:flutter/material.dart";
+import "../repo/config_repo.dart";
+import "../services/carregamento_bridge.dart";
 import "../widgets/app_logo.dart";
 
-class MenuPage extends StatelessWidget {
+class MenuPage extends StatefulWidget {
   const MenuPage({super.key});
+
+  @override
+  State<MenuPage> createState() => _MenuPageState();
+}
+
+class _MenuPageState extends State<MenuPage> {
+  final _cfgRepo = ConfigRepo();
+
+  int? _tipoTrabalho;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTipoTrabalho();
+  }
+
+  Future<void> _loadTipoTrabalho() async {
+    try {
+      final t = await _cfgRepo.getTipoTrabalho();
+      if (t == 1) {
+        final port = await _cfgRepo.getPortaEstacionario();
+        // ignore: unawaited_futures
+        CarregamentoBridgeServer.instance.start(port: port);
+      } else {
+        // ignore: unawaited_futures
+        CarregamentoBridgeServer.instance.stop();
+      }
+      if (!mounted) return;
+      setState(() => _tipoTrabalho = t);
+    } catch (_) {
+      // deixa null para não bloquear menus se config falhar
+    }
+  }
 
   void _go(BuildContext context, String route) {
     Navigator.pushNamed(context, route);
@@ -18,7 +53,7 @@ class MenuPage extends StatelessWidget {
     const padding = 18.0;
     const gap = 12.0;
 
-    // ✅ ajuste pro seu caminho real
+    // âœ… ajuste pro seu caminho real
     const bgAsset = "assets/images/bg_boi_tech.png";
 
     return Scaffold(
@@ -34,8 +69,8 @@ class MenuPage extends StatelessWidget {
             errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
 
-          // leve “wash” para a logo e botões destacarem
-          Container(color: Colors.white.withOpacity(0.50)),
+          // leve â€œwashâ€ para a logo e botÃµes destacarem
+          Container(color: Colors.white.withValues(alpha: 0.50)),
 
           SafeArea(
             child: Padding(
@@ -47,12 +82,65 @@ class MenuPage extends StatelessWidget {
                   // 2 colunas fixas
                   final tileW = (w - gap) / 2;
 
-                  // ✅ altura um pouco maior (antes ~56-70)
+                  // âœ… altura um pouco maior (antes ~56-70)
                   final tileH = (w * 0.18).clamp(66.0, 86.0);
+
+                  final t = _tipoTrabalho;
+                  final podeFabricar = (t == null) || t == 0 || t == 1;
+                  final podeFornecer = (t == null) || t == 0 || t == 2;
 
                   return Column(
                     children: [
-                      // Conteúdo scrollável
+                      if (t == 1) ...[
+                        ValueListenableBuilder<String>(
+                          valueListenable:
+                              CarregamentoBridgeServer.instance.statusText,
+                          builder: (_, v, __) {
+                            return Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.80),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.15),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.link,
+                                      color: Colors.white, size: 18),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    "Bridge:",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      v,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color:
+                                            Colors.white.withValues(alpha: 0.9),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+
+                      // ConteÃºdo scrollÃ¡vel
                       Expanded(
                         child: SingleChildScrollView(
                           child: Column(
@@ -78,7 +166,7 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.settings,
                                       title: "Configuração",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
                                       onTap: () =>
                                           Navigator.pushReplacementNamed(
@@ -92,7 +180,7 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.sync,
                                       title: "Sincronização",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
                                       onTap: () => _go(context, "/sync"),
                                     ),
@@ -111,9 +199,14 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.precision_manufacturing,
                                       title: "Fabricação",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
+                                      enabled: podeFabricar,
                                       onTap: () => _go(context, "/fabricacao"),
+                                      onDisabledTap: () => _toast(
+                                        context,
+                                        "Modo Distribuidor: Fabricação desabilitada.",
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: gap),
@@ -123,10 +216,15 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.local_shipping,
                                       title: "Fornecimento",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
+                                      enabled: podeFornecer,
                                       onTap: () =>
                                           _go(context, "/fornecimento"),
+                                      onDisabledTap: () => _toast(
+                                        context,
+                                        "Modo Estacionário: Fornecimento desabilitado.",
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -143,7 +241,7 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.nfc,
                                       title: "Gravar TAG",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
                                       onTap: () => _toast(
                                           context, "Em breve: Gravar TAG"),
@@ -156,7 +254,7 @@ class MenuPage extends StatelessWidget {
                                     child: _Tile(
                                       icon: Icons.dashboard_outlined,
                                       title: "Dashboard",
-                                      bg: Colors.black.withOpacity(0.80),
+                                      bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
                                       onTap: () => _toast(
                                           context, "Em breve: Dashboard"),
@@ -171,7 +269,7 @@ class MenuPage extends StatelessWidget {
                         ),
                       ),
 
-                      // ✅ SAIR NO RODAPÉ (fixo)
+                      // âœ… SAIR NO RODAPÃ‰ (fixo)
                       SizedBox(
                         width: double.infinity,
                         height: 52,
@@ -208,6 +306,8 @@ class _Tile extends StatelessWidget {
   final Color bg;
   final Color fg;
   final VoidCallback onTap;
+  final bool enabled;
+  final VoidCallback? onDisabledTap;
 
   const _Tile({
     required this.icon,
@@ -215,25 +315,34 @@ class _Tile extends StatelessWidget {
     required this.bg,
     required this.fg,
     required this.onTap,
+    this.enabled = true,
+    this.onDisabledTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final canTap = enabled;
+    final bgFinal = canTap ? bg : Colors.grey.shade400;
+    final fgFinal = canTap ? fg : Colors.black54;
+    final borderColor = canTap
+        ? Colors.white.withValues(alpha: 0.15)
+        : Colors.black.withValues(alpha: 0.10);
+
     return InkWell(
-      onTap: onTap,
+      onTap: canTap ? onTap : onDisabledTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         decoration: BoxDecoration(
-          color: bg,
+          color: bgFinal,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.15)),
+          border: Border.all(color: borderColor),
         ),
         padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
         child: Column(
           children: [
             Align(
               alignment: Alignment.topCenter,
-              child: Icon(icon, size: 28, color: fg),
+              child: Icon(icon, size: 28, color: fgFinal),
             ),
             const Spacer(),
             Padding(
@@ -244,7 +353,7 @@ class _Tile extends StatelessWidget {
                   title,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: fg,
+                    color: fgFinal,
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                     height: 1.05,

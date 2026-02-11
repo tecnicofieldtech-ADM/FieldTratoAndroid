@@ -23,13 +23,17 @@ class SyncOrchestrator {
     required void Function(String) log,
   }) async {
     final cfg = await cfgRepo.getConfig();
-    if (cfg == null) throw Exception("Config não encontrada.");
+    if (cfg == null) {
+      throw Exception("Config não encontrada.");
+    }
 
     final baseUrl = cfgRepo.buildBaseUrl(cfg);
     if (baseUrl.isEmpty) throw Exception("HOST/PORTA inválidos.");
 
     final idFazenda = (cfg["ID_FAZENDA"] ?? "").toString().trim();
-    if (idFazenda.isEmpty) throw Exception("ID_FAZENDA vazio (selecione e confirme).");
+    if (idFazenda.isEmpty) {
+      throw Exception("ID_FAZENDA vazio (selecione e confirme).");
+    }
 
     final idVagao = (cfg["ID_VAGAO"] ?? "").toString().trim();
 
@@ -49,23 +53,44 @@ class SyncOrchestrator {
       ),
 
       // ====== ENVIO ======
-      SyncStep(title: "⏫ Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
-      SyncStep(title: "⏫ Sincronizando Fábrica Ração", run: () => outbox.syncFabricacao(log, idVagao)),
-      SyncStep(title: "⏫ Sincronizando Fornecimento", run: () => outbox.syncFornecimento(log)),
+      SyncStep(
+          title: "⏫ Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
+      SyncStep(
+          title: "⏫ Sincronizando Fábrica Ração",
+          run: () => outbox.syncFabricacao(log, idVagao)),
+      SyncStep(
+          title: "⏫ Sincronizando Fornecimento",
+          run: () => outbox.syncFornecimento(log)),
 
       // ====== DOWNLOAD ======
-      SyncStep(title: "⏬ Baixando Usuários", run: () => bootstrap.baixarUsuarios(cfg, idFazenda)),
-      SyncStep(title: "⏬ Baixando Baias", run: () => bootstrap.baixarBaias(cfg, idFazenda)),
-      SyncStep(title: "⏬ Baixando Dietas", run: () => bootstrap.baixarDietas(cfg, idFazenda)),
-      SyncStep(title: "⏬ Baixando Dietas Detalhes", run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda)),
-      SyncStep(title: "⏬ Baixando Previsão de Trato (hoje)", run: () => bootstrap.baixarPrevisaoTrato(cfg, idFazenda, today)),
+      SyncStep(
+          title: "⏬ Baixando Usuários",
+          run: () => bootstrap.baixarUsuarios(cfg, idFazenda)),
+      SyncStep(
+          title: "⏬ Baixando Baias",
+          run: () => bootstrap.baixarBaias(cfg, idFazenda)),
+      SyncStep(
+          title: "⏬ Baixando Dietas",
+          run: () => bootstrap.baixarDietas(cfg, idFazenda)),
+      SyncStep(
+          title: "⏬ Baixando Dietas Detalhes",
+          run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda)),
+      SyncStep(
+        title: "⏬ Baixando Previsão de Trato (hoje)",
+        run: () => bootstrap.baixarPrevisaoTrato(
+          cfg,
+          idFazenda,
+          today,
+          log: log,
+        ),
+      ),
     ];
   }
 
   static String _todayYmd() {
     final now = DateTime.now();
     final y = now.year.toString().padLeft(4, "0");
-      final m = now.month.toString().padLeft(2, "0");
+    final m = now.month.toString().padLeft(2, "0");
     final d = now.day.toString().padLeft(2, "0");
     return "$y-$m-$d";
   }

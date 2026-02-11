@@ -2,6 +2,7 @@
 import "dart:async";
 import "package:flutter/foundation.dart";
 
+import "../../../repo/config_repo.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
 import "../domain/histerese_params.dart";
@@ -22,6 +23,7 @@ class FornecimentoController extends ChangeNotifier {
   final ScaleTcpService scale;
   final RfidTcpService rfid;
   final String idUsuario;
+  final _cfgRepo = ConfigRepo();
 
   // -----------------------
   // Estado / sessão
@@ -134,6 +136,15 @@ class FornecimentoController extends ChangeNotifier {
 
       // carregamento aberto (obrigatório)
       carregamento = await repo.getCarregamentoAberto();
+      if (carregamento == null) {
+        final tipo = await _cfgRepo.getTipoTrabalho();
+        if (tipo == 2) {
+          final ok = await repo.tryImportCarregamentoFromEstacionario();
+          if (ok) {
+            carregamento = await repo.getCarregamentoAberto();
+          }
+        }
+      }
       if (carregamento == null || carregamento!.status != 0) {
         _erro =
             "Sem CARREGAMENTO em aberto (STATUS=0). Abra um carregamento antes de fornecer.";
@@ -308,37 +319,33 @@ class FornecimentoController extends ChangeNotifier {
     final ymd = _ymd(data);
     final trato = c.trato;
 
-    // ✅ chave estável (idBaia|idRacao|data|trato)
-    final key = FornecimentoRepo.comboKey(
-      idBaia: c.idBaia,
-      idRacao: idRacao,
-      dataYmd: ymd,
-      trato: trato,
-    );
+    final idFornecimento = (c.idFornecimento ?? "").trim().isNotEmpty
+        ? (c.idFornecimento ?? "").trim()
+        : FornecimentoRepo.comboKey(
+            idBaia: c.idBaia,
+            idRacao: idRacao,
+            dataYmd: ymd,
+            trato: trato,
+          );
 
     final realizado = realizadoParcial;
 
     try {
-      // 1) garante/abre registro em CADASTRO_FORNECIMENTO (ou pega o aberto)
-      final idCadastro = await repo.iniciarCadastroFornecimento(
-        idFornecimento: key, // ✅ agora é a comboKey
+      // 1) salva finalizado (SQLite) - novo fluxo
+      await repo.salvarCadastroFinalizado(
+        idFornecimento: idFornecimento,
         idCurral: c.idBaia,
         data: data,
         trato: trato,
         previstoKg: c.previstoKg,
-        pesoInicio: pesoInicio ?? pesoAtual,
-      );
-
-      // 2) finaliza CADASTRO_FORNECIMENTO
-      await repo.finalizarCadastroFornecimento(
-        idCadastro: idCadastro,
         pesoFim: pesoAtual,
         realizadoKg: realizado,
+        idUsuario: idUsuario,
       );
 
       // 3) soma com acumulado e atualiza PREVISAO (por data+trato+baia)
       final acumulado = await repo.getRealizadoAcumuladoDoCurral(
-        idFornecimento: key,
+        idFornecimento: idFornecimento,
         idCurral: c.idBaia,
         data: data,
         trato: trato,
@@ -347,7 +354,7 @@ class FornecimentoController extends ChangeNotifier {
       final novoRealizado = _round3(acumulado + realizado);
 
       await repo.setPrevRealizado(
-        idFornecimento: key,
+        idFornecimento: idFornecimento,
         idCurral: c.idBaia,
         data: data,
         trato: trato,

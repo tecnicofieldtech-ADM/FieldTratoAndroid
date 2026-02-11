@@ -2,7 +2,7 @@
 import "package:flutter/foundation.dart";
 
 // ✅ Corrige o import: CurralPrev está em /data/fornecimento_models.dart
-import "../data/fornecimento_models.dart";
+import "../domain/fornecimento_models.dart";
 
 /// Estado de sessão do fornecimento (Rotormix)
 /// - não cria arquitetura nova: é só um "state holder" imutável com copyWith

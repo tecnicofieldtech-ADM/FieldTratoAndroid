@@ -8,8 +8,6 @@ class ConfigRepo {
   // ✅ GARANTE COLUNAS (migração segura)
   // =========================================================
   Future<void> _ensureColumns(Database db) async {
-    // Se a tabela não existir ainda, não faz nada aqui.
-    // (normalmente ela já foi criada no onCreate do AppDb)
     try {
       final cols = await _getConfigColumns(db);
 
@@ -18,24 +16,38 @@ class ConfigRepo {
         await db.execute("ALTER TABLE CONFIG ADD COLUMN $ddl");
       }
 
-      // Campos antigos (caso algum ambiente não tenha)
+      // Campos antigos (caso algum device esteja com tabela velha)
       await addIfMissing(
           "pulo_automatico", "PULO_AUTOMATICO INTEGER DEFAULT 1");
-      await addIfMissing("tempo_em_segundos_pulo",
-          "TEMPO_EM_SEGUNDOS_PULO INTEGER DEFAULT 10");
+      await addIfMissing(
+        "tempo_em_segundos_pulo",
+        "TEMPO_EM_SEGUNDOS_PULO INTEGER DEFAULT 10",
+      );
       await addIfMissing(
           "incremento_peso", "INCREMENTO_PESO INTEGER DEFAULT 1");
 
-      // ✅ NOVOS CAMPOS
-      await addIfMissing("tempo_mistura",
-          "TEMPO_MISTURA INTEGER"); // você vai usar como SEGUNDOS
+      // ✅ NOVOS CAMPOS (você já tem no onCreate, mas isso protege upgrades)
+      await addIfMissing("tempo_mistura", "TEMPO_MISTURA INTEGER");
       await addIfMissing(
         "tolerancia_carregamento",
-        "TOLERANCIA_CARREGAMENTO NUMERIC(15,3) DEFAULT 0",
+        "TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0",
       );
+
+      // ✅ opcional (se você for usar tolerância em KG também)
+      await addIfMissing(
+        "tolerancia_carregamento_kg",
+        "TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0",
+      );
+
+      // ✅ GARANTE que ID_VAGAO exista como TEXT (UUID)
+      await addIfMissing("id_vagao", "ID_VAGAO TEXT");
+      await addIfMissing("nome_vagao", "NOME_VAGAO TEXT");
+      await addIfMissing("ip_espelho", "IP_ESPELHO TEXT");
+      await addIfMissing("host_estacionario", "HOST_ESTACIONARIO TEXT");
+      await addIfMissing("porta_estacionario", "PORTA_ESTACIONARIO INTEGER");
     } catch (_) {
-      // se der algum erro de PRAGMA/tabela não existe, ignora aqui.
-      // seu AppDb onCreate deve garantir a criação.
+      // se der erro (tabela não existe, etc.), ignora aqui.
+      // seu AppDb.onCreate garante a criação.
     }
   }
 
@@ -43,7 +55,7 @@ class ConfigRepo {
     final rows = await db.rawQuery("PRAGMA table_info(CONFIG)");
     final set = <String>{};
     for (final r in rows) {
-      final name = (r["name"] ?? "").toString().toLowerCase();
+      final name = (r["name"] ?? "").toString().toLowerCase().trim();
       if (name.isNotEmpty) set.add(name);
     }
     return set;
@@ -57,7 +69,7 @@ class ConfigRepo {
     await _ensureColumns(db);
 
     final rows = await db.rawQuery("SELECT * FROM CONFIG LIMIT 1");
-    return rows.isEmpty ? null : rows.first;
+    return rows.isEmpty ? null : Map<String, Object?>.from(rows.first);
   }
 
   Future<void> saveConfig(Map<String, Object?> data) async {
@@ -157,36 +169,36 @@ class ConfigRepo {
   Future<int> getTipoTrabalho() async =>
       _toInt(await _getField("TIPO_TRABALHO"), def: 0);
 
+  /// ✅ ID do vagão é TEXT (UUID)
   Future<String> getIdVagao() async =>
-      _toStr(await _getField("ID_VAGAO"), def: "");
+      _toStr(await _getField("ID_VAGAO"), def: "").trim();
 
-  // TEMPO_MISTURA em MINUTOS (INTEGER)
+  Future<String> getNomeVagao() async =>
+      _toStr(await _getField("NOME_VAGAO"), def: "").trim();
+
+  /// TEMPO_MISTURA em MINUTOS (INTEGER)
   Future<int> getTempoMisturaMinutos() async {
-    final cfg = await getConfig();
-    final v = (cfg?["TEMPO_MISTURA"] ?? 0).toString().trim();
-    return int.tryParse(v) ?? 0;
+    final v = await _getField("TEMPO_MISTURA");
+    return _toInt(v, def: 0);
   }
 
-  /// TOLERANCIA_CARREGAMENTO em % (NUMERIC)  ex: 2.5 = 2,5%
+  /// TOLERANCIA_CARREGAMENTO em % (NUMERIC) ex: 2.5 = 2,5%
   Future<double> getToleranciaCarregamentoPct() async {
-    final cfg = await getConfig();
-    final raw = (cfg?["TOLERANCIA_CARREGAMENTO"] ?? 0).toString().trim();
+    final raw =
+        _toStr(await _getField("TOLERANCIA_CARREGAMENTO"), def: "").trim();
     if (raw.isEmpty) return 0.0;
 
-    // aceita "2,5" e "2.5"
-    final norm = raw.replaceAll(".", "").replaceAll(",", ".");
-    final d = double.tryParse(norm) ??
-        double.tryParse(raw.replaceAll(",", ".")) ??
-        0.0;
+    // apenas troca vírgula por ponto
+    final norm = raw.replaceAll(",", ".");
+    final d = double.tryParse(norm) ?? 0.0;
     return d < 0 ? 0.0 : d;
   }
 
-  /// ✅ NOVO: tolerância de carregamento em KG (ex.: 15.000)
+  /// ✅ opcional: tolerância em KG
   Future<double> getToleranciaCarregamentoKg() async {
-    final v1 = await _getField("TOLERANCIA_CARREGAMENTO");
-    final v2 = await _getField("TOLERANCIA_CARREGAMENTO_KG");
-    final v = _toDouble(v1 ?? v2, def: 0.0);
-    return v < 0 ? 0.0 : v;
+    final v = await _getField("TOLERANCIA_CARREGAMENTO_KG");
+    final d = _toDouble(v, def: 0.0);
+    return d < 0 ? 0.0 : d;
   }
 
   // =========================================================
@@ -196,8 +208,7 @@ class ConfigRepo {
     final v1 = await _getField("ID_FAZENDA");
     final v2 = await _getField("IDFAZENDA");
     final v3 = await _getField("FAZENDA_ID");
-    final v = _toStr(v1 ?? v2 ?? v3, def: "");
-    return v.trim();
+    return _toStr(v1 ?? v2 ?? v3, def: "").trim();
   }
 
   // =========================================================
@@ -234,25 +245,74 @@ class ConfigRepo {
     if (host.startsWith("http://") || host.startsWith("https://")) {
       return host;
     }
-
     if (port <= 0) return "$scheme://$host";
     return "$scheme://$host:$port";
   }
 
-// -------------------------
-// ESPELHO (PÁ)
-// -------------------------
+  // =========================================================
+  // ✅ PENDÊNCIAS DE SINCRONIZAÇÃO (OUTBOX)
+  // =========================================================
+
+  Future<int> countFabricacaoPendenteSync() async {
+    final db = await _db;
+    try {
+      final rows = await db.rawQuery(
+        "SELECT COUNT(*) AS QTD "
+        "FROM CADASTRO_FABRICA_RACAO "
+        "WHERE IFNULL(QTD_REALIZADA,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0",
+      );
+      if (rows.isEmpty) return 0;
+      final v = rows.first["QTD"];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v?.toString() ?? "") ?? 0;
+    } catch (_) {
+      return 0; // se tabela/coluna não existir ainda em algum device velho
+    }
+  }
+
+  Future<int> countFornecimentoPendenteSync() async {
+    final db = await _db;
+    try {
+      final rows = await db.rawQuery(
+        "SELECT COUNT(*) AS QTD "
+        "FROM CADASTRO_FORNECIMENTO "
+        "WHERE IFNULL(REALIZADO,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0",
+      );
+      if (rows.isEmpty) return 0;
+      final v = rows.first["QTD"];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v?.toString() ?? "") ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  // -------------------------
+  // ESPELHO (PÁ)
+  // -------------------------
   Future<String> getIpEspelho() async {
     final v1 = await _getField("IP_ESPELHO");
     final v2 = await _getField("HOST_ESPELHO");
     final v3 = await _getField("ESPELHO_IP");
-    final ip = _toStr(v1 ?? v2 ?? v3, def: "").trim();
-    return ip;
+    return _toStr(v1 ?? v2 ?? v3, def: "").trim();
   }
 
   Future<int> getPortaEspelho() async {
     final v1 = await _getField("PORTA_ESPELHO");
     final v = _toInt(v1, def: 9000);
     return v <= 0 ? 9000 : v;
+  }
+
+  // -------------------------
+  // BRIDGE ESTACIONARIO
+  // -------------------------
+  Future<String> getHostEstacionario() async =>
+      _toStr(await _getField("HOST_ESTACIONARIO"));
+
+  Future<int> getPortaEstacionario() async {
+    final v = _toInt(await _getField("PORTA_ESTACIONARIO"), def: 8080);
+    return v <= 0 ? 8080 : v;
   }
 }

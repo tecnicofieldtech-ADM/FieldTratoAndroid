@@ -1,0 +1,47 @@
+// lib/features/fornecimento/data/fornecimento_tables.dart
+
+class FornTables {
+  // tabelas
+  static const String previsao = "FORNECIMENTO_CONF"; // ajuste se o nome real for outro
+  static const String detalhesBaias = "DETALHES_BAIAS";
+  static const String cadastroFornecimento = "CADASTRO_FORNECIMENTO";
+
+  // ✅ faltavam (erros de compile)
+  static const String ultimoLogin = "ULTIMO_LOGIN";
+  static const String cadastroFabrica = "CADASTRO_FABRICA_RACAO";
+
+  // previsao cols
+  static const String pvIdFornecimento = "ID_FORNECIMENTO";
+  static const String pvData = "DATA_LEITURA";
+  static const String pvTrato = "TRATO";
+  static const String pvIdBaia = "ID_BAIA";
+  static const String pvPrevistoKg = "PREVISTO_MN_KG";
+  static const String pvRealizadoKg = "REALIZADO_MN_KG";
+  static const String pvIdRacao = "ID_RACAO";
+
+  // baias cols
+  static const String dbId = "ID";
+  static const String dbNomeLocal = "NOME_LOCAL";
+  static const String dbLinha = "LINHA";
+  static const String dbOrderTrato = "ORDER_TRATO";
+  static const String dbRfid = "RFID";
+  static const String dbIdLote = "ID_LOTE";
+  static const String dbIdFazenda = "ID_FAZENDA";
+
+  // cadastro fornecimento cols
+  static const String cfId = "ID";
+  static const String cfIdFornecimento = "ID_FORNECIMENTO";
+  static const String cfIdFabricacao = "ID_FABRICACAO";
+  static const String cfIdBaia = "ID_BAIA";
+  static const String cfData = "DATA";
+  static const String cfHoraInicio = "HORA_INICIO";
+  static const String cfHoraFim = "HORA_FIM";
+  static const String cfPesoInicio = "PESO_INICIO";
+  static const String cfPesoFim = "PESO_FIM";
+  static const String cfPrevisto = "PREVISTO";
+  static const String cfRealizado = "REALIZADO";
+  static const String cfFlagSync = "FLAG_SYNC";
+  static const String cfTrato = "TRATO";
+  static const String cfIdUsuario = "ID_USUARIO";
+  static const String cfIdDieta = "ID_DIETA";
+}

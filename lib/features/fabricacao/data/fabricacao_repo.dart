@@ -1,4 +1,5 @@
 // lib/features/fabricacao/data/fabricacao_repo.dart
+import "dart:math";
 import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
 import "../domain/models.dart";
@@ -57,16 +58,15 @@ class FabricacaoRepo {
   // =========================================================
   // COMPAT
   // =========================================================
+
+  // ✅ compat (mantém chamadas antigas da UI)
+  Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
+    return getFabricacaoEmAbertoHoje(idFazenda);
+  }
+
   // =========================================================
-// FAB EM ABERTO (HOJE)  ✅ COM JOIN NA DIETA
-// =========================================================
+  // FAB EM ABERTO (HOJE) ✅ COM JOIN NA DIETA
   // =========================================================
-// COMPAT (mantém chamadas antigas da UI)
-// =========================================================
-Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
-  return getFabricacaoEmAbertoHoje(idFazenda);
-}
-  
   Future<FabricacaoHeader?> getFabricacaoEmAbertoHoje(
       [String? idFazenda]) async {
     const t = "CADASTRO_FABRICA_RACAO";
@@ -108,7 +108,7 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
       return "COALESCE($col, $fallback) AS $alias";
     }
 
-    // ✅ JOIN DIETA (igual listagem)
+    // ✅ JOIN DIETA
     final hasDieta = await _hasTable("DIETA");
     final join = hasDieta ? "LEFT JOIN DIETA di ON di.ID = f.$idDietaCol" : "";
     final dietaNomeExpr =
@@ -168,8 +168,8 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
   }
 
   // =========================================================
-// LISTA FABRICAÇÕES (COM JOIN EM DIETA)
-// =========================================================
+  // LISTA FABRICAÇÕES (COM JOIN EM DIETA)
+  // =========================================================
   Future<List<FabricacaoHeader>> listFabricacoes() async {
     const t = "CADASTRO_FABRICA_RACAO";
     if (!await _hasTable(t)) return [];
@@ -199,15 +199,10 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
       return "COALESCE($col, $fallback) AS $alias";
     }
 
-    // tenta joinar com DIETA se existir tabela e se existir idDietaCol
     final hasDieta = await _hasTable("DIETA");
-    final canJoin = hasDieta;
-
-
-    final join = canJoin ? "LEFT JOIN DIETA di ON di.ID = f.$idDietaCol" : "";
-
+    final join = hasDieta ? "LEFT JOIN DIETA di ON di.ID = f.$idDietaCol" : "";
     final dietaNomeExpr =
-        canJoin ? "COALESCE(NULLIF(TRIM(di.NOME),''),'')" : "''";
+        hasDieta ? "COALESCE(NULLIF(TRIM(di.NOME),''),'')" : "''";
 
     final select = """
     SELECT
@@ -436,9 +431,8 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
   }
 
   // =========================================================
-  // ✅ MÉTODOS PARA O CONTROLLER (Delphi compat)
+  // ✅ MÉTODOS PARA O CONTROLLER
   // =========================================================
-
   Future<String> getHoraInicioByDetId(String idDet) async {
     const t = "DETALHES_FABRICA_RACAO";
     if (!await _hasTable(t)) return "";
@@ -471,7 +465,6 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     return rows.isEmpty ? "" : (rows.first["v"] ?? "").toString();
   }
 
-  /// Atualiza QTD_REALIZADA + horas (se existirem colunas)
   Future<void> updateIngredienteFabricacao({
     required String idDet,
     required double qtdRealizada,
@@ -505,8 +498,8 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
   }
 
   // =========================================================
-// ✅ TOTAL REALIZADO DO HEADER
-// =========================================================
+  // ✅ TOTAL REALIZADO DO HEADER
+  // =========================================================
   Future<double> getTotalRealizadoFabricacao(String idFabricacao) async {
     const h = "CADASTRO_FABRICA_RACAO";
     if (!await _hasTable(h)) return 0.0;
@@ -524,10 +517,9 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     return (rows.first["v"] as num?)?.toDouble() ?? 0.0;
   }
 
-// =========================================================
-// ✅ FINALIZA FABRICAÇÃO (igual Delphi FinalizaFabricacao)
-// - garante MS_REALIZADA calculada (reaproveita seu updateFabricacaoParcial)
-// =========================================================
+  // =========================================================
+  // ✅ FINALIZA FABRICAÇÃO
+  // =========================================================
   Future<void> finalizaFabricacao({
     required String idFabricacao,
     required double qtdRealizada,
@@ -537,7 +529,6 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     const h = "CADASTRO_FABRICA_RACAO";
     if (!await _hasTable(h)) return;
 
-    // garante MS_REALIZADA e QTD_REALIZADA consistentes
     await updateFabricacaoParcial(idFabricacao);
 
     final realCol = await _pickCol(
@@ -562,10 +553,11 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     );
   }
 
-// =========================================================
-// ✅ INSERE CARREGAMENTO (se existir tabela/colunas)
-// =========================================================
-  Future<void> insereCarregamentoSePossivel({
+  // =========================================================
+  // ✅ INSERE / GARANTE CARREGAMENTO ABERTO (STATUS=0)
+  // - idempotente: se já existe aberto, não cria outro
+  // =========================================================
+  Future<String?> ensureCarregamentoAberto({
     required String idFabricacao,
     required String idDieta,
     required double pesoFabricado,
@@ -573,33 +565,135 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
     required String idVagao,
   }) async {
     const t = "CARREGAMENTO";
-    if (!await _hasTable(t)) return;
+    if (!await _hasTable(t)) return null;
+
+    final db = await _db;
 
     final idCol = await _pickCol(t, ["ID"]) ?? "ID";
     final idFabCol =
         await _pickCol(t, ["ID_FABRICACAO", "IDFABRICACAO"]) ?? "ID_FABRICACAO";
     final idDietaCol = await _pickCol(t, ["ID_DIETA", "IDDIETA"]) ?? "ID_DIETA";
+
+    final statusCol = await _pickCol(t, ["STATUS"]);
+    final dataRegCol =
+        await _pickCol(t, ["DATA_REGISTRO", "DATAREG", "DATA_REG"]);
+
     final pesoFabCol = await _pickCol(t, ["PESO_FABRICADO", "PESOFABRICADO"]) ??
         "PESO_FABRICADO";
     final pesoCarCol = await _pickCol(t, ["PESO_CARREGADO", "PESOCARREGADO"]) ??
         "PESO_CARREGADO";
     final idVagCol = await _pickCol(t, ["ID_VAGAO", "IDVAGAO"]) ?? "ID_VAGAO";
 
-    // uid simples (se você já tiver um helper de GUID, pode trocar)
-    final uid = DateTime.now().microsecondsSinceEpoch.toString();
+    // ✅ valida vagão (não pode criar carregamento sem vagão)
+    final vag = idVagao.trim();
+    if (vag.isEmpty) {
+      throw Exception(
+          "Vagão não informado. Selecione um vagão nas configurações.");
+    }
 
-    final db = await _db;
-    await db.insert(t, {
+    // 1) se existe carregamento ABERTO pra essa fabricação, reutiliza
+    if (statusCol != null) {
+      final existing = await db.rawQuery(
+        "SELECT $idCol AS id FROM $t WHERE $idFabCol = ? AND COALESCE($statusCol,0) = 0 LIMIT 1",
+        [idFabricacao],
+      );
+      if (existing.isNotEmpty) {
+        return (existing.first["id"] ?? "").toString();
+      }
+    }
+
+    // 2) cria novo
+    final uid = _genUuid();
+    final row = <String, Object?>{
       idCol: uid,
       idFabCol: idFabricacao,
       idDietaCol: idDieta,
       pesoFabCol: pesoFabricado,
       pesoCarCol: pesoCarregado,
-      idVagCol: idVagao,
-    });
+      idVagCol: vag, // ✅ TEXT (UUID)
+    };
+
+    // STATUS=0 se existir coluna
+    if (statusCol != null) row[statusCol] = 0;
+
+    // DATA_REGISTRO se existir coluna
+    if (dataRegCol != null) {
+      row[dataRegCol] = DateTime.now().toIso8601String();
+    }
+
+    await db.insert(t, row);
+    return uid;
   }
 
-  /// Atualiza QTD_REALIZADA (header) e MS_REALIZADA (se existir)
+  // =========================================================
+// ✅ STATUS DO CARREGAMENTO POR FABRICAÇÃO
+// =========================================================
+  Future<Map<String, Object?>?> getCarregamentoStatusByFabricacao(
+      String idFabricacao) async {
+    const t = "CARREGAMENTO";
+    if (!await _hasTable(t)) return null;
+
+    final db = await _db;
+
+    final idCol = await _pickCol(t, ["ID"]) ?? "ID";
+    final idFabCol =
+        await _pickCol(t, ["ID_FABRICACAO", "IDFABRICACAO"]) ?? "ID_FABRICACAO";
+    final statusCol = await _pickCol(t, ["STATUS"]) ?? "STATUS";
+    final dataRegCol =
+        await _pickCol(t, ["DATA_REGISTRO", "DATAREG", "DATA_REG"]);
+    final pesoFabCol = await _pickCol(t, ["PESO_FABRICADO", "PESOFABRICADO"]);
+    final pesoCarCol = await _pickCol(t, ["PESO_CARREGADO", "PESOCARREGADO"]);
+    final idVagCol = await _pickCol(t, ["ID_VAGAO", "IDVAGAO"]);
+
+    // pega o mais recente dessa fabricação
+    final rows = await db.rawQuery("""
+    SELECT
+      $idCol AS id,
+      COALESCE($statusCol,0) AS status
+      ${dataRegCol != null ? ", $dataRegCol AS data_registro" : ""}
+      ${pesoFabCol != null ? ", COALESCE($pesoFabCol,0) AS peso_fabricado" : ""}
+      ${pesoCarCol != null ? ", COALESCE($pesoCarCol,0) AS peso_carregado" : ""}
+      ${idVagCol != null ? ", COALESCE($idVagCol,'') AS id_vagao" : ""}
+    FROM $t
+    WHERE $idFabCol = ?
+    ORDER BY COALESCE($statusCol,0) ASC, ${dataRegCol ?? "rowid"} DESC
+    LIMIT 1
+  """, [idFabricacao]);
+
+    if (rows.isEmpty) return null;
+
+    final m = Map<String, Object?>.from(rows.first);
+    final st = (m["status"] as num?)?.toInt() ?? 0;
+
+    // statusText:
+    // - não existe linha => null (tratado fora)
+    // - 0 => ABERTO
+    // - !=0 => FECHADO
+    m["status_text"] = (st == 0) ? "ABERTO" : "FECHADO";
+
+    return m;
+  }
+
+  /// (mantém o método antigo, mas agora grava STATUS=0 se tiver coluna)
+  Future<void> insereCarregamentoSePossivel({
+    required String idFabricacao,
+    required String idDieta,
+    required double pesoFabricado,
+    required double pesoCarregado,
+    required String idVagao,
+  }) async {
+    await ensureCarregamentoAberto(
+      idFabricacao: idFabricacao,
+      idDieta: idDieta,
+      pesoFabricado: pesoFabricado,
+      pesoCarregado: pesoCarregado,
+      idVagao: idVagao, // ✅ UUID
+    );
+  }
+
+  // =========================================================
+  // Atualiza QTD_REALIZADA (header) e MS_REALIZADA (se existir)
+  // =========================================================
   Future<void> updateFabricacaoParcial(String idFabricacao) async {
     const h = "CADASTRO_FABRICA_RACAO";
     const d = "DETALHES_FABRICA_RACAO";
@@ -659,5 +753,38 @@ Future<FabricacaoHeader?> getFabricacaoEmAberto([String? idFazenda]) {
       where: "ID = ?",
       whereArgs: [idFabricacao],
     );
+  }
+
+  // =========================================================
+  // UUID helper
+  // =========================================================
+  String _genUuid() {
+    final r = Random.secure();
+    String h(int v) => v.toRadixString(16).padLeft(2, "0");
+    final b = List<int>.generate(16, (_) => r.nextInt(256));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    final s = b.map(h).join();
+    return "${s.substring(0, 8)}-${s.substring(8, 12)}-${s.substring(12, 16)}-${s.substring(16, 20)}-${s.substring(20)}";
+  }
+
+  // =========================================================
+  // ✅ BUSCA ID_VAGAO GRAVADO NA FABRICAÇÃO (HEADER)
+  // =========================================================
+  Future<String> getIdVagaoByFabricacaoId(String idFabricacao) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return "";
+
+    final idVagCol = await _pickCol(h, ["ID_VAGAO", "IDVAGAO"]);
+    if (idVagCol == null) return "";
+
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE($idVagCol,'') AS v FROM $h WHERE ID = ? LIMIT 1",
+      [idFabricacao],
+    );
+
+    if (rows.isEmpty) return "";
+    return (rows.first["v"] ?? "").toString().trim();
   }
 }

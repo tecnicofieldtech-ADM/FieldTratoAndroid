@@ -1,3 +1,5 @@
+import "dart:convert";
+
 import "../db/app_db.dart";
 import "../services/api_service.dart";
 
@@ -7,34 +9,52 @@ class OutboxSync {
   OutboxSync({required this.api});
 
   // -------------------------
-  // Helpers de formatação
+  // Helpers base
   // -------------------------
 
   String _s(dynamic v) => (v ?? "").toString().trim();
 
   /// converte qualquer coisa para double de forma segura
+  /// - aceita "99,00", "99.00", "1.234,56", "1,234.56"
   double _toDouble(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v.toDouble();
-    final t = v.toString().trim();
+
+    var t = v.toString().trim();
     if (t.isEmpty || t.toLowerCase() == "null") return 0;
-    // aceita "99,00" ou "99.00"
-    final norm = t.replaceAll(",", ".");
-    return double.tryParse(norm) ?? 0;
+
+    final hasComma = t.contains(",");
+    final hasDot = t.contains(".");
+
+    if (hasComma && hasDot) {
+      // assume BR: "1.234,56"
+      t = t.replaceAll(".", "").replaceAll(",", ".");
+    } else if (hasComma) {
+      // "12,34" -> "12.34"
+      t = t.replaceAll(",", ".");
+    }
+
+    return double.tryParse(t) ?? 0;
   }
 
   /// Inteiro como string (Delphi mandava string)
   String _toBrIntStr(dynamic v) {
     final d = _toDouble(v);
-    return d.round().toString(); // "77"
+    return d.round().toString();
   }
 
-  /// Decimal como string com vírgula, e se for 0 manda "0" (evita "0.00" / BCD)
-  String _toBrDecStr(dynamic v, {int decimals = 2}) {
+  /// Decimal com 3 casas em PT-BR (vírgula), SEMPRE string
+  String _br3(dynamic v) {
     final d = _toDouble(v);
     if (d == 0) return "0";
-    final fixed = d.toStringAsFixed(decimals); // "99.00"
-    return fixed.replaceAll(".", ","); // "99,00"
+    return d.toStringAsFixed(3).replaceAll(".", ","); // "63,000"
+  }
+
+  /// Decimal com 2 casas em PT-BR (vírgula), SEMPRE string
+  String _br2(dynamic v) {
+    final d = _toDouble(v);
+    if (d == 0) return "0";
+    return d.toStringAsFixed(2).replaceAll(".", ",");
   }
 
   /// Converte "yyyy-mm-dd" (ou "yyyy-mm-ddTHH...") para "dd/mm/yyyy"
@@ -43,19 +63,69 @@ class OutboxSync {
     if (t.isEmpty) return "";
     final base = t.length >= 10 ? t.substring(0, 10) : t;
 
-    // já está dd/mm/yyyy
     if (base.length == 10 && base[2] == "/" && base[5] == "/") return base;
 
-    // yyyy-mm-dd
     if (base.length == 10 && base[4] == "-" && base[7] == "-") {
       final y = base.substring(0, 4);
       final m = base.substring(5, 7);
       final d = base.substring(8, 10);
       return "$d/$m/$y";
     }
-
-    // fallback
     return t;
+  }
+
+  void _logJson(void Function(String) log, String label, Object obj) {
+    try {
+      log("$label ${jsonEncode(obj)}");
+    } catch (_) {
+      log("$label $obj");
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 🔥 FIX: garante decimais como STRING PT-BR (vírgula)
+  // ---------------------------------------------------------
+
+  static const Set<String> _decimalKeys = {
+    "qtde_prevista",
+    "qtd_realizada",
+    "ms_insumo",
+    "realizado",
+    "ms_dieta_realizada",
+    "ms_prevista",
+    "ms_realizada",
+  };
+
+  /// força qualquer valor numérico (string/num) para PT-BR (vírgula)
+  /// Mantém 3 casas por padrão (usado em KG/MS)
+  String _fixDecimalToBr(dynamic v, {int decimals = 3}) {
+    final d = _toDouble(v);
+    if (d == 0) return "0";
+    return d.toStringAsFixed(decimals).replaceAll(".", ",");
+  }
+
+  /// percorre map/list e força as chaves decimais para string PT-BR
+  dynamic _fixBodyDecimals(dynamic node) {
+    if (node is List) {
+      return node.map(_fixBodyDecimals).toList();
+    }
+    if (node is Map) {
+      final out = <String, dynamic>{};
+      node.forEach((k, v) {
+        final key = k.toString();
+        if (_decimalKeys.contains(key)) {
+          // decide casas:
+          // - ms_prevista/ms_realizada: 2
+          // - demais: 3
+          final dec = (key == "ms_prevista" || key == "ms_realizada") ? 2 : 3;
+          out[key] = _fixDecimalToBr(v, decimals: dec);
+        } else {
+          out[key] = _fixBodyDecimals(v);
+        }
+      });
+      return out;
+    }
+    return node;
   }
 
   // -------------------------
@@ -75,10 +145,14 @@ class OutboxSync {
         continue;
       }
 
-      final ok = await api.postGravaTag({
+      final body = {
         "ID_PASTO_CURRAL": idCurral,
         "TAG": tag,
-      });
+      };
+
+      _logJson(log, "📤 /Post/GravaTag body=", body);
+
+      final ok = await api.postGravaTag(body, log: log);
 
       if (ok && idRow.isNotEmpty) {
         await db.update(
@@ -114,78 +188,85 @@ class OutboxSync {
         continue;
       }
 
-      // não envia se realizado <= 0
       final kgReal = _toDouble(f["QTD_REALIZADA"]);
       if (kgReal <= 0) {
         log("⏭️ Pulando fab $idFabricacao: qtde_realizada=0");
         continue;
       }
 
-      // ✅ Payload igual ao Delphi: tudo string
+      // ✅ payload como Delphi (strings)
       final payloadFab = <String, dynamic>{
         "id": idFabricacao,
         "id_fazenda": idFazenda,
         "id_dieta": _s(f["ID_DIETA"]),
-        "data": _toBrDate(f["DATA_FABRICACAO"]), // dd/mm/yyyy
+        "data": _toBrDate(f["DATA_FABRICACAO"]),
         "id_usuario": _s(f["ID_USUARIO"]),
         "id_operador": _s(f["ID_OPERADOR"]),
         "id_vagao": idVagaoCfg,
-
-        // inteiros como string
         "qtde_prevista": _toBrIntStr(f["QTD_PREVISTA"]),
         "qtde_realizada": _toBrIntStr(f["QTD_REALIZADA"]),
-
-        // decimais como string com vírgula (ou "0")
-        "ms_prevista": _toBrDecStr(f["MS_PREVISTA"], decimals: 2),
-        "ms_realizada": _toBrDecStr(f["MS_REALIZADA"], decimals: 2),
+        "ms_prevista": _br2(f["MS_PREVISTA"]),
+        "ms_realizada": _br2(f["MS_REALIZADA"]),
       };
 
-      log("📤 /Post/Fabricacao id=$idFabricacao payload=$payloadFab");
+      final payloadFabFixed =
+          _fixBodyDecimals(payloadFab) as Map<String, dynamic>;
 
-      final okFab = await api.postFabricacao(payloadFab, log: log);
+      log("🧪 JSON FINAL /Post/Fabricacao = ${jsonEncode(payloadFabFixed)}");
+
+      final okFab = await api.postFabricacao(payloadFabFixed, log: log);
       if (!okFab) {
         log("⚠️ Falha Fabricacao id=$idFabricacao");
         continue;
       }
 
-      // Itens
+      // Itens (DETALHES_FABRICA_RACAO)
       final insumos = await db.query(
         "DETALHES_FABRICA_RACAO",
         where: "STATUS=1 AND ID_FABRICACAO=? AND IFNULL(FLAG_SYNC,0)=0",
         whereArgs: [idFabricacao],
       );
 
+      log("🔎 insumos encontrados=${insumos.length} fab=$idFabricacao");
+
       if (insumos.isNotEmpty) {
         final itens = <Map<String, dynamic>>[];
 
         for (final i in insumos) {
-          // ✅ não envia previsto=0 (evita divisão por zero no backend)
-          final prev = _toDouble(i["QTD_PREVISTA"]);
-          if (prev <= 0) {
-            log("⏭️ Pulando insumo ${_s(i["ID"])} da fab $idFabricacao: qtde_prevista=0");
+          final prevD = _toDouble(i["QTD_PREVISTA"]);
+          if (prevD <= 0) {
+            log("⏭️ Pulando insumo ${_s(i["ID"])}: prev<=0");
             continue;
           }
 
-          itens.add({
+          final item = <String, dynamic>{
             "id": _s(i["ID"]),
             "id_fazenda": idFazenda,
             "id_fabricacao": idFabricacao,
             "id_insumo": _s(i["ID_INSUMO"]),
 
-            // backend espera esses nomes:
-            "qtd_realizada": _toBrDecStr(i["QTD_REALIZADA"], decimals: 3).replaceAll(",", "."), // manda com ponto aqui p/ StrToFloatDef
-            "qtde_prevista": _toBrDecStr(i["QTD_PREVISTA"], decimals: 3).replaceAll(",", "."),
+            // 🔥 BLINDADO: SEMPRE string com vírgula
+            "qtde_prevista": _br3(i["QTD_PREVISTA"]),
+            "qtd_realizada": _br3(i["QTD_REALIZADA"]),
+            "ms_insumo": _br3(i["MS_INSUMO"]),
 
             "id_operador": _s(i["ID_OPERADOR"]),
             "id_usuario": _s(i["ID_USUARIO"]),
+          };
 
-            "ms_insumo": _toBrDecStr(i["MS_INSUMO"], decimals: 3).replaceAll(",", "."),
-          });
+          itens.add(item);
         }
 
         if (itens.isNotEmpty) {
-          log("📤 /Post/Fabricacao_Insumo id=$idFabricacao itens=${itens.length}");
-          final okItens = await api.postFabricacaoInsumo({"itens": itens}, log: log);
+          final bodyItens = {"itens": itens};
+          final bodyItensFixed =
+              _fixBodyDecimals(bodyItens) as Map<String, dynamic>;
+
+          // ✅ LOG do payload EXATO
+          log("🧪 JSON FINAL /Post/Fabricacao_Insumo = ${jsonEncode(bodyItensFixed)}");
+
+          final okItens =
+              await api.postFabricacaoInsumo(bodyItensFixed, log: log);
           if (!okItens) {
             log("⚠️ Falha Fabricacao_Insumo id=$idFabricacao");
             continue;
@@ -219,26 +300,55 @@ class OutboxSync {
   Future<void> syncFornecimento(void Function(String) log) async {
     final db = await AppDb.instance.db;
 
+    // ✅ diagnóstico rápido: quantos cadastros pendentes?
+    final diag = await db.rawQuery("""
+      SELECT COUNT(*) AS qtd
+      FROM CADASTRO_FORNECIMENTO
+      WHERE IFNULL(REALIZADO,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0
+    """);
+    final qtdPend =
+        diag.isNotEmpty ? int.tryParse("${diag.first["qtd"]}") ?? 0 : 0;
+    log("🔎 CADASTRO_FORNECIMENTO pendentes (REALIZADO>0 e SYNC=0) = $qtdPend");
+
+    // ✅ FIX PRINCIPAL:
+    // - LEFT JOIN (não pode “sumir” fornecimento se ID_FABRICACAO estiver vazio)
+    // - pega ID_DIETA do próprio cf se não tiver no cfr
     final rows = await db.rawQuery('''
       SELECT
-        cf.ID_FORNECIMENTO,
-        MAX(cfr.ID_FAZENDA) AS id_fazenda,
-        MAX(cf.ID_FABRICACAO) AS id_fabricacao,
-        MAX(cf.ID_USUARIO) AS id_usuario_lancamento,
-        MAX(cf.ID_USUARIO) AS id_tratador,
-        MAX(cfr.ID_DIETA) AS id_dieta_realizada,
-        SUM(cf.REALIZADO) AS realizado,
-        AVG(cfr.MS_REALIZADA) AS ms_dieta_realizada
+        cf.ID_FORNECIMENTO                                          AS id_fornecimento,
+
+        MAX(cfr.ID_FAZENDA)                                         AS id_fazenda,
+        MAX(cf.ID_FABRICACAO)                                       AS id_fabricacao,
+        MAX(cf.ID_USUARIO)                                          AS id_usuario_lancamento,
+        MAX(cf.ID_USUARIO)                                          AS id_tratador,
+
+        MAX(COALESCE(cfr.ID_DIETA, cf.ID_DIETA))                    AS id_dieta_realizada,
+
+        SUM(COALESCE(cf.REALIZADO,0))                               AS realizado,
+        AVG(COALESCE(cfr.MS_REALIZADA, 0))                          AS ms_dieta_realizada
       FROM CADASTRO_FORNECIMENTO cf
-      JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
-      WHERE cf.REALIZADO > 0 AND IFNULL(cf.FLAG_SYNC,0) = 0
+      LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
+      WHERE COALESCE(cf.REALIZADO,0) > 0
+        AND IFNULL(cf.FLAG_SYNC,0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO,'')) <> ''
       GROUP BY cf.ID_FORNECIMENTO
     ''');
+
+    if (rows.isEmpty) {
+      log("ℹ️ Nenhum fornecimento pendente para enviar (query agrupada retornou 0).");
+      return;
+    }
+
+    // loga 1 exemplo pra debug
+    final ex0 = rows.first;
+    log("🧾 Exemplo agrupado: ID_FORNECIMENTO=${_s(ex0["id_fornecimento"])} "
+        "FAB=${_s(ex0["id_fabricacao"])} DIETA=${_s(ex0["id_dieta_realizada"])} "
+        "REALIZADO=${_s(ex0["realizado"])}");
 
     final syncedIds = <String>{};
 
     for (final r in rows) {
-      final idPrev = _s(r["ID_FORNECIMENTO"]);
+      final idPrev = _s(r["id_fornecimento"]);
       if (idPrev.isEmpty) {
         log("⚠️ Fornecimento sem ID_FORNECIMENTO (pular)");
         continue;
@@ -251,16 +361,20 @@ class OutboxSync {
         "id_tratador": _s(r["id_tratador"]),
         "id_dieta_realizada": _s(r["id_dieta_realizada"]),
 
-        // strings
-        "realizado": _toBrDecStr(r["realizado"], decimals: 3).replaceAll(",", "."),
-        "ms_dieta_realizada": _toBrDecStr(r["ms_dieta_realizada"], decimals: 3).replaceAll(",", "."),
+        // 🔥 força string BR
+        "realizado": _br3(r["realizado"]),
+        "ms_dieta_realizada": _br3(r["ms_dieta_realizada"]),
       };
 
-      final ok = await api.postFornecimento(payload);
+      final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
+
+      log("🧪 JSON FINAL /Post/Fornecimento = ${jsonEncode(payloadFixed)}");
+
+      final ok = await api.postFornecimento(payloadFixed, log: log);
       if (ok) {
         syncedIds.add(idPrev);
       } else {
-        log("⚠️ Falha Fornecimento id=$idPrev payload=$payload");
+        log("⚠️ Falha Fornecimento id=$idPrev");
       }
     }
 

@@ -14,7 +14,11 @@ class RfidTagEvent {
   final String epc;
   final DateTime readAt;
   final String rawLine;
-  const RfidTagEvent({required this.epc, required this.readAt, required this.rawLine});
+  const RfidTagEvent({
+    required this.epc,
+    required this.readAt,
+    required this.rawLine,
+  });
 }
 
 class RfidComm {
@@ -37,11 +41,11 @@ class RfidComm {
   String _host;
   int _port;
 
-  bool _autoReconnect;
-  Duration _connectTimeout;
-  Duration _reconnectDelay;
-  Duration _readWatchdog;
-  int _debounceMs;
+  final bool _autoReconnect;
+  final Duration _connectTimeout;
+  final Duration _reconnectDelay;
+  final Duration _readWatchdog;
+  final int _debounceMs;
 
   Socket? _socket;
   StreamSubscription<List<int>>? _sub;
@@ -80,14 +84,19 @@ class RfidComm {
   }
 
   Future<void> connect() async {
+    // ✅ RECONEXÃO MANUAL: destrava disconnect()
+    _shuttingDown = false;
+
     if (_connecting) return;
-    if (_shuttingDown) return;
 
     _connecting = true;
     _emitStatus(RfidStatus.connecting);
 
     try {
+      _stopWatchdog();
+
       await _stopReader();
+      await _safeCloseSocket(); // ✅ garante fechar socket antigo antes de reconectar
 
       final sock = await Socket.connect(_host, _port, timeout: _connectTimeout);
       sock.setOption(SocketOption.tcpNoDelay, true);
@@ -253,10 +262,9 @@ class RfidComm {
     return sb.toString();
   }
 
-  bool _equalsIgnoreCase(String a, String b) => a.toLowerCase() == b.toLowerCase();
+  bool _equalsIgnoreCase(String a, String b) =>
+      a.toLowerCase() == b.toLowerCase();
 
-  /// Robustez pro seu padrão do PuTTY:
-  /// ";EPC:HFF0000..."  -> "HFF0000..."
   static String extractEpc(String s) {
     var t = s.trim();
     if (t.isEmpty) return "";

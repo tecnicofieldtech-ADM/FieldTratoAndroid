@@ -1,18 +1,22 @@
 // lib/features/fornecimento/data/fornecimento_dao.dart
 import "dart:math";
+import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 
 import "../../../db/app_db.dart";
 import "fornecimento_tables.dart";
 import "../domain/fornecimento_models.dart";
 
+
+
 class FornecimentoDao {
   Future<Database> get _db async => AppDb.instance.db;
 
-  // (warning: unused_field — ok, depois a gente remove se não usar)
-  
   // ✅ executa SQL "cru"
-  Future<List<Map<String, Object?>>> rawQuery(String sql, List<Object?> args) async {
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql,
+    List<Object?> args,
+  ) async {
     final db = await _db;
     final rows = await db.rawQuery(sql, args);
     return rows.cast<Map<String, Object?>>();
@@ -51,18 +55,84 @@ class FornecimentoDao {
   String _toStr(dynamic v) => (v ?? "").toString();
 
   // =========================================================
+  // 🧪 DEBUG: dump rápido do CADASTRO_FORNECIMENTO
+  // =========================================================
+    // =========================================================
+  // 🧪 DEBUG: dump rápido do CADASTRO_FORNECIMENTO
+  // =========================================================
+  Future<void> debugDumpCadastroFornecimento({int limit = 20}) async {
+    final db = await _db;
+
+    final r1 = await db
+        .rawQuery("SELECT COUNT(*) c FROM ${FornTables.cadastroFornecimento}");
+    final total = (r1.first["c"] as int?) ?? 0;
+
+    final r2 = await db.rawQuery("""
+      SELECT COUNT(*) c
+      FROM ${FornTables.cadastroFornecimento}
+      WHERE COALESCE(${FornTables.cfFlagSync},0)=0
+    """);
+    final pend = (r2.first["c"] as int?) ?? 0;
+
+    final rows = await db.rawQuery("""
+      SELECT
+        ${FornTables.cfId} AS id,
+        ${FornTables.cfData} AS data,
+        ${FornTables.cfTrato} AS trato,
+        ${FornTables.cfIdBaia} AS id_baia,
+        ${FornTables.cfIdFornecimento} AS id_fornecimento,
+        ${FornTables.cfRealizado} AS realizado,
+        ${FornTables.cfHoraFim} AS hora_fim,
+        ${FornTables.cfFlagSync} AS flag_sync
+      FROM ${FornTables.cadastroFornecimento}
+      ORDER BY ROWID DESC
+      LIMIT ?
+    """, [limit]);
+
+    if (kDebugMode) {
+      debugPrint("🧪 CADASTRO_FORNECIMENTO total=$total pendentes=$pend");
+      for (final r in rows) {
+        debugPrint(" → $r");
+      }
+    }
+  }
+
+
+  // =========================================================
   // ✅ LOGIN / USUÁRIO (ULTIMO_LOGIN)
   // =========================================================
   Future<String?> getUsuarioAtualId() async {
     final db = await _db;
-    try {
-      final rows = await db.rawQuery("SELECT ID FROM ${FornTables.ultimoLogin} LIMIT 1");
-      if (rows.isEmpty) return null;
-      final id = _toStr(rows.first["ID"]).trim();
-      return id.isEmpty ? null : id;
-    } catch (_) {
-      return null;
-    }
+
+    // 1) descobre quais colunas existem na ULTIMO_LOGIN
+    final cols =
+        await db.rawQuery("PRAGMA table_info(${FornTables.ultimoLogin})");
+    final names = cols
+        .map((m) => (m["name"] ?? "").toString().trim().toUpperCase())
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    if (names.isEmpty) return null;
+
+    // 2) tenta achar a coluna do ID do usuário (ordem de preferência)
+    String? pick(String n) => names.contains(n) ? n : null;
+
+    final col = pick("ID_USUARIO") ??
+        pick("IDUSER") ??
+        pick("USUARIO_ID") ??
+        pick("ID") ??
+        pick("USER_ID");
+
+    if (col == null) return null;
+
+    // 3) busca o valor
+    final rows = await db.rawQuery(
+      "SELECT $col AS ID FROM ${FornTables.ultimoLogin} LIMIT 1",
+    );
+    if (rows.isEmpty) return null;
+
+    final id = (rows.first["ID"] ?? "").toString().trim();
+    return id.isEmpty ? null : id;
   }
 
   // =========================================================
@@ -84,7 +154,7 @@ class FornecimentoDao {
     """, [d]);
 
     if (rowsHoje.isNotEmpty) {
-        final id = _toStr(rowsHoje.first["ID"]).trim();
+      final id = _toStr(rowsHoje.first["ID"]).trim();
       if (id.isNotEmpty) return id;
     }
 
@@ -105,55 +175,66 @@ class FornecimentoDao {
 
   // =========================================================
   // LISTA CURRAIS (PREVISAO + DETALHES_BAIAS)
-  // ⚠️ Mantido como estava (runtime) — aqui o foco é zerar compile.
   // =========================================================
   Future<List<Map<String, Object?>>> listCurraisPrevistos({
     required String dataYmd,
     required int trato,
     String? idFazenda,
+    String? idRacao,
   }) async {
     final db = await _db;
 
-    final where = <String>["P.DATA = ?", "P.TRATO = ?"];
+    final where = <String>[
+      "substr(a.${FornTables.pvData},1,10) = ?",
+      "a.${FornTables.pvTrato} = ?",
+    ];
     final args = <Object?>[dataYmd, trato];
 
     final faz = (idFazenda ?? "").trim();
     if (faz.isNotEmpty) {
-      where.add("B.ID_FAZENDA = ?");
+      where.add("TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)");
       args.add(faz);
     }
 
-    final sql = """
-      SELECT
-        P.ID_FORNECIMENTO AS id_fornecimento,
-        P.DATA            AS data,
-        P.TRATO           AS trato,
-        P.ID_BAIA         AS id_baia,
-        P.PREVISTO_KG     AS previsto,
-        P.REALIZADO_KG    AS realizado,
-        P.ID_RACAO        AS id_racao,
+    final racao = (idRacao ?? "").trim();
+    if (racao.isNotEmpty) {
+      where.add("TRIM(a.${FornTables.pvIdRacao}) = TRIM(?)");
+      args.add(racao);
+    }
 
-        B.NOME_LOCAL      AS nome_local,
-        B.LINHA           AS linha,
-        B.ORDER_TRATO     AS order_trato,
-        B.RFID            AS rfid,
-        B.ID_LOTE         AS id_lote
-      FROM PREVISAO P
-      JOIN DETALHES_BAIAS B
-        ON B.ID = P.ID_BAIA
-      WHERE ${where.join(" AND ")}
-      ORDER BY
-        B.LINHA ASC,
-        COALESCE(B.ORDER_TRATO, 0) ASC,
-        B.NOME_LOCAL ASC
-    """;
+    final sql = """
+    SELECT
+      a.${FornTables.pvIdFornecimento} AS id_fornecimento,
+      a.${FornTables.pvData}           AS data,
+      a.${FornTables.pvTrato}          AS trato,
+      a.${FornTables.pvIdBaia}         AS id_baia,
+      a.${FornTables.pvPrevistoKg}     AS previsto,
+      COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizado,
+      a.${FornTables.pvIdRacao}        AS id_racao,
+
+      db.${FornTables.dbNomeLocal}     AS nome_local,
+
+      COALESCE(CAST(db.${FornTables.dbLinha} AS TEXT), '')     AS linha,
+
+      COALESCE(db.${FornTables.dbOrderTrato}, 0)  AS order_trato,
+      COALESCE(db.${FornTables.dbRfid}, '')       AS rfid,
+      db.${FornTables.dbIdLote}        AS id_lote
+    FROM ${FornTables.previsao} a
+    JOIN ${FornTables.detalhesBaias} db
+      ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+         TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT))
+    WHERE ${where.join(" AND ")}
+    ORDER BY
+      COALESCE(CAST(db.${FornTables.dbLinha} AS TEXT), '') ASC,
+      COALESCE(db.${FornTables.dbOrderTrato}, 0) ASC,
+      db.${FornTables.dbNomeLocal} ASC
+  """;
 
     return db.rawQuery(sql, args);
   }
 
   // =========================================================
   // RFID -> ID_FORNECIMENTO  (PREVISAO + DETALHES_BAIAS)
-  // ⚠️ Mantido como estava (runtime) — aqui o foco é zerar compile.
   // =========================================================
   Future<String?> findIdFornecimentoByRfid({
     required String epc,
@@ -166,26 +247,27 @@ class FornecimentoDao {
     if (tag.isEmpty) return null;
 
     final where = <String>[
-      "B.RFID = ?",
-      "P.DATA = ?",
-      "P.TRATO = ?",
+      "TRIM(db.${FornTables.dbRfid}) = TRIM(?)",
+      "substr(a.${FornTables.pvData},1,10) = ?",
+      "a.${FornTables.pvTrato} = ?",
     ];
     final args = <Object?>[tag, dataYmd, trato];
 
     final racao = (idRacao ?? "").trim();
     if (racao.isNotEmpty) {
-      where.add("P.ID_RACAO = ?");
+      where.add("TRIM(a.${FornTables.pvIdRacao}) = TRIM(?)");
       args.add(racao);
     }
 
     final rows = await db.rawQuery("""
-      SELECT P.ID_FORNECIMENTO AS id_fornecimento
-      FROM DETALHES_BAIAS B
-      JOIN PREVISAO P
-        ON P.ID_BAIA = B.ID
-      WHERE ${where.join(" AND ")}
-      LIMIT 1
-    """, args);
+    SELECT a.${FornTables.pvIdFornecimento} AS id_fornecimento
+    FROM ${FornTables.detalhesBaias} db
+    JOIN ${FornTables.previsao} a
+      ON TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT)) =
+         TRIM(CAST(db.${FornTables.dbId} AS TEXT))
+    WHERE ${where.join(" AND ")}
+    LIMIT 1
+  """, args);
 
     if (rows.isEmpty) return null;
     final id = _toStr(rows.first["id_fornecimento"]).trim();
@@ -193,7 +275,7 @@ class FornecimentoDao {
   }
 
   // =========================================================
-  // SNAPSHOT (FORNECIMENTO_CONF + DETALHES_BAIAS) ✅ compile ok
+  // SNAPSHOT (PREVISAO)
   // =========================================================
   Future<CurralSnapshot?> loadCurralSnapshot({
     required String idFornecimento,
@@ -205,94 +287,36 @@ class FornecimentoDao {
     if (idF.isEmpty) return null;
 
     final rows = await db.rawQuery("""
-      SELECT
-        P.${FornTables.pv_idFornecimento} AS id_fornecimento,
-        P.${FornTables.pv_idBaia}         AS id_baia,
-        P.${FornTables.pv_previstoKg}     AS previsto,
-        P.${FornTables.pv_realizadoKg}    AS realizado,
-        P.${FornTables.pv_idRacao}        AS id_racao,
-
-        B.${FornTables.db_nomeLocal}      AS nome_local,
-        B.${FornTables.db_linha}          AS linha,
-        B.${FornTables.db_idLote}         AS id_lote,
-        B.${FornTables.db_rfid}           AS rfid
-      FROM ${FornTables.previsao} P
-      JOIN ${FornTables.detalhesBaias} B
-        ON B.${FornTables.db_id} = P.${FornTables.pv_idBaia}
-      WHERE
-        P.${FornTables.pv_idFornecimento} = ?
-        AND P.${FornTables.pv_data} = ?
-        AND P.${FornTables.pv_trato} = ?
-      LIMIT 1
-    """, [idF, dataYmd, trato]);
+    SELECT
+      a.${FornTables.pvIdFornecimento} AS id_fornecimento,
+      a.${FornTables.pvIdBaia}         AS id_baia,
+      a.${FornTables.pvPrevistoKg}     AS previsto,
+      COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizado,
+      a.${FornTables.pvIdRacao}        AS id_racao
+    FROM ${FornTables.previsao} a
+    WHERE
+      TRIM(a.${FornTables.pvIdFornecimento}) = TRIM(?)
+      AND substr(a.${FornTables.pvData},1,10) = ?
+      AND a.${FornTables.pvTrato} = ?
+    LIMIT 1
+  """, [idF, dataYmd, trato]);
 
     if (rows.isEmpty) return null;
     final m = rows.first;
 
     return CurralSnapshot(
-      idBaia: _toStr(m["id_baia"]),
+      idBaia: _toStr(m["id_baia"]).trim(),
       dataIso: dataYmd,
       trato: trato,
-      idDieta: _toStr(m["id_racao"]), // ✅ dieta = ID_RACAO
-      idFornecimento: _toStr(m["id_fornecimento"]),
+      idDieta: _toStr(m["id_racao"]).trim(),
+      idFornecimento: _toStr(m["id_fornecimento"]).trim(),
       previstoKg: _toDouble(m["previsto"]),
       realizadoKg: _toDouble(m["realizado"]),
     );
   }
 
   // =========================================================
-  // FORNECIMENTO ABERTO (versão “antiga” usada em alguns fluxos)
-  // =========================================================
-  Future<FornecimentoAberto?> getAberto({
-    required DateTime data,
-    required int trato,
-    required String idBaia,
-  }) async {
-    final db = await _db;
-    final d = toSqlDate(data);
-
-    final rows = await db.query(
-      FornTables.cadastroFornecimento,
-      where: """
-        ${FornTables.cf_data} = ?
-        AND ${FornTables.cf_trato} = ?
-        AND ${FornTables.cf_idBaia} = ?
-        AND (${FornTables.cf_horaFim} IS NULL OR ${FornTables.cf_horaFim} = '')
-      """,
-      whereArgs: [d, trato, idBaia],
-      limit: 1,
-    );
-
-    if (rows.isEmpty) return null;
-    final m = rows.first;
-
-    final idFornec = _toStr(m[FornTables.cf_idFornecimento]).trim();
-    final idDieta = _toStr(m[FornTables.cf_idDieta]).trim();
-    if (idFornec.isEmpty || idDieta.isEmpty) {
-      // evita passar String vazia para required String
-      return null;
-    }
-
-    return FornecimentoAberto(
-      idFornecimento: idFornec,
-      idBaia: _toStr(m[FornTables.cf_idBaia]),
-      idDieta: idDieta,
-      dataIso: _toStr(_toStr(m[FornTables.cf_data]).isEmpty ? d : m[FornTables.cf_data]),
-      trato: (m[FornTables.cf_trato] as num?)?.toInt() ?? trato,
-      idUsuario: _toStr(m[FornTables.cf_idUsuario]).trim().isEmpty
-          ? null
-          : _toStr(m[FornTables.cf_idUsuario]),
-      idFabricacao: _toStr(m[FornTables.cf_idFabricacao]).trim().isEmpty
-          ? null
-          : _toStr(m[FornTables.cf_idFabricacao]),
-      pesoInicio: _toDouble(m[FornTables.cf_pesoInicio]),
-      horaInicio: _toStr(m[FornTables.cf_horaInicio]),
-      previstoKg: _toDouble(m[FornTables.cf_previsto]),
-    );
-  }
-
-  // =========================================================
-  // FORNECIMENTO ABERTO (Mini) ✅ (model tem só 2 campos)
+  // FORNECIMENTO ABERTO (Mini)
   // =========================================================
   Future<FornecimentoAbertoMini?> getFornecimentoAberto({
     required String idFornecimento,
@@ -305,12 +329,17 @@ class FornecimentoDao {
 
     final rows = await db.query(
       FornTables.cadastroFornecimento,
+      columns: [
+        FornTables.cfId,
+        FornTables.cfIdFornecimento,
+        FornTables.cfIdBaia,
+      ],
       where: """
-        ${FornTables.cf_data} = ?
-        AND ${FornTables.cf_trato} = ?
-        AND ${FornTables.cf_idFornecimento} = ?
-        AND ${FornTables.cf_idBaia} = ?
-        AND (${FornTables.cf_horaFim} IS NULL OR ${FornTables.cf_horaFim} = '')
+        ${FornTables.cfData} = ?
+        AND ${FornTables.cfTrato} = ?
+        AND TRIM(${FornTables.cfIdFornecimento}) = TRIM(?)
+        AND TRIM(${FornTables.cfIdBaia}) = TRIM(?)
+        AND (${FornTables.cfHoraFim} IS NULL OR ${FornTables.cfHoraFim} = '')
       """,
       whereArgs: [d, trato, idFornecimento, idBaia],
       limit: 1,
@@ -319,17 +348,19 @@ class FornecimentoDao {
     if (rows.isEmpty) return null;
     final m = rows.first;
 
-    final idFornec = _toStr(m[FornTables.cf_idFornecimento]).trim();
-    final idBaiaDb = _toStr(m[FornTables.cf_idBaia]).trim();
+    final idCadastro = _toStr(m[FornTables.cfId]).trim();
+    final idFornec = _toStr(m[FornTables.cfIdFornecimento]).trim();
+    final idBaiaDb = _toStr(m[FornTables.cfIdBaia]).trim();
 
     return FornecimentoAbertoMini(
+      idCadastro: idCadastro,
       idFornecimento: idFornec.isEmpty ? idFornecimento : idFornec,
       idBaia: idBaiaDb.isEmpty ? idBaia : idBaiaDb,
     );
   }
 
   // =========================================================
-  // ABRIR (insert)
+  // ABRIR (insert)  ✅ CORRIGIDO: replace + log
   // =========================================================
   Future<void> abrir({
     required String id,
@@ -350,50 +381,31 @@ class FornecimentoDao {
     await db.insert(
       FornTables.cadastroFornecimento,
       {
-        FornTables.cf_id: id,
-        FornTables.cf_idFornecimento: idFornecimento,
-        FornTables.cf_idFabricacao: idFabricacao,
-        FornTables.cf_idBaia: idBaia,
-        FornTables.cf_data: d,
-        FornTables.cf_horaInicio: hora,
-        FornTables.cf_pesoInicio: pesoInicio,
-        FornTables.cf_horaFim: null,
-        FornTables.cf_pesoFim: pesoInicio, // NOT NULL
-        FornTables.cf_previsto: previsto,
-        FornTables.cf_realizado: null,
-        FornTables.cf_flagSync: 0,
-        FornTables.cf_trato: trato,
-        FornTables.cf_idUsuario: idUsuario,
-        FornTables.cf_idDieta: idDieta,
+        FornTables.cfId: id,
+        FornTables.cfIdFornecimento: idFornecimento,
+        FornTables.cfIdFabricacao: idFabricacao,
+        FornTables.cfIdBaia: idBaia,
+        FornTables.cfData: d,
+        FornTables.cfHoraInicio: hora,
+        FornTables.cfPesoInicio: pesoInicio,
+        FornTables.cfHoraFim: null,
+        FornTables.cfPesoFim: pesoInicio,
+        FornTables.cfPrevisto: previsto,
+        FornTables.cfRealizado: null,
+        FornTables.cfFlagSync: 0,
+        FornTables.cfTrato: trato,
+        FornTables.cfIdUsuario: idUsuario,
+        FornTables.cfIdDieta: idDieta,
       },
-      conflictAlgorithm: ConflictAlgorithm.abort,
+      // ✅ evita “sumir” por PK abort (e te ajuda a testar rápido)
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
-  }
 
-  // =========================================================
-  // FINALIZAR (update)
-  // =========================================================
-  Future<void> finalizar({
-    required String id,
-    required num pesoFim,
-    required num previsto,
-    required num? realizado,
-  }) async {
-    final db = await _db;
-    final hora = nowTime();
-
-    await db.update(
-      FornTables.cadastroFornecimento,
-      {
-        FornTables.cf_horaFim: hora,
-        FornTables.cf_pesoFim: pesoFim,
-        FornTables.cf_previsto: previsto,
-        FornTables.cf_realizado: realizado,
-        FornTables.cf_flagSync: 0,
-      },
-      where: "${FornTables.cf_id} = ?",
-      whereArgs: [id],
-    );
+    if (kDebugMode) {
+      debugPrint(
+        "✅ CADASTRO_FORNECIMENTO.abrir OK id=$id idFornecimento=$idFornecimento idBaia=$idBaia trato=$trato data=$d",
+      );
+    }
   }
 
   // =========================================================
@@ -410,29 +422,72 @@ class FornecimentoDao {
     await db.update(
       FornTables.cadastroFornecimento,
       {
-        FornTables.cf_horaFim: hora,
-        FornTables.cf_pesoFim: pesoFim,
-        FornTables.cf_realizado: realizado,
-        FornTables.cf_flagSync: 0,
+        FornTables.cfHoraFim: hora,
+        FornTables.cfPesoFim: pesoFim,
+        FornTables.cfRealizado: realizado,
+        FornTables.cfFlagSync: 0,
       },
-      where: "${FornTables.cf_id} = ?",
+      where: "${FornTables.cfId} = ?",
       whereArgs: [id],
     );
   }
 
   // =========================================================
-  // CANCELAR ABERTO (quando realizado baixo)
+  // SALVAR FINALIZADO (insert direto, novo fluxo)
+  // =========================================================
+  Future<void> salvarFinalizado({
+    required String id,
+    required String idFornecimento,
+    required String idFabricacao,
+    required String idBaia,
+    required DateTime data,
+    required int trato,
+    required String idUsuario,
+    String? idDieta,
+    required double pesoFim,
+    required double realizado,
+    required double previsto,
+  }) async {
+    final db = await _db;
+    final d = toSqlDate(data);
+    final hora = nowTime();
+
+    await db.insert(
+      FornTables.cadastroFornecimento,
+      {
+        FornTables.cfId: id,
+        FornTables.cfIdFornecimento: idFornecimento,
+        FornTables.cfIdFabricacao: idFabricacao,
+        FornTables.cfIdBaia: idBaia,
+        FornTables.cfData: d,
+        FornTables.cfHoraInicio: hora,
+        FornTables.cfHoraFim: hora,
+        FornTables.cfPesoInicio: pesoFim,
+        FornTables.cfPesoFim: pesoFim,
+        FornTables.cfPrevisto: previsto,
+        FornTables.cfRealizado: realizado,
+        FornTables.cfFlagSync: 0,
+        FornTables.cfTrato: trato,
+        FornTables.cfIdUsuario: idUsuario,
+        FornTables.cfIdDieta: idDieta,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  // =========================================================
+  // CANCELAR ABERTO
   // =========================================================
   Future<void> cancelarCadastroAberto(String idCadastro) async {
     final db = await _db;
     await db.update(
       FornTables.cadastroFornecimento,
       {
-        FornTables.cf_horaFim: nowTime(),
-        FornTables.cf_realizado: 0,
-        FornTables.cf_flagSync: 0,
+        FornTables.cfHoraFim: nowTime(),
+        FornTables.cfRealizado: 0,
+        FornTables.cfFlagSync: 0,
       },
-      where: "${FornTables.cf_id} = ?",
+      where: "${FornTables.cfId} = ?",
       whereArgs: [idCadastro],
     );
   }
@@ -453,19 +508,19 @@ class FornecimentoDao {
     await db.update(
       FornTables.cadastroFornecimento,
       {
-        FornTables.cf_horaFim: hora,
-        FornTables.cf_pesoInicio: pesoInicio,
-        FornTables.cf_pesoFim: pesoFim,
-        FornTables.cf_realizado: realizado,
-        FornTables.cf_flagSync: 0,
+        FornTables.cfHoraFim: hora,
+        FornTables.cfPesoInicio: pesoInicio,
+        FornTables.cfPesoFim: pesoFim,
+        FornTables.cfRealizado: realizado,
+        FornTables.cfFlagSync: 0,
       },
-      where: "${FornTables.cf_id} = ?",
+      where: "${FornTables.cfId} = ?",
       whereArgs: [id],
     );
   }
 
   // =========================================================
-  // REALIZADO ACUMULADO (FORNECIMENTO_CONF)
+  // REALIZADO ACUMULADO (PREVISAO)
   // =========================================================
   Future<double> getRealizadoAcumulado({
     required String idFornecimento,
@@ -478,41 +533,59 @@ class FornecimentoDao {
 
     final rows = await db.query(
       FornTables.previsao,
-      columns: [FornTables.pv_realizadoKg],
+      columns: [FornTables.pvRealizadoKg],
       where: """
-        ${FornTables.pv_idFornecimento} = ?
-        AND ${FornTables.pv_idBaia} = ?
-        AND ${FornTables.pv_data} = ?
-        AND ${FornTables.pv_trato} = ?
-      """,
+      ${FornTables.pvIdFornecimento} = ?
+      AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
+      AND substr(${FornTables.pvData},1,10) = ?
+      AND ${FornTables.pvTrato} = ?
+    """,
       whereArgs: [idFornecimento, idBaia, d, trato],
       limit: 1,
     );
 
     if (rows.isEmpty) return 0.0;
-    return _toDouble(rows.first[FornTables.pv_realizadoKg]);
+    return _toDouble(rows.first[FornTables.pvRealizadoKg]);
   }
 
   // =========================================================
-  // ATUALIZAR REALIZADO NA PREVISAO (FORNECIMENTO_CONF)
+  // ATUALIZAR REALIZADO NA PREVISAO
   // =========================================================
   Future<void> setPrevRealizado({
     required DateTime data,
     required int trato,
     required String idBaia,
     required double realizadoKg,
+    String? idFornecimento,
   }) async {
     final db = await _db;
     final d = toSqlDate(data);
 
+    final idF = (idFornecimento ?? "").trim();
+
+    if (idF.isNotEmpty) {
+      await db.update(
+        FornTables.previsao,
+        {FornTables.pvRealizadoKg: realizadoKg},
+        where: """
+        substr(${FornTables.pvData},1,10) = ?
+        AND ${FornTables.pvTrato} = ?
+        AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
+        AND TRIM(${FornTables.pvIdFornecimento}) = TRIM(?)
+      """,
+        whereArgs: [d, trato, idBaia, idF],
+      );
+      return;
+    }
+
     await db.update(
       FornTables.previsao,
-      {FornTables.pv_realizadoKg: realizadoKg},
+      {FornTables.pvRealizadoKg: realizadoKg},
       where: """
-        ${FornTables.pv_data} = ?
-        AND ${FornTables.pv_trato} = ?
-        AND ${FornTables.pv_idBaia} = ?
-      """,
+      substr(${FornTables.pvData},1,10) = ?
+      AND ${FornTables.pvTrato} = ?
+      AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
+    """,
       whereArgs: [d, trato, idBaia],
     );
   }
@@ -528,62 +601,75 @@ class FornecimentoDao {
 
     return db.rawQuery("""
       SELECT
-        F.${FornTables.cf_id}              AS id,
-        F.${FornTables.cf_idFornecimento}  AS id_fornecimento,
-        F.${FornTables.cf_idFabricacao}    AS id_fabricacao,
-        F.${FornTables.cf_idBaia}          AS id_baia,
-        F.${FornTables.cf_data}            AS data,
-        F.${FornTables.cf_horaInicio}      AS hora_inicio,
-        F.${FornTables.cf_horaFim}         AS hora_fim,
-        F.${FornTables.cf_pesoInicio}      AS peso_inicio,
-        F.${FornTables.cf_pesoFim}         AS peso_fim,
-        F.${FornTables.cf_previsto}        AS previsto,
-        F.${FornTables.cf_realizado}       AS realizado,
-        F.${FornTables.cf_flagSync}        AS flag_sync,
-        F.${FornTables.cf_trato}           AS trato,
-        F.${FornTables.cf_idUsuario}       AS id_usuario,
-        F.${FornTables.cf_idDieta}         AS id_dieta,
+        F.${FornTables.cfId}              AS id,
+        F.${FornTables.cfIdFornecimento}  AS id_fornecimento,
+        F.${FornTables.cfIdFabricacao}    AS id_fabricacao,
+        F.${FornTables.cfIdBaia}          AS id_baia,
+        F.${FornTables.cfData}            AS data,
+        F.${FornTables.cfHoraInicio}      AS hora_inicio,
+        F.${FornTables.cfHoraFim}         AS hora_fim,
+        F.${FornTables.cfPesoInicio}      AS peso_inicio,
+        F.${FornTables.cfPesoFim}         AS peso_fim,
+        F.${FornTables.cfPrevisto}        AS previsto,
+        F.${FornTables.cfRealizado}       AS realizado,
+        F.${FornTables.cfFlagSync}        AS flag_sync,
+        F.${FornTables.cfTrato}           AS trato,
+        F.${FornTables.cfIdUsuario}       AS id_usuario,
+        F.${FornTables.cfIdDieta}         AS id_dieta,
 
-        B.${FornTables.db_nomeLocal}       AS nome_local,
-        B.${FornTables.db_linha}           AS linha,
-        B.${FornTables.db_idLote}          AS id_lote,
-        B.${FornTables.db_rfid}            AS rfid
+        B.${FornTables.dbNomeLocal}       AS nome_local,
+
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') AS linha,
+
+        B.${FornTables.dbIdLote}          AS id_lote,
+        B.${FornTables.dbRfid}            AS rfid
       FROM ${FornTables.cadastroFornecimento} F
       LEFT JOIN ${FornTables.detalhesBaias} B
-        ON B.${FornTables.db_id} = F.${FornTables.cf_idBaia}
+        ON TRIM(CAST(B.${FornTables.dbId} AS TEXT)) = TRIM(CAST(F.${FornTables.cfIdBaia} AS TEXT))
       WHERE
-        F.${FornTables.cf_data} = ?
-        AND F.${FornTables.cf_trato} = ?
+        F.${FornTables.cfData} = ?
+        AND F.${FornTables.cfTrato} = ?
       ORDER BY
-        B.${FornTables.db_linha} ASC,
-        COALESCE(B.${FornTables.db_orderTrato}, 0) ASC,
-        B.${FornTables.db_nomeLocal} ASC,
-        F.${FornTables.cf_horaInicio} ASC
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') ASC,
+        COALESCE(B.${FornTables.dbOrderTrato}, 0) ASC,
+        B.${FornTables.dbNomeLocal} ASC,
+        F.${FornTables.cfHoraInicio} ASC
     """, [dataSql, trato]);
   }
 
   // =========================================================
-  // SYNC
+  // SYNC  ✅ CORRIGIDO: COALESCE(flag,0)=0
   // =========================================================
   Future<List<FornecimentoRow>> listPendentesSync({int limit = 200}) async {
     final db = await _db;
 
     final rows = await db.query(
       FornTables.cadastroFornecimento,
-      where: "${FornTables.cf_flagSync} = 0",
+      where: "COALESCE(${FornTables.cfFlagSync},0) = 0",
       limit: limit,
-      orderBy: "${FornTables.cf_data} DESC, ${FornTables.cf_horaInicio} DESC",
+      orderBy: "${FornTables.cfData} DESC, ${FornTables.cfHoraInicio} DESC",
     );
 
-    return rows.map((m) => FornecimentoRow.fromMap(m)).toList();
+    return rows.map((m) {
+      return FornecimentoRow.fromMap({
+        "id": m[FornTables.cfId],
+        "idFornecimento": m[FornTables.cfIdFornecimento],
+        "idBaia": m[FornTables.cfIdBaia],
+        "idDieta": m[FornTables.cfIdDieta],
+        "dataIso": m[FornTables.cfData],
+        "trato": m[FornTables.cfTrato],
+        "previstoKg": m[FornTables.cfPrevisto],
+        "realizadoKg": m[FornTables.cfRealizado],
+      });
+    }).toList();
   }
 
   Future<void> marcarSyncOk(String id) async {
     final db = await _db;
     await db.update(
       FornTables.cadastroFornecimento,
-      {FornTables.cf_flagSync: 1},
-      where: "${FornTables.cf_id} = ?",
+      {FornTables.cfFlagSync: 1},
+      where: "${FornTables.cfId} = ?",
       whereArgs: [id],
     );
   }
@@ -616,7 +702,7 @@ class FornecimentoDao {
 
     final rows = await db.query(
       FornTables.detalhesBaias,
-      where: "${FornTables.db_rfid} = ?",
+      where: "TRIM(${FornTables.dbRfid}) = TRIM(?)",
       whereArgs: [tag],
       limit: 1,
     );

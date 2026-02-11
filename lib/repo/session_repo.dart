@@ -1,3 +1,4 @@
+// lib/repo/session_repo.dart
 import "package:shared_preferences/shared_preferences.dart";
 
 class SessionRepo {
@@ -16,25 +17,20 @@ class SessionRepo {
     await sp.setString(_kUserLogin, login);
   }
 
-  Future<String?> getUserId() async {
+  Future<Map<String, String>?> getLogin() async {
     final sp = await SharedPreferences.getInstance();
-    final v = sp.getString(_kUserId);
-    return (v == null || v.trim().isEmpty) ? null : v;
+
+    final id = sp.getString(_kUserId);
+    if (id == null || id.trim().isEmpty) return null;
+
+    return {
+      "ID": id,
+      "NOME": sp.getString(_kUserNome) ?? "",
+      "LOGIN": sp.getString(_kUserLogin) ?? "",
+    };
   }
 
-  Future<String?> getUserNome() async {
-    final sp = await SharedPreferences.getInstance();
-    final v = sp.getString(_kUserNome);
-    return (v == null || v.trim().isEmpty) ? null : v;
-  }
-
-  Future<String?> getUserLogin() async {
-    final sp = await SharedPreferences.getInstance();
-    final v = sp.getString(_kUserLogin);
-    return (v == null || v.trim().isEmpty) ? null : v;
-  }
-
-  Future<void> clear() async {
+  Future<void> clearLogin() async {
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_kUserId);
     await sp.remove(_kUserNome);

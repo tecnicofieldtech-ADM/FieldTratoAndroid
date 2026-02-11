@@ -18,18 +18,17 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 4,
+      version: 6, // ✅ bump para corrigir PK da PREVISAO + add tolerancia_kg
       onConfigure: (db) async {
-        // importante se você usar FK no futuro
         await db.execute("PRAGMA foreign_keys = ON;");
       },
       onCreate: (db, v) async {
         await _createAll(db);
-        await _ensureConfigRow(db); // garante 1 linha
+        await _ensureConfigRow(db);
       },
       onUpgrade: (db, oldV, newV) async {
         await _onUpgrade(db, oldV, newV);
-        await _ensureConfigRow(db); // se atualizou, garante 1 linha também
+        await _ensureConfigRow(db);
       },
     );
   }
@@ -38,7 +37,6 @@ class AppDb {
   // CREATE ALL TABLES
   // =========================
   Future<void> _createAll(Database db) async {
-    // CONFIG (1 linha)
     await db.execute("""
     CREATE TABLE IF NOT EXISTS CONFIG (
       HOST            TEXT,
@@ -52,7 +50,7 @@ class AppDb {
       PORTA_RFID      INTEGER,
       MODELO_RFID     INTEGER,
       BACKEND         INTEGER,
-      ID_VAGAO        TEXT,
+      ID_VAGAO        TEXT,   -- ✅ UUID do vagão (vem da config)
       NOME_VAGAO      TEXT,
       IP_ESPELHO      TEXT,
 
@@ -60,11 +58,13 @@ class AppDb {
       TEMPO_EM_SEGUNDOS_PULO INTEGER DEFAULT 10,
       INCREMENTO_PESO INTEGER DEFAULT 1,
       TEMPO_MISTURA INTEGER,
-      TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0
+      TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0,
+
+      -- ✅ NOVO: tolerância em KG (ConfigRepo já garante, mas aqui nasce certo)
+      TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0
     );
     """);
 
-    // USUÁRIOS
     await db.execute("""
     CREATE TABLE IF NOT EXISTS CADASTRO_USUARIO (
       ID         TEXT PRIMARY KEY NOT NULL,
@@ -81,7 +81,6 @@ class AppDb {
     ON CADASTRO_USUARIO (ID_FAZENDA);
     """);
 
-    // VAGÃO
     await db.execute("""
     CREATE TABLE IF NOT EXISTS VAGAO (
       ID   TEXT PRIMARY KEY NOT NULL,
@@ -89,7 +88,6 @@ class AppDb {
     );
     """);
 
-    // FAZENDAS
     await db.execute("""
     CREATE TABLE IF NOT EXISTS CADASTRO_FAZENDAS (
       ID   TEXT PRIMARY KEY NOT NULL,
@@ -97,7 +95,6 @@ class AppDb {
     );
     """);
 
-    // GRAVA TAG (RFID)
     await db.execute("""
     CREATE TABLE IF NOT EXISTS GRAVA_TAG (
       ID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,7 +109,6 @@ class AppDb {
     ON GRAVA_TAG (SYNC);
     """);
 
-    // Tabelas da Fabricação/Fornecimento
     await _createFabricaTables(db);
   }
 
@@ -123,7 +119,7 @@ class AppDb {
       ID_DIETA TEXT NOT NULL,
       QTD_PREVISTA NUMERIC NOT NULL,
       QTD_REALIZADA NUMERIC DEFAULT 0,
-      DATA_FABRICACAO TEXT NOT NULL,  -- 'YYYY-MM-DD'
+      DATA_FABRICACAO TEXT NOT NULL,
       HORA_INICIO TEXT,
       HORA_FIM TEXT,
       TRATO INTEGER NOT NULL,
@@ -143,10 +139,12 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_FAB_SYNC
     ON CADASTRO_FABRICA_RACAO (FLAG_SYNC);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_FAB_DATA_TRATO
     ON CADASTRO_FABRICA_RACAO (DATA_FABRICACAO, TRATO);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_FAB_FAZENDA
     ON CADASTRO_FABRICA_RACAO (ID_FAZENDA);
@@ -158,13 +156,13 @@ class AppDb {
       ID_FORNECIMENTO TEXT NOT NULL,
       ID_FABRICACAO TEXT NOT NULL,
       ID_BAIA TEXT NOT NULL,
-      DATA TEXT NOT NULL,               -- 'YYYY-MM-DD'
+      DATA TEXT NOT NULL,
       HORA_INICIO TEXT,
       PESO_INICIO NUMERIC NOT NULL,
       HORA_FIM TEXT,
       PESO_FIM NUMERIC NOT NULL,
       PREVISTO NUMERIC NOT NULL,
-      REALIZADO NUMERIC,                -- pode ser NULL
+      REALIZADO NUMERIC,
       FLAG_SYNC INTEGER NOT NULL DEFAULT 0,
       TRATO INTEGER NOT NULL,
       ID_USUARIO TEXT NOT NULL,
@@ -176,10 +174,12 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_FORN_SYNC
     ON CADASTRO_FORNECIMENTO (FLAG_SYNC);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_FORN_DATA
     ON CADASTRO_FORNECIMENTO (DATA);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_FORN_BAIA_DATA
     ON CADASTRO_FORNECIMENTO (ID_BAIA, DATA);
@@ -194,7 +194,7 @@ class AppDb {
       ID_DIETA TEXT,
       PESO_FABRICADO NUMERIC,
       PESO_CARREGADO NUMERIC,
-      ID_VAGAO TEXT NOT NULL
+      ID_VAGAO TEXT
     );
     """);
 
@@ -202,10 +202,12 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_CARR_STATUS
     ON CARREGAMENTO (STATUS);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_CARR_DATA
     ON CARREGAMENTO (DATA_REGISTRO);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_CARR_FAB
     ON CARREGAMENTO (ID_FABRICACAO);
@@ -227,10 +229,12 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_BAIAS_FAZENDA
     ON DETALHES_BAIAS (ID_FAZENDA);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_BAIAS_LOTE
     ON DETALHES_BAIAS (ID_LOTE);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_BAIAS_RFID
     ON DETALHES_BAIAS (RFID);
@@ -284,6 +288,7 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_DET_FAB_FAB
     ON DETALHES_FABRICA_RACAO (ID_FABRICACAO);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_DET_FAB_SYNC
     ON DETALHES_FABRICA_RACAO (FLAG_SYNC);
@@ -304,15 +309,17 @@ class AppDb {
     ON DIETA (ID_FAZENDA);
     """);
 
+    // ✅ CORRIGIDO: PREVISAO com PK composta (ID_FORNECIMENTO + DATA + ID_BAIA + TRATO)
     await db.execute("""
     CREATE TABLE IF NOT EXISTS PREVISAO (
-      ID_FORNECIMENTO TEXT PRIMARY KEY NOT NULL,
+      ID_FORNECIMENTO TEXT NOT NULL,
       DATA TEXT NOT NULL,
       ID_BAIA TEXT NOT NULL,
       TRATO INTEGER NOT NULL,
       PREVISTO_KG NUMERIC NOT NULL,
       REALIZADO_KG NUMERIC DEFAULT 0,
-      ID_RACAO TEXT
+      ID_RACAO TEXT,
+      PRIMARY KEY (ID_FORNECIMENTO, DATA, ID_BAIA, TRATO)
     );
     """);
 
@@ -320,9 +327,15 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_PREV_DATA_TRATO
     ON PREVISAO (DATA, TRATO);
     """);
+
     await db.execute("""
     CREATE INDEX IF NOT EXISTS IDX_PREV_BAIA
     ON PREVISAO (ID_BAIA);
+    """);
+
+    await db.execute("""
+    CREATE INDEX IF NOT EXISTS IDX_PREV_IDFORN
+    ON PREVISAO (ID_FORNECIMENTO);
     """);
 
     await db.execute("""
@@ -336,9 +349,6 @@ class AppDb {
     """);
   }
 
-  // =========================
-  // garante CONFIG com 1 linha
-  // =========================
   Future<void> _ensureConfigRow(Database db) async {
     final r = await db.rawQuery("SELECT COUNT(*) c FROM CONFIG");
     final c = (r.first["c"] as int?) ?? 0;
@@ -363,26 +373,18 @@ class AppDb {
         "INCREMENTO_PESO": 1,
         "TEMPO_MISTURA": null,
         "TOLERANCIA_CARREGAMENTO": 0,
+        "TOLERANCIA_CARREGAMENTO_KG": 0,
       });
     }
   }
 
-  // =========================
-  // helpers upgrade
-  // =========================
   Future<void> _addColumnIgnore(Database db, String table, String ddl) async {
     try {
       await db.execute("ALTER TABLE $table ADD COLUMN $ddl");
-    } catch (_) {
-      // ignora
-    }
+    } catch (_) {}
   }
 
-  // =========================
-  // UPGRADE CONTROLADO
-  // =========================
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
-    // v2: GRAVA_TAG
     if (oldV < 2) {
       await db.execute("""
       CREATE TABLE IF NOT EXISTS GRAVA_TAG (
@@ -399,20 +401,109 @@ class AppDb {
       """);
     }
 
-    // v3: tabelas fabricação
     if (oldV < 3) {
       await _createFabricaTables(db);
     }
 
-    // v4: novas colunas de config
     if (oldV < 4) {
       await _addColumnIgnore(db, "CONFIG", "PULO_AUTOMATICO INTEGER DEFAULT 1");
       await _addColumnIgnore(
-          db, "CONFIG", "TEMPO_EM_SEGUNDOS_PULO INTEGER DEFAULT 10");
+        db,
+        "CONFIG",
+        "TEMPO_EM_SEGUNDOS_PULO INTEGER DEFAULT 10",
+      );
       await _addColumnIgnore(db, "CONFIG", "INCREMENTO_PESO INTEGER DEFAULT 1");
       await _addColumnIgnore(db, "CONFIG", "TEMPO_MISTURA INTEGER");
       await _addColumnIgnore(
-          db, "CONFIG", "TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0");
+        db,
+        "CONFIG",
+        "TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0",
+      );
+    }
+
+    if (oldV < 5) {
+      try {
+        await db.execute("ALTER TABLE CARREGAMENTO RENAME TO CARREGAMENTO_OLD");
+        await db.execute("""
+        CREATE TABLE CARREGAMENTO (
+          ID TEXT PRIMARY KEY NOT NULL,
+          DATA_REGISTRO TEXT DEFAULT (datetime('now', 'localtime')),
+          STATUS INTEGER DEFAULT 1,
+          ID_FABRICACAO TEXT,
+          ID_DIETA TEXT,
+          PESO_FABRICADO NUMERIC,
+          PESO_CARREGADO NUMERIC,
+          ID_VAGAO TEXT
+        );
+        """);
+        await db.execute("""
+        INSERT INTO CARREGAMENTO (
+          ID, DATA_REGISTRO, STATUS, ID_FABRICACAO, ID_DIETA,
+          PESO_FABRICADO, PESO_CARREGADO, ID_VAGAO
+        )
+        SELECT
+          ID, DATA_REGISTRO, STATUS, ID_FABRICACAO, ID_DIETA,
+          PESO_FABRICADO, PESO_CARREGADO, ID_VAGAO
+        FROM CARREGAMENTO_OLD;
+        """);
+        await db.execute("DROP TABLE CARREGAMENTO_OLD");
+      } catch (_) {}
+    }
+
+    // ✅ v6: Corrige PK da PREVISAO + adiciona TOLERANCIA_CARREGAMENTO_KG
+    if (oldV < 6) {
+      await _addColumnIgnore(
+        db,
+        "CONFIG",
+        "TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0",
+      );
+
+      // Migração segura da PREVISAO para PK composta
+      try {
+        await db.execute("ALTER TABLE PREVISAO RENAME TO PREVISAO_OLD");
+
+        await db.execute("""
+        CREATE TABLE PREVISAO (
+          ID_FORNECIMENTO TEXT NOT NULL,
+          DATA TEXT NOT NULL,
+          ID_BAIA TEXT NOT NULL,
+          TRATO INTEGER NOT NULL,
+          PREVISTO_KG NUMERIC NOT NULL,
+          REALIZADO_KG NUMERIC DEFAULT 0,
+          ID_RACAO TEXT,
+          PRIMARY KEY (ID_FORNECIMENTO, DATA, ID_BAIA, TRATO)
+        );
+        """);
+
+        // Copia o que der (se existirem duplicados, a PK antiga já teria impedido)
+        await db.execute("""
+        INSERT OR IGNORE INTO PREVISAO (
+          ID_FORNECIMENTO, DATA, ID_BAIA, TRATO, PREVISTO_KG, REALIZADO_KG, ID_RACAO
+        )
+        SELECT
+          ID_FORNECIMENTO, DATA, ID_BAIA, TRATO, PREVISTO_KG, REALIZADO_KG, ID_RACAO
+        FROM PREVISAO_OLD;
+        """);
+
+        await db.execute("DROP TABLE PREVISAO_OLD");
+
+        await db.execute("""
+        CREATE INDEX IF NOT EXISTS IDX_PREV_DATA_TRATO
+        ON PREVISAO (DATA, TRATO);
+        """);
+
+        await db.execute("""
+        CREATE INDEX IF NOT EXISTS IDX_PREV_BAIA
+        ON PREVISAO (ID_BAIA);
+        """);
+
+        await db.execute("""
+        CREATE INDEX IF NOT EXISTS IDX_PREV_IDFORN
+        ON PREVISAO (ID_FORNECIMENTO);
+        """);
+      } catch (_) {
+        // se falhar, não derruba o app
+      }
     }
   }
 }

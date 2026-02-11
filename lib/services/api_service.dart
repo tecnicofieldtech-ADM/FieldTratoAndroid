@@ -82,14 +82,16 @@ class ApiService {
     return jsonDecode(r.data.toString()) as List;
   }
 
-  Future<List<dynamic>> getPrevisaoTrato(String idFazenda, String dataYmd) async {
+  Future<List<dynamic>> getPrevisaoTrato(
+      String idFazenda, String dataYmd) async {
     final r = await _dio.get("/previsao_trato/get/$idFazenda/$dataYmd");
     if (r.statusCode != 200) throw Exception(r.data.toString());
     if (r.data is List) return r.data as List;
     return jsonDecode(r.data.toString()) as List;
   }
 
-  Future<bool> postGravaTag(Map<String, dynamic> body, {void Function(String)? log}) async {
+  Future<bool> postGravaTag(Map<String, dynamic> body,
+      {void Function(String)? log}) async {
     try {
       final r = await _dio.post(
         "/Post/GravaTag",
@@ -118,7 +120,8 @@ class ApiService {
     }
   }
 
-  Future<bool> postFabricacao(Map<String, dynamic> body, {void Function(String)? log}) async {
+  Future<bool> postFabricacao(Map<String, dynamic> body,
+      {void Function(String)? log}) async {
     try {
       final r = await _dio.post(
         "/Post/Fabricacao",
@@ -150,22 +153,32 @@ class ApiService {
     }
   }
 
-  Future<bool> postFabricacaoInsumo(Map<String, dynamic> body, {void Function(String)? log}) async {
+  Future<bool> postFabricacaoInsumo(
+    Map<String, dynamic> body, {
+    void Function(String)? log,
+  }) async {
     try {
+      // 🔥 garante que o payload final (string) é exatamente o que vai pra API
+      final jsonBody = jsonEncode(body);
+
+      log?.call("🚀 /Post/Fabricacao_Insumo JSON = $jsonBody");
+
       final r = await _dio.post(
         "/Post/Fabricacao_Insumo",
-        data: body,
+        data: jsonBody, // ✅ envia string pronta, Dio não “re-encoda”
         options: Options(
-          validateStatus: (s) => s != null, // ✅ não lança em 500
-          contentType: Headers.jsonContentType,
+          validateStatus: (s) => s != null,
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          responseType: ResponseType.plain,
         ),
       );
 
       if (r.statusCode == 200) return true;
 
       log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode}");
-      final itens = (body["itens"] is List) ? (body["itens"] as List) : const [];
-      log?.call("📤 Req: itens=${itens.length} (primeiro=${itens.isNotEmpty ? itens.first : "—"})");
       log?.call("📥 Resp: ${r.data}");
       return false;
     } on DioException catch (e) {
@@ -173,8 +186,6 @@ class ApiService {
       final data = e.response?.data;
 
       log?.call("❌ /Post/Fabricacao_Insumo EXCEPTION HTTP $status");
-      final itens = (body["itens"] is List) ? (body["itens"] as List) : const [];
-      log?.call("📤 Req: itens=${itens.length} (primeiro=${itens.isNotEmpty ? itens.first : "—"})");
       log?.call("📥 Resp: ${data ?? e.message}");
       return false;
     } catch (e) {
@@ -183,7 +194,8 @@ class ApiService {
     }
   }
 
-  Future<bool> postFornecimento(Map<String, dynamic> body, {void Function(String)? log}) async {
+  Future<bool> postFornecimento(Map<String, dynamic> body,
+      {void Function(String)? log}) async {
     try {
       final r = await _dio.post(
         "/Post/Fornecimento",

@@ -2,6 +2,7 @@
 import "dart:async";
 import "package:flutter/material.dart";
 
+import "../../../repo/config_repo.dart"; // ✅ novo (pra pegar tipoTrabalho e vagão)
 import "../controller/fabricacao_controller.dart";
 import "../data/fabricacao_repo.dart";
 import "../domain/models.dart";
@@ -31,6 +32,10 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   String _prePesadoShownForDetId = "";
   bool _showingPrePesado = false;
 
+  bool _finishing = false; // ✅ trava duplo clique no finalizar
+
+  final _cfgRepo = ConfigRepo(); // ✅ config pra criar carregamento
+
   bool get _recebendoAgora {
     final dt = c.lastPacketAt;
     if (dt == null) return false;
@@ -54,7 +59,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   Widget _wrapPop(Widget child) {
     return PopScope(
       canPop: true,
-      // ✅ Flutter novo: onPopInvokedWithResult (remove warning deprecated_member_use)
       onPopInvokedWithResult: (didPop, result) async {
         if (_reconnecting) return;
         await c.shutdown();
@@ -182,6 +186,61 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   }
 
   // =========================================================
+  // ✅ CARREGAMENTO ABERTO (STATUS=0) após finalizar
+  // =========================================================
+  Future<void> _ensureCarregamentoAbertoAposFinalizar() async {
+    final h = c.header;
+    if (h == null) return;
+
+    // tipoTrabalho: 0 = já considera carregado junto, senão 0
+    int tipoTrabalho = 0;
+    try {
+      tipoTrabalho = await _cfgRepo.getTipoTrabalho();
+    } catch (_) {
+      tipoTrabalho = 0;
+    }
+
+    // ✅ ID_VAGAO é STRING (UUID)
+    String idVagao = "";
+
+    // 1) tenta pelo CONFIG
+    try {
+      idVagao = ((await _cfgRepo.getIdVagao()) ?? "").toString().trim();
+    } catch (_) {
+      idVagao = "";
+    }
+
+    // 2) se não tiver, pega da FABRICAÇÃO (ID_VAGAO do header) usando o ID da fabricação (h.id)
+    if (idVagao.isEmpty) {
+      try {
+        idVagao = (await widget.repo.getIdVagaoByFabricacaoId(h.id)).trim();
+      } catch (_) {
+        idVagao = "";
+      }
+    }
+
+    if (idVagao.isEmpty) {
+      throw Exception(
+          "Vagão não configurado. Selecione um vagão nas configurações.");
+    }
+
+    final totalReal = (h.qtdRealizada is num)
+        ? (h.qtdRealizada as num).toDouble()
+        : (h.qtdRealizada?.toDouble() ?? 0.0);
+
+    final pesoFabricado = totalReal;
+    final pesoCarregado = (tipoTrabalho == 0) ? totalReal : 0.0;
+
+    await widget.repo.ensureCarregamentoAberto(
+      idFabricacao: h.id,
+      idDieta: (h.idDieta ?? "").toString(),
+      pesoFabricado: pesoFabricado,
+      pesoCarregado: pesoCarregado,
+      idVagao: idVagao, // ✅ string (UUID)
+    );
+  }
+
+  // =========================================================
   // PRÉ-PESADO
   // =========================================================
   void _maybeShowPrePesado() {
@@ -207,7 +266,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         nome: ing.insumoNome,
         previstoKg: ing.previstoKg,
         onConfirm: (realizado) async {
-          // ✅ não chame notifyListeners() na UI
           c.setRealizadoLocalByDetId(ing.idDet, realizado);
 
           try {
@@ -615,37 +673,60 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     } else if (dentroTol) {
       status = tolPct > 0 ? "No alvo ✅" : "No alvo ✅ (exato)";
     } else if (real < prev) {
-      status = "Faltando";
+      status = "Faltando $difAbs kg";
     } else {
-      status = "Passou";
+      status = "Passou $difAbs kg";
     }
 
     final percent = (prev > 0) ? (real * 100 / prev) : 0.0;
     final pctLabel = prev > 0 ? "${percent.toStringAsFixed(0)}%" : "--";
     final barValue = prev > 0 ? (real / prev).clamp(0.0, 1.0) : 0.0;
 
-    final showPlus = prev > 0 && real > prev;
-    final difText = showPlus ? "+$difAbs" : "$difAbs";
+    final faltando = prev > 0 ? (prev - real) : 0;
+    final faltandoShow = faltando < 0 ? 0 : faltando;
+    final difText = "$faltandoShow";
+
+    Color bg;
+    if (prev <= 0) {
+      bg = Colors.blueGrey.shade700;
+    } else if (dentroTol) {
+      bg = Colors.green.shade700;
+    } else if (real > prev) {
+      bg = Colors.deepOrange.shade700;
+    } else {
+      bg = Colors.black;
+    }
 
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _alpha(difColor, 0.35)),
-        color: _alpha(difColor, 0.08),
+        borderRadius: BorderRadius.circular(26),
+        color: bg,
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 22,
+            spreadRadius: 0,
+            offset: const Offset(0, 12),
+            color: Colors.black.withValues(alpha: 0.22),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const Icon(Icons.swap_horiz),
+              const Icon(Icons.scale, color: Colors.white, size: 28),
               const SizedBox(width: 10),
               const Text(
-                "Diferença (kg)",
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                "A FABRICAR (kg)",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 26,
+                ),
               ),
               const Spacer(),
               ConstrainedBox(
@@ -669,10 +750,11 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                   difText,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 90,
-                    height: 1.0,
+                    fontSize: 200,
+                    height: 0.90,
                     fontWeight: FontWeight.w900,
-                    color: difColor,
+                    letterSpacing: 1.5,
+                    color: Colors.white,
                   ),
                 ),
               ),
@@ -694,6 +776,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                 style: const TextStyle(
                   fontWeight: FontWeight.w900,
                   fontSize: 12,
+                  color: Colors.white,
                 ),
               ),
             ],
@@ -712,8 +795,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              color: _alpha(Colors.white, 0.75),
-              border: Border.all(color: Colors.grey.shade300),
+              color: Colors.white.withValues(alpha: 0.16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
             ),
             child: Row(
               children: [
@@ -726,7 +809,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                               ? Icons.warning_amber
                               : Icons.error_outline)),
                   size: 18,
-                  color: difColor,
+                  color: Colors.white,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -737,6 +820,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                     style: const TextStyle(
                       fontWeight: FontWeight.w900,
                       fontSize: 13,
+                      color: Colors.white,
                     ),
                   ),
                 ),
@@ -748,7 +832,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
-                      color: Colors.grey.shade700,
+                      color: Colors.white.withValues(alpha: 0.85),
                     ),
                   ),
               ],
@@ -864,73 +948,100 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             const SizedBox(width: 6),
             Expanded(
               child: FilledButton.icon(
-                onPressed: () async {
-                  if (!isLast) {
-                    final ingAntes = c.atual;
+                onPressed: _finishing
+                    ? null
+                    : () async {
+                        if (!isLast) {
+                          final ingAntes = c.atual;
 
-                    final prevAntes = ingAntes?.previstoKg ?? 0;
-                    final realAntes = ingAntes?.realizadoKg ?? 0;
-                    final tolPct = c.toleranciaPct;
+                          final prevAntes = ingAntes?.previstoKg ?? 0;
+                          final realAntes = ingAntes?.realizadoKg ?? 0;
+                          final tolPct = c.toleranciaPct;
 
-                    await c.next();
+                          await c.next();
 
-                    if (!mounted) return;
+                          if (!mounted) return;
 
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      _showParabensIfDentroTol(
-                        prev: prevAntes,
-                        real: realAntes,
-                        tolPct: tolPct,
-                      );
-                    });
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            _showParabensIfDentroTol(
+                              prev: prevAntes,
+                              real: realAntes,
+                              tolPct: tolPct,
+                            );
+                          });
 
-                    return;
-                  }
+                          return;
+                        }
 
-                  final ok = await showDialog<bool>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text("Finalizar fabricação"),
-                      content: const Text("Deseja finalizar a fabricação?"),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(false),
-                          child: const Text("Não"),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.of(context).pop(true),
-                          child: const Text("Sim"),
-                        ),
-                      ],
-                    ),
-                  );
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text("Finalizar fabricação"),
+                            content:
+                                const Text("Deseja finalizar a fabricação?"),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(false),
+                                child: const Text("Não"),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(true),
+                                child: const Text("Sim"),
+                              ),
+                            ],
+                          ),
+                        );
 
-                  if (ok != true) return;
+                        if (ok != true) return;
 
-                  final minutos = await c.finalizarFabricacaoAntesDoTimer();
-                  if (!mounted) return;
+                        setState(() => _finishing = true);
+                        try {
+                          final minutos =
+                              await c.finalizarFabricacaoAntesDoTimer();
+                          if (!mounted) return;
 
-                  if (minutos <= 0) {
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => FabricacaoListPage(repo: widget.repo),
-                      ),
-                    );
-                    return;
-                  }
+                          // ✅ cria/garante carregamento aberto (STATUS=0)
+                          try {
+                            await _ensureCarregamentoAbertoAposFinalizar();
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                behavior: SnackBarBehavior.floating,
+                                content: Text("Erro ao criar carregamento: $e"),
+                              ),
+                            );
+                          }
 
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => MisturaTimerPage(
-                        minutos: minutos,
-                        repo: widget.repo,
-                        fabricacaoId: c.header?.id,
-                        titulo: "Mistura",
-                        onDonePopToRoot: true,
-                      ),
-                    ),
-                  );
-                },
+                          if (!mounted) return;
+
+                          if (minutos <= 0) {
+                            Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    FabricacaoListPage(repo: widget.repo),
+                              ),
+                            );
+                            return;
+                          }
+
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => MisturaTimerPage(
+                                minutos: minutos,
+                                repo: widget.repo,
+                                fabricacaoId: c.header?.id,
+                                titulo: "Mistura",
+                                onDonePopToRoot: true,
+                              ),
+                            ),
+                          );
+                        } finally {
+                          if (mounted) setState(() => _finishing = false);
+                        }
+                      },
                 icon: Icon(isLast ? Icons.check : Icons.arrow_forward),
                 label: Text(isLast ? "Finalizar" : "Próximo"),
               ),

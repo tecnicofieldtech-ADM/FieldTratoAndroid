@@ -1,0 +1,660 @@
+﻿// lib/features/fabricacao/ui/fabricacao_list_page.dart
+import "package:flutter/material.dart";
+
+import "../data/fabricacao_repo.dart";
+import "../domain/models.dart";
+import "ingredientes_modal.dart";
+import "fabricacao_prefab_page.dart";
+import "fabricacao_weigh_page.dart";
+import "fabricacao_dashboard_page.dart";
+
+class FabricacaoListPage extends StatefulWidget {
+  const FabricacaoListPage({super.key, required this.repo});
+  final FabricacaoRepo repo;
+
+  @override
+  State<FabricacaoListPage> createState() => _FabricacaoListPageState();
+}
+
+class _FabricacaoListPageState extends State<FabricacaoListPage>
+    with SingleTickerProviderStateMixin {
+  bool _loading = false;
+  List<FabricacaoHeader> _items = [];
+
+  // ---------- filtros ----------
+  DateTime? _filterDate; // data Ãºnica
+  String? _filterDieta; // nome da raÃ§Ã£o (combo)
+  int? _filterTrato; // trato (combo)
+
+  // cache listas para combos
+  List<String> _dietaOpts = [];
+  List<int> _tratoOpts = [];
+
+  // animaÃ§Ã£o â€œfinalizadaâ€
+  late final AnimationController _animCtrl;
+  late final Animation<double> _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _pulse = Tween<double>(begin: 0.95, end: 1.05).animate(
+      CurvedAnimation(parent: _animCtrl, curve: Curves.easeInOut),
+    );
+
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final list = await widget.repo.listFabricacoes();
+      setState(() {
+        _items = list;
+        _rebuildFilterOptions();
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _rebuildFilterOptions() {
+    final dietas = <String>{};
+    final tratos = <int>{};
+
+    for (final it in _items) {
+      final dn = it.dietaNome.trim();
+      if (dn.isNotEmpty) dietas.add(dn);
+      tratos.add(it.trato);
+    }
+
+    _dietaOpts = dietas.toList()..sort();
+    _tratoOpts = tratos.toList()..sort();
+
+    // se a opÃ§Ã£o selecionada nÃ£o existir mais, limpa
+    if (_filterDieta != null && !_dietaOpts.contains(_filterDieta)) {
+      _filterDieta = null;
+    }
+    if (_filterTrato != null && !_tratoOpts.contains(_filterTrato)) {
+      _filterTrato = null;
+    }
+  }
+
+  // ---------- helpers ----------
+  String _fmtDateDdMmYy(String rawIso) {
+    final s = rawIso.trim();
+    if (s.isEmpty) return "--/--/--";
+    try {
+      final d = DateTime.parse(s);
+      String dd(int v) => v.toString().padLeft(2, "0");
+      final yy = (d.year % 100).toString().padLeft(2, "0");
+      return "${dd(d.day)}/${dd(d.month)}/$yy";
+    } catch (_) {
+      return s;
+    }
+  }
+
+  bool _sameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  List<FabricacaoHeader> get _filtered {
+    Iterable<FabricacaoHeader> it = _items;
+
+    if (_filterDate != null) {
+      final d0 = _filterDate!;
+      it = it.where((e) {
+        try {
+          final d = DateTime.parse(e.dataFabricacao);
+          return _sameDate(d, d0);
+        } catch (_) {
+          return false;
+        }
+      });
+    }
+
+    if (_filterDieta != null && _filterDieta!.trim().isNotEmpty) {
+      final dn = _filterDieta!.trim().toLowerCase();
+      it = it.where((e) => e.dietaNome.toLowerCase().trim() == dn);
+    }
+
+    if (_filterTrato != null) {
+      it = it.where((e) => e.trato == _filterTrato);
+    }
+
+    return it.toList();
+  }
+
+  Future<void> _openAddFlow() async {
+    final aberto = await widget.repo.getFabricacaoEmAbertoHoje();
+    if (!mounted) return;
+
+    if (aberto != null) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("FabricaÃ§Ã£o em aberto"),
+          content: Text(
+            "Existe uma fabricaÃ§Ã£o em aberto.\n\n"
+            "RaÃ§Ã£o: ${aberto.dietaNome}\n"
+            "Trato: ${aberto.trato}\n\n"
+            "Deseja continuar?",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("NÃ£o"),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Continuar"),
+            ),
+          ],
+        ),
+      );
+
+      if (ok == true && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+        ).then((_) => _load());
+      }
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => FabricacaoPreFabPage(repo: widget.repo)),
+    ).then((_) => _load());
+  }
+
+  Future<void> _tryDelete(String idFab) async {
+    final pode = await widget.repo.canDeleteFabricacao(idFab);
+    if (!mounted) return;
+
+    if (!pode) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text("SÃ³ pode excluir se Realizado = 0 e nÃ£o sincronizada.")),
+      );
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Excluir fabricação?"),
+        content: const Text("Essa fabricação será removida do banco local."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("Cancelar")),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Excluir")),
+        ],
+      ),
+    );
+
+    if (ok == true) {
+      await widget.repo.deleteFabricacao(idFab);
+      if (!mounted) return;
+      await _load();
+    }
+  }
+
+  // ---------- UI filtros ----------
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final initial = _filterDate ?? now;
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 2, 1, 1),
+      lastDate: DateTime(now.year + 1, 12, 31),
+    );
+
+    if (!mounted) return;
+    if (picked == null) return;
+
+    setState(() {
+      _filterDate = DateTime(picked.year, picked.month, picked.day);
+    });
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _filterDate = null;
+      _filterDieta = null;
+      _filterTrato = null;
+    });
+  }
+
+  Widget _filtersBar() {
+    final hasFilters =
+        _filterDate != null || _filterDieta != null || _filterTrato != null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickDate,
+                  icon: const Icon(Icons.event),
+                  label: Text(_filterDate == null
+                      ? "Data"
+                      : "${_filterDate!.day.toString().padLeft(2, "0")}/"
+                          "${_filterDate!.month.toString().padLeft(2, "0")}/"
+                          "${(_filterDate!.year % 100).toString().padLeft(2, "0")}"),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _filterDieta,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: "Ração",
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text("Todas"),
+                    ),
+                    ..._dietaOpts.map(
+                      (e) => DropdownMenuItem<String>(value: e, child: Text(e)),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _filterDieta = v),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  initialValue: _filterTrato,
+                  decoration: const InputDecoration(
+                    labelText: "Trato",
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: null,
+                      child: Text("Todos"),
+                    ),
+                    ..._tratoOpts.map(
+                      (e) => DropdownMenuItem<int>(
+                          value: e, child: Text(e.toString())),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _filterTrato = v),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: hasFilters
+                    ? FilledButton.icon(
+                        onPressed: _clearFilters,
+                        icon: const Icon(Icons.clear),
+                        label: const Text("Limpar"),
+                      )
+                    : OutlinedButton.icon(
+                        onPressed: _load,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Atualizar"),
+                      ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- item visual ----------
+  Widget _statusPill(FabricacaoHeader it) {
+    final emAberto = it.emAberto;
+
+    final Color bg = emAberto
+        ? Colors.orange.withValues(alpha: 0.12)
+        : Colors.green.withValues(alpha: 0.12);
+    final Color border = emAberto
+        ? Colors.orange.withValues(alpha: 0.35)
+        : Colors.green.withValues(alpha: 0.35);
+    final Color fg = emAberto ? Colors.deepOrange : Colors.green.shade800;
+
+    final icon = emAberto ? Icons.pending_actions : Icons.verified;
+
+    Widget child = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: fg),
+        const SizedBox(width: 6),
+        Text(
+          emAberto ? "Em aberto" : "Finalizada",
+          style:
+              TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: fg),
+        ),
+      ],
+    );
+
+    // âœ… animaÃ§Ã£o sÃ³ em finalizadas
+    if (!emAberto) {
+      child = ScaleTransition(scale: _pulse, child: child);
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: child,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = _filtered;
+
+    return Scaffold(
+      backgroundColor: Colors.grey.shade50,
+      appBar: AppBar(
+        title: const Text("FabricaÃ§Ãµes"),
+        actions: [
+          IconButton(
+            tooltip: "Atualizar",
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: "Dashboard",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => FabricacaoDashboardPage(repo: widget.repo)),
+              );
+            },
+            icon: const Icon(Icons.insights),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openAddFlow,
+        icon: const Icon(Icons.add),
+        label: const Text("Nova"),
+      ),
+      body: Column(
+        children: [
+          _filtersBar(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : list.isEmpty
+                    ? const Center(
+                        child: Text(
+                            "Nenhuma fabricaÃ§Ã£o encontrada.")) // vazio pÃ³s filtro
+                    : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                        itemCount: list.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (_, i) {
+                          final it = list[i];
+
+                          final pct = it.qtdPrevista <= 0
+                              ? 0
+                              : (it.qtdRealizada / it.qtdPrevista) * 100.0;
+                          final dif = (it.qtdPrevista - it.qtdRealizada);
+
+                          final dt = _fmtDateDdMmYy(it.dataFabricacao);
+
+                          final emAberto = it.emAberto;
+
+                          return Card(
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              side: BorderSide(color: Colors.grey.shade200),
+                            ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: emAberto
+                                  ? () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                            builder: (_) => FabricacaoWeighPage(
+                                                repo: widget.repo)),
+                                      ).then((_) => _load());
+                                    }
+                                  : null,
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Ã­cone â€œpÃ¡/roÃ§aâ€
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: Colors.brown
+                                            .withValues(alpha: 0.10),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Icon(
+                                        Icons
+                                            .agriculture, // melhor Ã­cone nativo parecido com pÃ¡/agro
+                                        color: Colors.brown.shade700,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+
+                                    // texto principal
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          // linha 1: data + trato + status
+                                          Row(
+                                            children: [
+                                              Text(
+                                                dt,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w900),
+                                              ),
+                                              const SizedBox(width: 10),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 10,
+                                                        vertical: 5),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.blueGrey
+                                                      .withValues(alpha: 0.10),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          999),
+                                                  border: Border.all(
+                                                      color: Colors.blueGrey
+                                                          .withValues(
+                                                              alpha: 0.25)),
+                                                ),
+                                                child: Text(
+                                                  "Trato ${it.trato}",
+                                                  style: const TextStyle(
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w800),
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              _statusPill(it),
+                                            ],
+                                          ),
+
+                                          const SizedBox(height: 8),
+
+                                          // linha 2: nome raÃ§Ã£o (destaque)
+                                          Text(
+                                            it.dietaNome.trim().isEmpty
+                                                ? "(Sem nome de raÃ§Ã£o)"
+                                                : it.dietaNome,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w800),
+                                          ),
+
+                                          const SizedBox(height: 10),
+
+                                          // barras / nÃºmeros
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      "Prev ${it.qtdPrevista.toStringAsFixed(0)}  â€¢  "
+                                                      "Real ${it.qtdRealizada.toStringAsFixed(0)}  â€¢  "
+                                                      "Dif ${dif.toStringAsFixed(0)}",
+                                                      style: TextStyle(
+                                                          color: Colors
+                                                              .grey.shade800,
+                                                          fontSize: 12),
+                                                    ),
+                                                    const SizedBox(height: 6),
+                                                    ClipRRect(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              999),
+                                                      child:
+                                                          LinearProgressIndicator(
+                                                        value: it.qtdPrevista >
+                                                                0
+                                                            ? (it.qtdRealizada /
+                                                                    it.qtdPrevista)
+                                                                .clamp(0, 1)
+                                                            : 0,
+                                                        minHeight: 8,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 10,
+                                                        vertical: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey.shade100,
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                  border: Border.all(
+                                                      color:
+                                                          Colors.grey.shade200),
+                                                ),
+                                                child: Text(
+                                                  "${pct.clamp(0, 999).toStringAsFixed(1)}%",
+                                                  style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w900),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+
+                                          const SizedBox(height: 10),
+
+                                          // aÃ§Ãµes
+                                          Row(
+                                            children: [
+                                              OutlinedButton.icon(
+                                                icon:
+                                                    const Icon(Icons.list_alt),
+                                                label: const Text("Insumos"),
+                                                onPressed: () async {
+                                                  await showModalBottomSheet(
+                                                    context: context,
+                                                    isScrollControlled: true,
+                                                    useSafeArea: true,
+                                                    builder: (_) =>
+                                                        IngredientesModal(
+                                                      repo: widget.repo,
+                                                      fabId: it.id,
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                              const SizedBox(width: 10),
+                                              FutureBuilder<bool>(
+                                                future: widget.repo
+                                                    .canDeleteFabricacao(it.id),
+                                                builder: (_, snap) {
+                                                  final pode =
+                                                      snap.data == true;
+                                                  return OutlinedButton.icon(
+                                                    icon: const Icon(
+                                                        Icons.delete_outline),
+                                                    label:
+                                                        const Text("Excluir"),
+                                                    onPressed: pode
+                                                        ? () =>
+                                                            _tryDelete(it.id)
+                                                        : null,
+                                                  );
+                                                },
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}

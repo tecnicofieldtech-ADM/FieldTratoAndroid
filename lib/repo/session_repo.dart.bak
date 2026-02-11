@@ -1,0 +1,56 @@
+import "package:sqflite/sqflite.dart";
+import "../db/app_db.dart";
+import "../features/fornecimento/data/fornecimento_tables.dart";
+
+class SessionRepo {
+  Future<Database> get _db async => AppDb.instance.db;
+
+  /// Retorna o último login salvo (ou null)
+  Future<Map<String, Object?>?> getLogin() async {
+    final db = await _db;
+
+    // ✅ IMPORTANTE: coluna correta é ID (não ID_USUARIO)
+    final rows = await db.rawQuery("""
+      SELECT
+        ID,
+        NOME,
+        LOGIN
+      FROM ${FornTables.ultimoLogin}
+      LIMIT 1
+    """);
+
+    if (rows.isEmpty) return null;
+    return rows.first.cast<String, Object?>();
+  }
+
+  /// Salva o login atual (mantendo somente 1 registro)
+  Future<void> saveLogin({
+    required String userId,
+    required String nome,
+    required String login,
+    String? senha,
+    String? cargo,
+  }) async {
+    final db = await _db;
+
+    // garante 1 só
+    await db.delete(FornTables.ultimoLogin);
+
+    await db.insert(
+      FornTables.ultimoLogin,
+      {
+        "ID": userId, // ✅ CORRETO
+        "NOME": nome,
+        "LOGIN": login,
+        "SENHA": senha ?? "",
+        "CARGO": cargo ?? "",
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> clearLogin() async {
+    final db = await _db;
+    await db.delete(FornTables.ultimoLogin);
+  }
+}

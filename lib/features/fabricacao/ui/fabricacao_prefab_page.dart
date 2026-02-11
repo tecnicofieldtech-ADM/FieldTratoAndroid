@@ -1,9 +1,11 @@
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../../../repo/user_repo.dart";
 import "../../../repo/dieta_repo.dart";
-import "../../../repo/session_repo.dart";
 import "../../../repo/config_repo.dart";
+
+import "../../../services/session_service.dart";
 
 import "../data/fabricacao_repo.dart";
 import "fabricacao_weigh_page.dart";
@@ -20,7 +22,6 @@ class FabricacaoPreFabPage extends StatefulWidget {
 class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
   final _dietaRepo = DietaRepo();
   final _userRepo = UserRepo();
-  final _sess = SessionRepo();
   final _cfg = ConfigRepo();
 
   bool _loading = false;
@@ -31,7 +32,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
   String? _dietaId;
   String? _operadorId;
 
-  final _tratoCtrl = TextEditingController();
+  int? _tratoSelecionado;
   final _kgCtrl = TextEditingController(text: "0");
 
   @override
@@ -41,7 +42,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
   }
 
   Future<void> _loadCombos() async {
-    setState(() => _loading = true);
+    if (mounted) setState(() => _loading = true);
     try {
       // se você quiser filtrar dieta por fazenda selecionada:
       final idFazendaSel = await _cfg.getIdFazendaSelecionada();
@@ -49,28 +50,32 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
       final users = await _userRepo.listAll();
 
+      if (!mounted) return;
+
       setState(() {
         _dietas = dietas;
         _users = users;
 
-        if (_dietas.isNotEmpty)
+        if (_dietas.isNotEmpty) {
           _dietaId = (_dietas.first["ID"] ?? "").toString();
-        if (_users.isNotEmpty)
+        }
+        if (_users.isNotEmpty) {
           _operadorId = (_users.first["ID"] ?? "").toString();
+        }
       });
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   void dispose() {
-    _tratoCtrl.dispose();
     _kgCtrl.dispose();
     super.dispose();
   }
 
   void _msg(String m) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
@@ -78,14 +83,26 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     if ((_dietaId ?? "").isEmpty) return _msg("Selecione a dieta.");
     if ((_operadorId ?? "").isEmpty) return _msg("Selecione o operador.");
 
-    final trato = int.tryParse(_tratoCtrl.text.trim());
+    final trato = _tratoSelecionado;
     if (trato == null || trato <= 0) return _msg("Informe o trato.");
 
     final kg = double.tryParse(_kgCtrl.text.trim().replaceAll(",", "."));
     if (kg == null || kg <= 0) return _msg("Informe o previsto em KG.");
+    if (kg > 15000) return _msg("Quantidade máxima é 15.000 KG.");
+
+    // ✅ GARANTE LOGIN (global)
+    final idUsuarioLogado = SessionService.instance.userId;
+    if (idUsuarioLogado == null || idUsuarioLogado.trim().isEmpty) {
+      _msg("Sessão vazia. Faça login novamente.");
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/login");
+      return;
+    }
 
     // ✅ 1) Se existe fabricação em aberto (FINALIZADA=0), pergunta
     final aberto = await widget.repo.getFabricacaoEmAberto();
+    if (!mounted) return;
+
     if (aberto != null) {
       final ok = await showDialog<bool>(
         context: context,
@@ -93,37 +110,37 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         builder: (_) => AlertDialog(
           title: const Text("Fabricação em aberto"),
           content: const Text(
-              "Existe uma fabricação em aberto. Deseja continuar de onde parou?"),
+            "Existe uma fabricação em aberto. Deseja continuar de onde parou?",
+          ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text("Não")),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("Não"),
+            ),
             ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text("Sim")),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Sim"),
+            ),
           ],
         ),
       );
 
+      if (!mounted) return;
+
       if (ok == true) {
-        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-              builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+            builder: (_) => FabricacaoWeighPage(repo: widget.repo),
+          ),
         );
       }
       return;
     }
 
     // ✅ 2) Se não tem em aberto, cria e popula tabelas e vai pra tela fabricar
-    setState(() => _loading = true);
+    if (mounted) setState(() => _loading = true);
     try {
-      final idUsuarioLogado = await _sess.getUserId();
-      if (idUsuarioLogado == null || idUsuarioLogado.isEmpty) {
-        throw Exception("Sessão vazia. Faça login novamente.");
-      }
-
       final idFazenda = await _cfg.getIdFazendaSelecionada();
       if (idFazenda.isEmpty) {
         throw Exception("Nenhuma fazenda selecionada na CONFIG.");
@@ -143,7 +160,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-            builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
+          builder: (_) => FabricacaoWeighPage(repo: widget.repo),
+        ),
       );
     } catch (e) {
       _msg("Erro ao criar fabricação: $e");
@@ -162,41 +180,105 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  DropdownButtonFormField<String>(
-                    value: _dietaId,
-                    items: _dietas
-                        .map((d) => DropdownMenuItem(
-                              value: (d["ID"] ?? "").toString(),
-                              child: Text((d["NOME"] ?? "").toString()),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() => _dietaId = v),
-                    decoration: const InputDecoration(labelText: "Dieta"),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(_dietaId),
+                        initialValue: _dietaId,
+                        items: _dietas
+                            .map(
+                              (d) => DropdownMenuItem<String>(
+                                value: (d["ID"] ?? "").toString(),
+                                child: Text((d["NOME"] ?? "").toString()),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _dietaId = v),
+                        decoration: const InputDecoration(labelText: "Dieta"),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _tratoCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "Trato"),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Trato",
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [1, 2, 3, 4].map((t) {
+                              final sel = _tratoSelecionado == t;
+                              return ChoiceChip(
+                                label: Text("Trato $t"),
+                                selected: sel,
+                                onSelected: (_) =>
+                                    setState(() => _tratoSelecionado = t),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _kgCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                        labelText: "Quantidade total (KG)"),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: TextField(
+                        controller: _kgCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r"[0-9.,]"),
+                          ),
+                          TextInputFormatter.withFunction((oldValue, newValue) {
+                            final raw = newValue.text.trim();
+                            if (raw.isEmpty) return newValue;
+                            final v =
+                                double.tryParse(raw.replaceAll(",", "."));
+                            if (v == null) return oldValue;
+                            return v > 15000 ? oldValue : newValue;
+                          }),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: "Quantidade total (KG)",
+                          helperText: "Máximo: 15.000 KG",
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: _operadorId,
-                    items: _users
-                        .map((u) => DropdownMenuItem(
-                              value: (u["ID"] ?? "").toString(),
-                              child: Text((u["NOME"] ?? "").toString()),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() => _operadorId = v),
-                    decoration: const InputDecoration(labelText: "Operador"),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(_operadorId),
+                        initialValue: _operadorId,
+                        items: _users
+                            .map(
+                              (u) => DropdownMenuItem<String>(
+                                value: (u["ID"] ?? "").toString(),
+                                child: Text((u["NOME"] ?? "").toString()),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _operadorId = v),
+                        decoration:
+                            const InputDecoration(labelText: "Operador"),
+                      ),
+                    ),
                   ),
                   const Spacer(),
                   SizedBox(

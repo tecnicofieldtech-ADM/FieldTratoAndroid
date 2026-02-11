@@ -1,11 +1,13 @@
+import "dart:async";
+
 import "package:flutter/material.dart";
+
 import "../repo/config_repo.dart";
 import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
 import "../services/bootstrap_sync.dart";
 import "../services/sync_orchestrator.dart";
-import "../services/wifi_guard.dart";
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -38,8 +40,40 @@ class _SyncPageState extends State<SyncPage> {
   List<SyncStep> _steps = [];
   final List<String> _log = [];
 
+  // ✅ pendências (cards)
+  int _pendFab = 0;
+  int _pendFor = 0;
+  bool _loadingPend = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // carrega pendências ao abrir
+    // ignore: unawaited_futures
+    _loadPendencias();
+  }
+
+  Future<void> _loadPendencias() async {
+    if (_loadingPend) return;
+    setState(() => _loadingPend = true);
+
+    try {
+      final fab = await _cfgRepo.countFabricacaoPendenteSync();
+      final forn = await _cfgRepo.countFornecimentoPendenteSync();
+
+      if (!mounted) return;
+      setState(() {
+        _pendFab = fab;
+        _pendFor = forn;
+      });
+    } finally {
+      if (mounted) setState(() => _loadingPend = false);
+    }
+  }
+
   void _addLog(String msg) {
     final hhmmss = DateTime.now().toIso8601String().substring(11, 19);
+    if (!mounted) return;
     setState(() => _log.insert(0, "$hhmmss - $msg"));
   }
 
@@ -49,39 +83,56 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   double get _progress {
-    if (_steps.isEmpty) return 0;
-    if (_currentIndex < 0) return 0;
+    if (_steps.isEmpty || _currentIndex < 0) return 0;
     final done = (_currentIndex + 1).clamp(0, _steps.length);
     return done / _steps.length;
   }
 
+  String _fmtMs(int ms) {
+    if (ms < 1000) return "${ms}ms";
+    final s = ms / 1000.0;
+    return "${s.toStringAsFixed(2)}s";
+  }
+
+  Future<int?> _tryGetStepCount(SyncStep step) async {
+    try {
+      final dyn = step as dynamic;
+
+      final v1 = dyn.debugCount;
+      if (v1 is int) return v1;
+      if (v1 is num) return v1.toInt();
+
+      final v2 = dyn.debugCount as dynamic;
+      if (v2 is Future<int?> Function()) return await v2();
+      if (v2 is Future<num?> Function()) {
+        final r = await v2();
+        return r?.toInt();
+      }
+      if (v2 is int? Function()) return v2();
+      if (v2 is num? Function()) {
+        final r = v2();
+        return r?.toInt();
+      }
+
+      final meta = dyn.meta;
+      if (meta is Map) {
+        const keys = ["count", "total", "inserted", "rows", "itens", "items"];
+        for (final k in keys) {
+          if (meta.containsKey(k)) {
+            final vv = meta[k];
+            if (vv is int) return vv;
+            if (vv is num) return vv.toInt();
+            final p = int.tryParse(vv?.toString() ?? "");
+            if (p != null) return p;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _runSync() async {
     if (_running) return;
-
-    // ✅ Guard: só bloqueia se SSID começar com RFeed
-    final ssid = await WifiGuard.getCurrentSsid();
-
-    if (WifiGuard.isBlockedSsid(ssid)) {
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text("Atenção"),
-          content: const Text(
-            "Conecte-se à rede Wi-Fi do servidor de dados (não RFeed*) e volte a este botão para sincronizar.",
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("OK"),
-            )
-          ],
-        ),
-      );
-
-      return; // ✅ não continua a sincronização
-    }
 
     setState(() {
       _running = true;
@@ -91,31 +142,66 @@ class _SyncPageState extends State<SyncPage> {
       _steps = [];
     });
 
-    try {
-      _addLog("SSID: ${ssid.isEmpty ? "(não detectado)" : ssid}");
-      _addLog("Preparando etapas...");
+    final swAll = Stopwatch()..start();
 
+    try {
+      // ✅ antes de começar, atualiza cards
+      await _loadPendencias();
+
+      _addLog("Preparando etapas de sincronização...");
       _steps = await _orchestrator.buildSteps(log: _addLog);
       _addLog("Total de etapas: ${_steps.length}");
 
       for (int i = 0; i < _steps.length; i++) {
         final step = _steps[i];
+
+        if (!mounted) return;
         setState(() {
           _currentIndex = i;
           _currentTitle = step.title;
         });
 
         _addLog("▶ ${step.title}");
-        await step.run();
-        _addLog("✅ OK: ${step.title}");
-        await Future.delayed(const Duration(milliseconds: 100));
+        final sw = Stopwatch()..start();
+
+        try {
+          await step.run();
+          sw.stop();
+
+          final count = await _tryGetStepCount(step);
+          if (count != null) {
+            _addLog(
+              "📦 ${step.title}: $count registro(s) (${_fmtMs(sw.elapsedMilliseconds)})",
+            );
+          } else {
+            _addLog("✅ OK: ${step.title} (${_fmtMs(sw.elapsedMilliseconds)})");
+          }
+        } catch (e, st) {
+          sw.stop();
+          _addLog(
+            "❌ ERRO em ${step.title}: $e (${_fmtMs(sw.elapsedMilliseconds)})",
+          );
+          _addLog(
+            "🧠 Stack: ${st.toString().split("\n").take(4).join(" | ")}",
+          );
+          rethrow;
+        }
+
+        await Future.delayed(const Duration(milliseconds: 80));
       }
 
-      _toast("Sincronização concluída.");
-    } catch (e) {
-      _addLog("❌ ERRO: $e");
-      _toast("Falha: $e");
+      swAll.stop();
+      _addLog("🏁 FIM: sincronização concluída em ${_fmtMs(swAll.elapsedMilliseconds)}");
+      _toast("Sincronização concluída com sucesso.");
+    } catch (e, st) {
+      swAll.stop();
+      _addLog("❌ FALHA GERAL: $e");
+      _addLog("🧠 Stack: ${st.toString().split("\n").take(6).join(" | ")}");
+      _toast("Falha na sincronização.");
     } finally {
+      // ✅ depois da sync, atualiza cards de novo (muito importante)
+      await _loadPendencias();
+
       if (mounted) {
         setState(() {
           _running = false;
@@ -140,12 +226,55 @@ class _SyncPageState extends State<SyncPage> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
+        actions: [
+          IconButton(
+            tooltip: "Atualizar pendências",
+            onPressed: _running ? null : _loadPendencias,
+            icon: _loadingPend
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: "Limpar log",
+            onPressed: _running ? null : () => setState(() => _log.clear()),
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Card status / botão
+            // ✅ CARDS DE PENDÊNCIA
+            Row(
+              children: [
+                Expanded(
+                  child: _PendingCard(
+                    title: "Fabricação",
+                    subtitle: "pendente para enviar",
+                    count: _pendFab,
+                    icon: Icons.factory_outlined,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _PendingCard(
+                    title: "Fornecimento",
+                    subtitle: "pendente para enviar",
+                    count: _pendFor,
+                    icon: Icons.local_shipping_outlined,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            // ✅ BOX PRINCIPAL (PROGRESSO + BOTÃO)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
@@ -201,9 +330,10 @@ class _SyncPageState extends State<SyncPage> {
                 ],
               ),
             ),
+
             const SizedBox(height: 14),
 
-            // Card Log
+            // ✅ LOG
             Expanded(
               child: Container(
                 width: double.infinity,
@@ -224,7 +354,7 @@ class _SyncPageState extends State<SyncPage> {
                         itemCount: _log.length,
                         separatorBuilder: (_, __) =>
                             const Divider(height: 10, color: Colors.black12),
-                        itemBuilder: (_, i) => Text(
+                        itemBuilder: (_, i) => SelectableText(
                           _log[i],
                           style: const TextStyle(
                             color: Colors.black87,
@@ -236,6 +366,90 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PendingCard extends StatelessWidget {
+  const _PendingCard({
+    required this.title,
+    required this.subtitle,
+    required this.count,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final int count;
+  final IconData icon;
+
+  Color _bg() {
+    if (count <= 0) return Colors.green.withValues(alpha: 0.10);
+    if (count < 10) return Colors.amber.withValues(alpha: 0.16);
+    return Colors.red.withValues(alpha: 0.14);
+  }
+
+  Color _accent() {
+    if (count <= 0) return Colors.green.shade800;
+    if (count < 10) return Colors.amber.shade900;
+    return Colors.red.shade800;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _accent();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black12),
+        color: _bg(),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                    )),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.black.withValues(alpha: 0.60),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            count.toString(),
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: accent,
+            ),
+          ),
+        ],
       ),
     );
   }

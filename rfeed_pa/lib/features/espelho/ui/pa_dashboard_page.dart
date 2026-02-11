@@ -1,4 +1,4 @@
-// lib/features/espelho/ui/pa_dashboard_page.dart
+﻿// lib/features/espelho/ui/pa_dashboard_page.dart
 import "dart:async";
 
 import "package:flutter/material.dart";
@@ -18,7 +18,7 @@ class PaDashboardPage extends StatefulWidget {
 class _PaDashboardPageState extends State<PaDashboardPage> {
   Timer? _ticker;
 
-  // ✅ para calcular progresso do pulo (total = valor inicial do countdown)
+  // âœ… para calcular progresso do pulo (total = valor inicial do countdown)
   int _jumpTotal = 0;
   int _lastCountdown = 0;
 
@@ -31,7 +31,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     // ignore: unawaited_futures
     widget.server.start();
 
-    // ✅ ticker só pra “há X segundos” (não precisa 250ms)
+    // âœ… ticker sÃ³ pra â€œhÃ¡ X segundosâ€ (nÃ£o precisa 250ms)
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
       setState(() {});
@@ -48,7 +48,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   void _on() {
     if (!mounted) return;
 
-    // ✅ captura total do pulo quando ele começa
+    // âœ… captura total do pulo quando ele comeÃ§a
     final enabled = widget.server.autoEnabled;
     final cd = widget.server.autoCountdown;
 
@@ -56,7 +56,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       _jumpTotal = 0;
       _lastCountdown = 0;
     } else {
-      // quando começa: total = countdown inicial
+      // quando comeÃ§a: total = countdown inicial
       if (_jumpTotal <= 0 || cd > _jumpTotal) _jumpTotal = cd;
 
       // se reiniciou pulo (cd aumentou), ajusta total
@@ -91,7 +91,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     if (prev <= 0) return "Sem previsto";
     if (real < prev) return "Faltando";
     if (real > prev) return "Passou";
-    return "No alvo ✅";
+    return "No alvo âœ…";
   }
 
   String _fmtTime(DateTime? dt) {
@@ -104,7 +104,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   bool _isTrue(dynamic v) => v == true || v == 1 || v == "1";
 
-  /// ✅ compat: "pre" (novo) OU "prePesado" (antigo)
+  /// âœ… compat: "pre" (novo) OU "prePesado" (antigo)
   bool _isPre(Map<String, dynamic>? atual) {
     if (atual == null) return false;
     if (atual.containsKey("pre")) return _isTrue(atual["pre"]);
@@ -118,8 +118,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     final active = widget.server.activeTarget;
     final activeLabel = active == null
-        ? "Nenhum caminhão selecionado"
-        : "${active.nome} • ${active.host}";
+        ? "Nenhum caminhÃ£o selecionado"
+        : "${active.nome} â€¢ ${active.host}";
 
     // dados do payload
     final atual = (st != null && st["atual"] is Map)
@@ -152,7 +152,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     // topo status server
     final topStatus = widget.server.listening
-        ? "Escutando ${widget.server.listenBind}:${widget.server.port} • Clients ${widget.server.clientsCount}"
+        ? "Escutando ${widget.server.listenBind}:${widget.server.port} â€¢ Clients ${widget.server.clientsCount}"
         : widget.server.status;
 
     final status = _statusLabel(prev: prev, real: real);
@@ -172,7 +172,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     final badgeText = lastAt == null
         ? "Sem dados"
-        : (stale ? "Sem atualização ($ageLabel)" : "Atualizando ($ageLabel)");
+        : (stale ? "Sem atualizaÃ§Ã£o ($ageLabel)" : "Atualizando ($ageLabel)");
 
     // header infos
     final dieta = (st?["dieta"] ?? "").toString();
@@ -183,7 +183,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     final isPreNow = _isPre(atual);
 
-    // ✅ PULO (AGORA VINDO DO CONTROLLER)
+    // âœ… PULO (AGORA VINDO DO CONTROLLER)
     final jumpRunning = widget.server.autoEnabled && widget.server.autoCountdown > 0;
     final jumpCountdown = widget.server.autoCountdown;
     final jumpTotal = _jumpTotal;
@@ -194,10 +194,10 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Pá • Espelhamento"),
+        title: const Text("PÃ¡ â€¢ Espelhamento"),
         actions: [
           IconButton(
-            tooltip: "Caminhões",
+            tooltip: "CaminhÃµes",
             onPressed: _openTargets,
             icon: const Icon(Icons.directions_bus_filled_outlined),
           ),
@@ -212,7 +212,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         children: [
           Column(
             children: [
-              // ✅ Card topo
+              // âœ… Card topo
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Card(
@@ -268,7 +268,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                "Última msg: ${_fmtTime(lastAt)} • ${widget.server.lastFromIp.isEmpty ? "-" : widget.server.lastFromIp}",
+                                "Ãšltima msg: ${_fmtTime(lastAt)} â€¢ ${widget.server.lastFromIp.isEmpty ? "-" : widget.server.lastFromIp}",
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -281,9 +281,9 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: badgeColor.withOpacity(0.12),
+                                color: badgeColor.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(999),
-                                border: Border.all(color: badgeColor.withOpacity(0.35)),
+                                border: Border.all(color: badgeColor.withValues(alpha: 0.35)),
                               ),
                               child: Text(
                                 badgeText,
@@ -322,7 +322,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                 ),
               ),
 
-              // ✅ Card ingrediente
+              // âœ… Card ingrediente
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                 child: Card(
@@ -337,7 +337,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                nomeAtual.isEmpty ? "(Aguardando dados…)" : nomeAtual,
+                                nomeAtual.isEmpty ? "(Aguardando dadosâ€¦)" : nomeAtual,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -349,7 +349,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             ),
                             if (isPreNow) ...[
                               const SizedBox(width: 10),
-                              _chip("PRÉ", Colors.deepPurple),
+                              _chip("PRÃ‰", Colors.deepPurple),
                             ],
                             if (finalizada) ...[
                               const SizedBox(width: 8),
@@ -363,7 +363,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             [
                               if (trato != null) "Trato: $trato",
                               if (dieta.isNotEmpty) "Dieta: $dieta",
-                            ].join(" • "),
+                            ].join(" â€¢ "),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -388,7 +388,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(
-                                    "Próximo: ${(prox["nome"] ?? "").toString()}",
+                                    "PrÃ³ximo: ${(prox["nome"] ?? "").toString()}",
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontWeight: FontWeight.w800),
@@ -411,7 +411,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
               const SizedBox(height: 10),
 
-              // ✅ Diferença (kg)
+              // âœ… DiferenÃ§a (kg)
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -421,8 +421,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: difColor.withOpacity(0.35)),
-                      color: difColor.withOpacity(0.08),
+                      border: Border.all(color: difColor.withValues(alpha: 0.35)),
+                      color: difColor.withValues(alpha: 0.08),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -432,14 +432,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             const Icon(Icons.swap_horiz),
                             const SizedBox(width: 10),
                             const Text(
-                              "Diferença (kg)",
+                              "DiferenÃ§a (kg)",
                               style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
                             ),
                             const Spacer(),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.75),
+                                color: Colors.white.withValues(alpha: 0.75),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(color: Colors.grey.shade300),
                               ),
@@ -507,7 +507,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             ],
           ),
 
-          // ✅ OVERLAY DO PULO
+          // âœ… OVERLAY DO PULO
           if (jumpRunning)
             Positioned(
               left: 16,
@@ -531,9 +531,9 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.12),
+        color: c.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.withOpacity(0.35)),
+        border: Border.all(color: c.withValues(alpha: 0.35)),
       ),
       child: Text(
         text,
@@ -556,7 +556,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     return Material(
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
-      color: Colors.black.withOpacity(0.75),
+      color: Colors.black.withValues(alpha: 0.75),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
@@ -568,7 +568,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "Pulando automaticamente…",
+                    "Pulando automaticamenteâ€¦",
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w900,
@@ -580,7 +580,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                     child: LinearProgressIndicator(
                       minHeight: 10,
                       value: progress, // null = indeterminado
-                      backgroundColor: Colors.white.withOpacity(0.18),
+                      backgroundColor: Colors.white.withValues(alpha: 0.18),
                     ),
                   ),
                   if (total > 0) ...[
@@ -588,7 +588,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                     Text(
                       "em $cd s",
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.85),
+                        color: Colors.white.withValues(alpha: 0.85),
                         fontWeight: FontWeight.w800,
                         fontSize: 12,
                       ),
@@ -604,8 +604,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.12),
-                border: Border.all(color: Colors.white.withOpacity(0.25)),
+                color: Colors.white.withValues(alpha: 0.12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
               ),
               child: Text(
                 cd.toString(),
@@ -628,7 +628,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.grey.shade300),
-        color: Colors.white.withOpacity(0.70),
+        color: Colors.white.withValues(alpha: 0.70),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

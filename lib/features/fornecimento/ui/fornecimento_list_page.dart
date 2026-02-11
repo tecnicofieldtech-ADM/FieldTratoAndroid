@@ -1,10 +1,11 @@
-import "package:flutter/material.dart";
+﻿import "package:flutter/material.dart";
+
+import "package:rfeed_flutter/helpers/scale_comm.dart";
+import "package:rfeed_flutter/helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
-import "../services/scale_tcp_service.dart";
-import "../services/rfid_tcp_service.dart";
 import "../domain/fornecimento_models.dart";
-import "fornecimento_pre_page.dart";
+import "fornecimento_dashboard_page.dart";
 
 enum _StatusFiltro { todos, realizados, pendentes }
 
@@ -20,9 +21,12 @@ class FornecimentoListPage extends StatefulWidget {
 
   final String idFazenda;
   final String idUsuario;
+
   final FornecimentoRepo repo;
-  final ScaleTcpService scale;
-  final RfidTcpService rfid;
+
+  // ✅ troca: agora são os helpers novos
+  final ScaleComm scale;
+  final RfidComm rfid;
 
   @override
   State<FornecimentoListPage> createState() => _FornecimentoListPageState();
@@ -35,10 +39,9 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
   _StatusFiltro _status = _StatusFiltro.todos;
 
   int? _trato; // null = todos
-  String? _racao; // filtro texto (nome da ração)
+  String? _racao; // filtro texto (nome da Ração) - mantido (não filtra por id)
   final TextEditingController _curralCtrl = TextEditingController();
 
-  // ✅ agora é CurralPrev
   List<CurralPrev> _items = const [];
 
   @override
@@ -54,7 +57,9 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
   }
 
   Future<void> _buscar() async {
+    if (!mounted) return;
     setState(() => _loading = true);
+
     try {
       final bool? realizadoMaiorZero = switch (_status) {
         _StatusFiltro.todos => null,
@@ -66,8 +71,11 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
         idFazenda: widget.idFazenda,
         data: _date,
         trato: _trato,
-        racaoNome: (_racao == null || _racao!.trim().isEmpty) ? null : _racao!.trim(),
-        curralNome: _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
+        racaoNome: (_racao == null || _racao!.trim().isEmpty)
+            ? null
+            : _racao!.trim(),
+        curralNome:
+            _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
         realizadoMaiorZero: realizadoMaiorZero,
       );
 
@@ -78,21 +86,108 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
     }
   }
 
-  void _open(CurralPrev c) {
+  // =========================================================
+  // ✅ NOVO FLUXO
+  // - item tap: abre Dashboard no trato do item e filtra por idRacao do item
+  // - novo fornecimento: escolhe trato e abre Dashboard (sem idRacao filtro)
+  // =========================================================
+
+  void _openDashboard({
+    required int trato,
+    String? idRacaoFiltro,
+  }) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => FornecimentoPrePage(
-          curral: c,
+        builder: (_) => FornecimentoDashboardPage(
           idFazenda: widget.idFazenda,
           idUsuario: widget.idUsuario,
+          trato: trato,
           repo: widget.repo,
           scale: widget.scale,
           rfid: widget.rfid,
+          data: _date,
+          idRacaoFiltro: idRacaoFiltro,
         ),
       ),
     );
   }
+
+  Future<int?> _pickTratoModal() async {
+    // ✅ opções: se tem itens na lista, usa os tratos presentes; senão, 1..6
+    final opts = _tratoOptions.isNotEmpty
+        ? _tratoOptions
+        : <int>[1, 2, 3, 4, 5, 6];
+
+    return showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "Novo Fornecimento",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 10),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Selecione o trato:",
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final t in opts)
+                      SizedBox(
+                        width: 110,
+                        height: 44,
+                        child: FilledButton.tonal(
+                          onPressed: () => Navigator.pop(ctx, t),
+                          child: Text(
+                            "Trato $t",
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // item da lista agora vai pro dashboard
+  void _open(CurralPrev c) {
+    _openDashboard(
+      trato: c.trato,
+      idRacaoFiltro: (c.idRacao ?? "").trim().isEmpty ? null : c.idRacao!.trim(),
+    );
+  }
+
+  Future<void> _onNovoFornecimento() async {
+    final trato = await _pickTratoModal();
+    if (trato == null) return;
+
+    // ✅ abre dashboard no trato escolhido
+    _openDashboard(trato: trato);
+  }
+
+  // =========================================================
+  // UI helpers (os seus, mantidos)
+  // =========================================================
 
   Future<void> _pickDate() async {
     final now = DateTime.now();
@@ -128,7 +223,25 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
 
   String _money(num v) => v.toStringAsFixed(2).replaceAll(".", ",");
 
-  // ✅ AJUSTE: label não quebra mais (Realizado / Previsto)
+  String _linhaFromCurral(String? nomeLocal) {
+    final s = (nomeLocal ?? "").trim();
+    if (s.isEmpty) return "-";
+    final compact = s.replaceAll(" ", "");
+    final idx = compact.indexOf("-");
+    final left = (idx > 0) ? compact.substring(0, idx) : compact;
+    final out = left.trim();
+    if (out.isEmpty) return "-";
+    return out.toUpperCase();
+  }
+
+  String _resolveLinha(CurralPrev c) {
+    final raw = (c.linha ?? "").toString().trim();
+    if (raw.isNotEmpty && raw.toLowerCase() != "null") {
+      return raw.toUpperCase();
+    }
+    return _linhaFromCurral(c.nomeLocal);
+  }
+
   Widget _pill({
     required String title,
     required String value,
@@ -166,7 +279,10 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                 value,
                 maxLines: 1,
                 softWrap: false,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
           ),
@@ -178,7 +294,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
   Widget _filterBar() {
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(10),
-      borderSide: BorderSide(color: Colors.black.withOpacity(0.10)),
+      borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.10)),
     );
 
     return Card(
@@ -186,7 +302,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.black.withOpacity(0.10)),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.10)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),
@@ -204,7 +320,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                         labelText: "Data",
                         border: border,
                         enabledBorder: border,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
                         suffixIcon: const Icon(Icons.arrow_drop_down),
                       ),
                       child: Text(_fmtDate(_date)),
@@ -215,18 +332,29 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                 Expanded(
                   flex: 3,
                   child: DropdownButtonFormField<int?>(
-                    value: _trato,
+                    initialValue: _trato,
                     decoration: InputDecoration(
                       labelText: "Trato",
                       border: border,
                       enabledBorder: border,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                     ),
                     items: [
-                      const DropdownMenuItem(value: null, child: Text("Todos")),
-                      ..._tratoOptions.map((t) => DropdownMenuItem(value: t, child: Text(t.toString()))),
+                      const DropdownMenuItem<int?>(
+                        value: null,
+                        child: Text("Todos"),
+                      ),
+                      ..._tratoOptions.map(
+                        (t) => DropdownMenuItem<int?>(
+                          value: t,
+                          child: Text(t.toString()),
+                        ),
+                      ),
                     ],
-                    onChanged: (v) => setState(() => _trato = v),
+                    onChanged: (v) {
+                      setState(() => _trato = v);
+                    },
                   ),
                 ),
               ],
@@ -241,7 +369,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                       labelText: "Ração (opcional)",
                       border: border,
                       enabledBorder: border,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                     ),
                     onChanged: (v) => _racao = v,
                     onSubmitted: (_) => _buscar(),
@@ -256,7 +385,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                       labelText: "Curral",
                       border: border,
                       enabledBorder: border,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                     ),
                     onSubmitted: (_) => _buscar(),
                   ),
@@ -268,23 +398,35 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                   child: FilledButton(
                     style: FilledButton.styleFrom(
                       padding: EdgeInsets.zero,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     onPressed: _buscar,
                     child: const Icon(Icons.search),
                   ),
-                )
+                ),
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                _radio("Todos", _StatusFiltro.todos),
-                const SizedBox(width: 10),
-                _radio("Realizados", _StatusFiltro.realizados),
-                const SizedBox(width: 10),
-                _radio("Pendentes", _StatusFiltro.pendentes),
-              ],
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SegmentedButton<_StatusFiltro>(
+                segments: const <ButtonSegment<_StatusFiltro>>[
+                  ButtonSegment(value: _StatusFiltro.todos, label: Text("Todos")),
+                  ButtonSegment(
+                      value: _StatusFiltro.realizados, label: Text("Realizados")),
+                  ButtonSegment(
+                      value: _StatusFiltro.pendentes, label: Text("Pendentes")),
+                ],
+                selected: <_StatusFiltro>{_status},
+                onSelectionChanged: (set) async {
+                  final v = set.first;
+                  if (v == _status) return;
+                  setState(() => _status = v);
+                  await _buscar();
+                },
+              ),
             ),
           ],
         ),
@@ -292,32 +434,12 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
     );
   }
 
-  Widget _radio(String label, _StatusFiltro v) {
-    return InkWell(
-      onTap: () async {
-        setState(() => _status = v);
-        await _buscar();
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Radio<_StatusFiltro>(
-            value: v,
-            groupValue: _status,
-            onChanged: (x) async {
-              setState(() => _status = x ?? _StatusFiltro.todos);
-              await _buscar();
-            },
-          ),
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-        ],
-      ),
-    );
-  }
-
   Widget _itemCard(CurralPrev c) {
-    final racaoTxt = (c.racao ?? c.idRacao ?? "").trim().isEmpty ? "-" : (c.racao ?? c.idRacao)!.trim();
+    final racaoTxt = (c.racao ?? c.idRacao ?? "").trim().isEmpty
+        ? "-"
+        : (c.racao ?? c.idRacao)!.trim();
+
+    final linhaTxt = _resolveLinha(c);
 
     return InkWell(
       onTap: () => _open(c),
@@ -326,7 +448,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
         margin: const EdgeInsets.symmetric(horizontal: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: Colors.black.withOpacity(0.08)),
+          side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
         ),
         child: Padding(
           padding: const EdgeInsets.all(10),
@@ -335,9 +457,11 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
             children: [
               Column(
                 children: [
-                  const Icon(Icons.local_shipping, size: 34, color: Colors.blueGrey),
+                  const Icon(Icons.local_shipping,
+                      size: 34, color: Colors.blueGrey),
                   const SizedBox(height: 6),
-                  Icon(Icons.wifi, size: 18, color: Colors.blue.withOpacity(0.75)),
+                  Icon(Icons.wifi,
+                      size: 18, color: Colors.blue.withValues(alpha: 0.75)),
                 ],
               ),
               const SizedBox(width: 10),
@@ -346,29 +470,27 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      "Trato : ${c.trato}  Ração : $racaoTxt",
+                      "Trato: ${c.trato}  Ração: $racaoTxt",
                       style: const TextStyle(fontWeight: FontWeight.w900),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      "Curral : ${c.nomeLocal}",
+                      "Curral: ${c.nomeLocal}",
                       style: const TextStyle(fontWeight: FontWeight.w800),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "Linha : ${c.linha}",
-                      style: TextStyle(color: Colors.black.withOpacity(0.70)),
+                      "Linha: $linhaTxt",
+                      style: TextStyle(color: Colors.black.withValues(alpha: 0.70)),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 10),
-
-              // ✅ AJUSTE: aumentei um pouco a largura e garanti label sem quebra
               SizedBox(
                 width: 136,
                 child: Column(
@@ -378,13 +500,19 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                         _pill(
                           title: "Previsto",
                           value: c.previstoKg.toStringAsFixed(0),
-                          gradient: const [Color(0xFF2F6BFF), Color(0xFF0B45D6)],
+                          gradient: const [
+                            Color(0xFF2F6BFF),
+                            Color(0xFF0B45D6)
+                          ],
                         ),
                         const SizedBox(width: 6),
                         _pill(
                           title: "Realizado",
                           value: c.realizadoKg.toStringAsFixed(0),
-                          gradient: const [Color(0xFF19A36B), Color(0xFF0B7D53)],
+                          gradient: const [
+                            Color(0xFF19A36B),
+                            Color(0xFF0B7D53)
+                          ],
                         ),
                       ],
                     ),
@@ -394,7 +522,9 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                       child: Icon(
                         c.concluido ? Icons.check_circle : Icons.arrow_forward_ios,
                         size: 18,
-                        color: c.concluido ? Colors.green : Colors.black.withOpacity(0.35),
+                        color: c.concluido
+                            ? Colors.green
+                            : Colors.black.withValues(alpha: 0.35),
                       ),
                     ),
                   ],
@@ -415,16 +545,20 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.black.withOpacity(0.10)),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
             color: Colors.white,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
-              Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+              Text(value,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w900)),
             ],
           ),
         ),
@@ -461,7 +595,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _items.isEmpty
-                    ? const Center(child: Text("Sem previsão para os filtros selecionados."))
+                    ? const Center(
+                        child: Text("Sem previsão para os filtros selecionados."))
                     : ListView.separated(
                         padding: const EdgeInsets.only(top: 6, bottom: 6),
                         itemCount: _items.length,
@@ -482,11 +617,10 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
-              onPressed: () {
-                if (_items.isNotEmpty) _open(_items.first);
-              },
+              onPressed: _onNovoFornecimento,
               icon: const Icon(Icons.local_shipping),
               label: const Text(
                 "Novo Fornecimento",

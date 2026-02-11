@@ -199,7 +199,9 @@ class MirrorClient {
     final s = _sock;
     if (s == null || !_connected) return;
 
-    final line = jsonEncode(msg) + "\n";
+    final encoded = jsonEncode(msg);
+    final line = '$encoded\n';
+
 
     try {
       // ✅ UTF-8 sempre

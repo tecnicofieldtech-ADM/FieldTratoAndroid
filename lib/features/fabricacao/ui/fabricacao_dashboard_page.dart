@@ -1,10 +1,11 @@
-import "dart:math";
+﻿import "dart:math";
 import "package:fl_chart/fl_chart.dart";
 import "package:flutter/material.dart";
 
 import "../data/fabricacao_dashboard_repo.dart";
 import "../data/fabricacao_repo.dart";
 import "ingredientes_modal.dart";
+import "../../../repo/config_repo.dart";
 
 class FabricacaoDashboardPage extends StatefulWidget {
   const FabricacaoDashboardPage({super.key, required this.repo});
@@ -17,6 +18,7 @@ class FabricacaoDashboardPage extends StatefulWidget {
 
 class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   final _dash = FabricacaoDashboardRepo();
+  final _cfgRepo = ConfigRepo();
 
   bool _loading = true;
   DateTime _date = DateTime.now();
@@ -31,8 +33,8 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   List<Map<String, Object?>> _irregList = const [];
   List<Map<String, Object?>> _pendList = const [];
 
-  // ✅ RANKING + META
-  double _metaAcertoPct = 98.0; // depois você puxa do ConfigRepo
+  // RANKING + META
+  double _metaAcertoPct = 0.0; // ✅ vem da config (TOLERANCIA_CARREGAMENTO)
   List<Map<String, Object?>> _ranking = const [];
 
   String _iso(DateTime d) =>
@@ -45,6 +47,13 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  // ✅ double seguro para % (aceita vírgula e ponto)
+  double _asDouble(dynamic v, double def) {
+    final s = (v ?? "").toString().trim();
+    if (s.isEmpty) return def;
+    return double.tryParse(s.replaceAll(",", ".")) ?? def;
   }
 
   Future<void> _pickDate() async {
@@ -65,6 +74,10 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     final dataIso = _iso(_date);
 
     try {
+      // ✅ carrega META da configuração (TOLERANCIA_CARREGAMENTO)
+      final cfg = await _cfgRepo.getConfig();
+      final meta = _asDouble(cfg?["TOLERANCIA_CARREGAMENTO"], 0.0);
+
       final totals = await _dash.totalsDoDia(dataIso);
       final pend = await _dash.pendentesSyncDoDia(dataIso);
       final irreg = await _dash.irregularesCount(dataIso);
@@ -81,6 +94,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
 
       if (!mounted) return;
       setState(() {
+        _metaAcertoPct = meta; // ✅ aqui atualiza
         _totals = totals;
         _pendentes = pend;
         _irreg = irreg;
@@ -121,7 +135,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.06),
+                color: Colors.black.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon),
@@ -197,7 +211,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
         "Meta batida! Hoje o vagão tá ON 🔥",
         "Precisão cirúrgica! Dá até gosto 😎",
         "Tá voando baixo! 🚀",
-        "Isso aí é nível PRO 👑",
+        "Isso aí é nível PRO 🫡",
       ];
       return wins[Random().nextInt(wins.length)];
     }
@@ -206,7 +220,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
       const near = [
         "Quase lá! Só ajustar a pontinha 🤏",
         "Tá no cheiro da meta! Bora fechar ✅",
-        "Faltou só um tiquinho! 😅",
+        "Faltou só um tiquinho! 😄",
         "Tá muito bom… dá pra cravar! 🎯",
       ];
       return near[Random().nextInt(near.length)];
@@ -216,7 +230,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
       const mid = [
         "Bom! Mas dá pra caprichar mais 😄",
         "Tá legal… bora afinar esse trato 🔧",
-        "Hoje tá “quase perfeito” 😅",
+        "Hoje tá “quase perfeito” 😄",
         "Vamos buscar o modo sniper 🎯",
       ];
       return mid[Random().nextInt(mid.length)];
@@ -232,34 +246,49 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   }
 
   Widget _metaBanner(double realizPct) {
-    final ok = realizPct >= _metaAcertoPct;
+    // ✅ se meta for 0 (não configurado), evita comparar e mostra aviso neutro
+    final meta = _metaAcertoPct;
+    final metaOk = meta > 0;
+
+    final ok = metaOk ? (realizPct >= meta) : true;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 280),
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: ok
-            ? Colors.green.withOpacity(0.10)
-            : Colors.orange.withOpacity(0.10),
+        color: metaOk
+            ? (ok
+                ? Colors.green.withValues(alpha: 0.10)
+                : Colors.orange.withValues(alpha: 0.10))
+            : Colors.blueGrey.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: ok
-              ? Colors.green.withOpacity(0.25)
-              : Colors.orange.withOpacity(0.25),
+          color: metaOk
+              ? (ok
+                  ? Colors.green.withValues(alpha: 0.25)
+                  : Colors.orange.withValues(alpha: 0.25))
+              : Colors.blueGrey.withValues(alpha: 0.25),
         ),
       ),
       child: Row(
         children: [
           Icon(
-            ok ? Icons.celebration : Icons.tips_and_updates,
-            color: ok ? Colors.green.shade800 : Colors.orange.shade800,
+            metaOk
+                ? (ok ? Icons.celebration : Icons.tips_and_updates)
+                : Icons.info_outline,
+            color: metaOk
+                ? (ok ? Colors.green.shade800 : Colors.orange.shade800)
+                : Colors.blueGrey.shade800,
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              ok
-                  ? "Meta do dia batida! ${_incentivo(realizPct, _metaAcertoPct)}"
-                  : "Ainda dá pra bater a meta 😄 ${_incentivo(realizPct, _metaAcertoPct)}",
+              metaOk
+                  ? (ok
+                      ? "Meta do dia batida! ${_incentivo(realizPct, meta)}"
+                      : "Ainda dá pra bater a meta 😄 ${_incentivo(realizPct, meta)}")
+                  : "Meta não configurada. Defina em Configuração → Fabricação (Tolerância %).",
               style: const TextStyle(fontWeight: FontWeight.w900),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -294,6 +323,9 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     final top1 = _ranking.first;
     final topPct = ((top1["acerto_pct"] as num?) ?? 0).toDouble();
 
+    final metaTxt =
+        _metaAcertoPct > 0 ? "${_metaAcertoPct.toStringAsFixed(1)}%" : "—";
+
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       decoration: BoxDecoration(
@@ -311,7 +343,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
             subtitle: Text(
-              "Meta: ${_metaAcertoPct.toStringAsFixed(1)}% • ${_incentivo(topPct, _metaAcertoPct)}",
+              "Meta: $metaTxt • ${_incentivo(topPct, _metaAcertoPct)}",
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -333,7 +365,8 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
               final real = ((r["realizado"] as num?) ?? 0).toDouble();
               final pct = ((r["acerto_pct"] as num?) ?? 0).toDouble();
 
-              final dentro = pct >= _metaAcertoPct;
+              final dentro =
+                  _metaAcertoPct <= 0 ? true : (pct >= _metaAcertoPct);
 
               final tile = ListTile(
                 dense: true,
@@ -543,8 +576,8 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
         children: [
           ListTile(
             leading: Icon(icon),
-            title: Text(title,
-                style: const TextStyle(fontWeight: FontWeight.w900)),
+            title:
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
           ),
           const Divider(height: 1),
           if (rows.isEmpty)
@@ -688,7 +721,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                   ),
                 ),
 
-                // ✅ banner com incentivo
+                // ✅ banner com incentivo (agora com meta da config)
                 _metaBanner(pct),
 
                 // ✅ GRID BLINDADO

@@ -1,4 +1,4 @@
-// lib/features/fabricacao/ui/fabricacao_list_page.dart
+﻿// lib/features/fabricacao/ui/fabricacao_list_page.dart
 import "package:flutter/material.dart";
 
 import "../data/fabricacao_repo.dart";
@@ -22,15 +22,15 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   List<FabricacaoHeader> _items = [];
 
   // ---------- filtros ----------
-  DateTime? _filterDate; // data única
-  String? _filterDieta; // nome da ração (combo)
+  DateTime? _filterDate; // data Ãºnica
+  String? _filterDieta; // nome da raÃ§Ã£o (combo)
   int? _filterTrato; // trato (combo)
 
   // cache listas para combos
   List<String> _dietaOpts = [];
   List<int> _tratoOpts = [];
 
-  // animação “finalizada”
+  // animaÃ§Ã£o â€œfinalizadaâ€
   late final AnimationController _animCtrl;
   late final Animation<double> _pulse;
 
@@ -81,7 +81,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     _dietaOpts = dietas.toList()..sort();
     _tratoOpts = tratos.toList()..sort();
 
-    // se a opção selecionada não existir mais, limpa
+    // se a opÃ§Ã£o selecionada nÃ£o existir mais, limpa
     if (_filterDieta != null && !_dietaOpts.contains(_filterDieta)) {
       _filterDieta = null;
     }
@@ -152,7 +152,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text("Não"),
+              child: const Text("NÃ£o"),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
@@ -187,7 +187,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content:
-                Text("Só pode excluir se Realizado = 0 e não sincronizada.")),
+                Text("SÃ³ pode excluir se Realizado = 0 e nÃ£o sincronizada.")),
       );
       return;
     }
@@ -195,8 +195,8 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text("Excluir fabricação?"),
-        content: const Text("Essa fabricação será removida do banco local."),
+        title: const Text("Excluir Fabricação?"),
+        content: const Text("Essa Fabricação será removida do banco local."),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -271,7 +271,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
               const SizedBox(width: 10),
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  value: _filterDieta,
+                  initialValue: _filterDieta,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: "Ração",
@@ -297,7 +297,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
             children: [
               Expanded(
                 child: DropdownButtonFormField<int>(
-                  value: _filterTrato,
+                  initialValue: _filterTrato,
                   decoration: const InputDecoration(
                     labelText: "Trato",
                     border: OutlineInputBorder(),
@@ -337,16 +337,82 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     );
   }
 
+  // ✅ pill do carregamento (ficou no nível do State, não dentro do _statusPill)
+  Widget _carregamentoPill(String fabId) {
+    return FutureBuilder<Map<String, Object?>?>(
+      future: widget.repo.getCarregamentoStatusByFabricacao(fabId),
+      builder: (_, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.blueGrey.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.blueGrey.withValues(alpha: 0.25)),
+            ),
+            child: const Text(
+              "Carregamento: ...",
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            ),
+          );
+        }
+
+        final m = snap.data;
+        if (m == null) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+            ),
+            child: const Text(
+              "Carregamento: Não criado",
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+            ),
+          );
+        }
+
+        final st = (m["status_text"] ?? "ABERTO").toString();
+        final isAberto = st.toUpperCase().contains("ABERTO");
+
+        final bg = isAberto
+            ? Colors.orange.withValues(alpha: 0.12)
+            : Colors.green.withValues(alpha: 0.12);
+
+        final border = isAberto
+            ? Colors.orange.withValues(alpha: 0.35)
+            : Colors.green.withValues(alpha: 0.35);
+
+        final fg = isAberto ? Colors.deepOrange : Colors.green.shade800;
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: border),
+          ),
+          child: Text(
+            "Carregamento: ${isAberto ? "Aberto" : "Fechado"}",
+            style:
+                TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: fg),
+          ),
+        );
+      },
+    );
+  }
+
   // ---------- item visual ----------
   Widget _statusPill(FabricacaoHeader it) {
     final emAberto = it.emAberto;
 
     final Color bg = emAberto
-        ? Colors.orange.withOpacity(0.12)
-        : Colors.green.withOpacity(0.12);
+        ? Colors.orange.withValues(alpha: 0.12)
+        : Colors.green.withValues(alpha: 0.12);
     final Color border = emAberto
-        ? Colors.orange.withOpacity(0.35)
-        : Colors.green.withOpacity(0.35);
+        ? Colors.orange.withValues(alpha: 0.35)
+        : Colors.green.withValues(alpha: 0.35);
     final Color fg = emAberto ? Colors.deepOrange : Colors.green.shade800;
 
     final icon = emAberto ? Icons.pending_actions : Icons.verified;
@@ -364,7 +430,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
       ],
     );
 
-    // ✅ animação só em finalizadas
+    // âœ… animação sÃ³ em finalizadas
     if (!emAberto) {
       child = ScaleTransition(scale: _pulse, child: child);
     }
@@ -387,7 +453,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: const Text("Fabricações"),
+        title: const Text("Fabricação"),
         actions: [
           IconButton(
             tooltip: "Atualizar",
@@ -420,8 +486,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                 ? const Center(child: CircularProgressIndicator())
                 : list.isEmpty
                     ? const Center(
-                        child: Text(
-                            "Nenhuma fabricação encontrada.")) // vazio pós filtro
+                        child: Text("Nenhuma Fabricação encontrada."))
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
                         itemCount: list.length,
@@ -461,29 +526,26 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    // ícone “pá/roça”
                                     Container(
                                       width: 44,
                                       height: 44,
                                       decoration: BoxDecoration(
-                                        color: Colors.brown.withOpacity(0.10),
+                                        color: Colors.brown
+                                            .withValues(alpha: 0.10),
                                         borderRadius: BorderRadius.circular(14),
                                       ),
                                       child: Icon(
-                                        Icons
-                                            .agriculture, // melhor ícone nativo parecido com pá/agro
+                                        Icons.agriculture,
                                         color: Colors.brown.shade700,
                                       ),
                                     ),
                                     const SizedBox(width: 12),
 
-                                    // texto principal
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          // linha 1: data + trato + status
                                           Row(
                                             children: [
                                               Text(
@@ -500,13 +562,14 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                                         vertical: 5),
                                                 decoration: BoxDecoration(
                                                   color: Colors.blueGrey
-                                                      .withOpacity(0.10),
+                                                      .withValues(alpha: 0.10),
                                                   borderRadius:
                                                       BorderRadius.circular(
                                                           999),
                                                   border: Border.all(
                                                       color: Colors.blueGrey
-                                                          .withOpacity(0.25)),
+                                                          .withValues(
+                                                              alpha: 0.25)),
                                                 ),
                                                 child: Text(
                                                   "Trato ${it.trato}",
@@ -522,11 +585,17 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                           ),
 
                                           const SizedBox(height: 8),
+                                          Wrap(
+                                            spacing: 8,
+                                            runSpacing: 8,
+                                            children: [
+                                              _carregamentoPill(it.id),
+                                            ],
+                                          ),
 
-                                          // linha 2: nome ração (destaque)
                                           Text(
                                             it.dietaNome.trim().isEmpty
-                                                ? "(Sem nome de ração)"
+                                                ? "(Sem nome de Ração)"
                                                 : it.dietaNome,
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
@@ -537,7 +606,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
                                           const SizedBox(height: 10),
 
-                                          // barras / números
                                           Row(
                                             children: [
                                               Expanded(
@@ -546,8 +614,8 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                                       CrossAxisAlignment.start,
                                                   children: [
                                                     Text(
-                                                      "Prev ${it.qtdPrevista.toStringAsFixed(0)}  •  "
-                                                      "Real ${it.qtdRealizada.toStringAsFixed(0)}  •  "
+                                                      "Prev ${it.qtdPrevista.toStringAsFixed(0)}  até  "
+                                                      "Real ${it.qtdRealizada.toStringAsFixed(0)}  até  "
                                                       "Dif ${dif.toStringAsFixed(0)}",
                                                       style: TextStyle(
                                                           color: Colors
@@ -599,7 +667,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
                                           const SizedBox(height: 10),
 
-                                          // ações
                                           Row(
                                             children: [
                                               OutlinedButton.icon(

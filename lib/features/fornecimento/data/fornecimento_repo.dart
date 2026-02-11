@@ -1,4 +1,7 @@
 // lib/features/fornecimento/data/fornecimento_repo.dart
+import "dart:convert";
+import "dart:io";
+
 import "package:flutter/foundation.dart";
 
 import "../../../repo/config_repo.dart";
@@ -43,6 +46,8 @@ class CarregamentoAberto {
 
   final String id;
   final int status; // 0 = aberto
+
+  /// ✅ não vamos filtrar por vagão (sua regra), mas mantemos por compat
   final int idVagao;
 
   final String? idFabricacao;
@@ -127,47 +132,144 @@ class FornecimentoRepo {
   }
 
   // ===========================
+  // ✅ DIETA (NOME)
+  // ===========================
+  Future<bool> _hasTable(String table) async {
+    try {
+      final rows = await _dao.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND upper(name)=upper(?) LIMIT 1",
+        [table],
+      );
+      return rows.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ✅ detecta coluna no SQLite (PRAGMA table_info)
+  Future<bool> _hasColumn(String table, String col) async {
+    try {
+      final rows = await _dao.rawQuery("PRAGMA table_info($table)", const []);
+      for (final r in rows) {
+        final name = (r["name"] ?? "").toString().toUpperCase().trim();
+        if (name == col.toUpperCase().trim()) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ✅ usado pra mostrar o NOME da dieta no header/pesagem
+  Future<String?> getDietaNomeById(String idDieta) async {
+    final id = idDieta.trim();
+    if (id.isEmpty) return null;
+
+    try {
+      final rows = await _dao.rawQuery(
+        "SELECT NOME AS nome FROM DIETA WHERE ID = ? LIMIT 1",
+        [id],
+      );
+      if (rows.isEmpty) return null;
+
+      final nome = (rows.first["nome"] ?? "").toString().trim();
+      return nome.isEmpty ? null : nome;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ===========================
   // CARREGAMENTO (Rotormix)
   // ===========================
-
-  /// ✅ retorna o carregamento aberto de hoje (DAO decide)
-  /// ✅ seta `idRacaoAtual` quando conseguir
   Future<CarregamentoAberto?> getCarregamentoAberto({DateTime? data}) async {
-  final car = await _carregDao.getAbertoHoje(data: data ?? DateTime.now());
-  if (car == null) return null;
+    final car = await _carregDao.getAbertoHoje(data: data ?? DateTime.now());
+    if (car == null) return null;
 
-  // se getAbertoHoje SEMPRE retorna Map, não precisa de type check
-  final id = (car["ID"] ?? "").toString().trim();
-  final status = (car["STATUS"] is num) ? (car["STATUS"] as num).toInt() : 0;
-  final idVagao = (car["ID_VAGAO"] is num) ? (car["ID_VAGAO"] as num).toInt() : 0;
-  final idFab = (car["ID_FABRICACAO"] ?? "").toString().trim();
-  final idDieta = (car["ID_DIETA"] ?? "").toString().trim();
+    final id = (car["ID"] ?? "").toString().trim();
+    final status = int.tryParse((car["STATUS"] ?? "0").toString().trim()) ?? 0;
 
-  final aberto = CarregamentoAberto(
-    id: id.isEmpty ? "?" : id,
-    status: status,
-    idVagao: idVagao,
-    idFabricacao: idFab.isEmpty ? null : idFab,
-    idDieta: idDieta.isEmpty ? null : idDieta,
-  );
+    final idFab = (car["ID_FABRICACAO"] ?? "").toString().trim();
+    final idDieta = (car["ID_DIETA"] ?? "").toString().trim();
 
-  // ✅ ID_DIETA == ID_RACAO
-  setIdRacaoAtual(aberto.idDieta);
+    final aberto = CarregamentoAberto(
+      id: id.isEmpty ? "?" : id,
+      status: status,
+      idVagao: 0, // ✅ não usa / não lê do banco
+      idFabricacao: idFab.isEmpty ? null : idFab,
+      idDieta: idDieta.isEmpty ? null : idDieta,
+    );
 
-  return aberto;
-}
+    // ✅ ID_DIETA == ID_RACAO
+    setIdRacaoAtual(aberto.idDieta);
 
+    return aberto;
+  }
 
   Future<bool> existeCarregamentoAbertoHoje({DateTime? data}) async {
     final car = await _carregDao.getAbertoHoje(data: data ?? DateTime.now());
     return car != null;
   }
 
+  Future<bool> tryImportCarregamentoFromEstacionario({
+    DateTime? data,
+  }) async {
+    final host = (await _cfg.getHostEstacionario()).trim();
+    if (host.isEmpty) return false;
+
+    final port = await _cfg.getPortaEstacionario();
+    final uri = Uri(
+      scheme: "http",
+      host: host,
+      port: port,
+      path: "/carregamento/aberto",
+      queryParameters: {"data": _ymd(data ?? DateTime.now())},
+    );
+
+    final client = HttpClient();
+    try {
+      final req = await client.getUrl(uri);
+      final res = await req.close();
+      if (res.statusCode != 200) return false;
+
+      final body = await utf8.decoder.bind(res).join();
+      if (body.trim().isEmpty) return false;
+
+      final json = jsonDecode(body);
+      if (json is! Map || json["ok"] != true) return false;
+
+      final car = json["carregamento"];
+      if (car is! Map) return false;
+
+      await _carregDao.upsertFromRemote(
+        Map<String, Object?>.from(car as Map),
+      );
+
+      final id = (car["id"] ?? car["ID"] ?? "").toString().trim();
+      if (id.isEmpty) return true;
+
+      final uriConsume = Uri(
+        scheme: "http",
+        host: host,
+        port: port,
+        path: "/carregamento/consumido",
+      );
+      final req2 = await client.postUrl(uriConsume);
+      req2.headers.contentType = ContentType.json;
+      req2.write(jsonEncode({"id": id}));
+      await req2.close();
+
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   // ===========================
   // PREVISÃO (Mapa / Hoje)
   // ===========================
-
-  /// ✅ filtra também por ID_RACAO quando informado
   Future<List<CurralPrev>> listCurraisPrevistosHoje({
     DateTime? data,
     int? trato,
@@ -180,6 +282,9 @@ class FornecimentoRepo {
     final t = trato ?? tratoAtual;
     final racao = (idRacao ?? idRacaoAtual)?.trim();
     final racaoFinal = (racao != null && racao.isNotEmpty) ? racao : null;
+
+    // ✅ mantém idRacaoAtual consistente
+    if (racaoFinal != null) setIdRacaoAtual(racaoFinal);
 
     final rows = await _listPrevRaw(
       dataYYYYMMDD: ymd,
@@ -223,32 +328,26 @@ class FornecimentoRepo {
   }
 
   // ===========================
-  // FORNECIMENTO ABERTO / CADASTRO
+  // FORNECIMENTO (NOVO FLUXO)
   // ===========================
-  Future<FornecimentoAbertoMini?> getFornecimentoAberto({
-    required String idFornecimento,
-    required String idCurral,
-    required DateTime data,
-    required int trato,
-  }) =>
-      _dao.getFornecimentoAberto(
-        idFornecimento: idFornecimento,
-        idBaia: idCurral,
-        data: data,
-        trato: trato,
-      );
 
+  /// ✅ Agora NÃO existe “cadastro aberto” no SQLite.
+  /// Esta função só valida pré-condições e devolve um ID de sessão (local),
+  /// se você quiser usar na UI (não grava no banco).
   Future<String> iniciarCadastroFornecimento({
     required String idFornecimento,
     required String idCurral,
     required DateTime data,
     required int trato,
     required double previstoKg,
-    required double pesoInicio,
+    required double pesoInicio, // mantido por compat com sua UI, mas NÃO grava
+    required String idUsuario,
   }) async {
-    final idUsuario = (await _dao.getUsuarioAtualId()) ?? "";
-    if (idUsuario.trim().isEmpty) {
-      throw Exception("Usuário não definido. Faça login novamente.");
+    final user = idUsuario.trim();
+    if (user.isEmpty) {
+      throw Exception(
+        "Usuário não definido (idUsuario vazio). Faça login novamente.",
+      );
     }
 
     final okCar = await existeCarregamentoAbertoHoje(data: data);
@@ -258,63 +357,97 @@ class FornecimentoRepo {
       );
     }
 
-    final aberto = await _dao.getFornecimentoAberto(
-      idFornecimento: idFornecimento,
-      idBaia: idCurral,
-      data: data,
-      trato: trato,
-    );
-    if (aberto != null) return aberto.idCadastro;
+    // ✅ id apenas para controle da UI (não salva em tabela)
+    final sessionId = _dao.newId40();
 
-    final newId = _dao.newId40();
-    final fab = await _dao.getFabricacaoEmAbertoId() ?? "";
+    if (kDebugMode) {
+      debugPrint(
+        "🟦 iniciarCadastroFornecimento (SEM INSERT) sessionId=$sessionId "
+        "idFornecimento=$idFornecimento idCurral=$idCurral trato=$trato data=${_ymd(data)} previsto=$previstoKg",
+      );
+    }
 
-    await _dao.abrir(
-      id: newId,
+    return sessionId;
+  }
+
+  /// ✅ SALVA FINALIZADO: ÚNICO ponto onde insere no CADASTRO_FORNECIMENTO
+  Future<String> salvarCadastroFinalizado({
+    required String idFornecimento,
+    required String idCurral,
+    required DateTime data,
+    required int trato,
+    required double previstoKg,
+    required double pesoFim,
+    required double realizadoKg,
+    required String idUsuario,
+  }) async {
+    final user = idUsuario.trim();
+    if (user.isEmpty) {
+      throw Exception(
+        "Usuário não definido (idUsuario vazio). Faça login novamente.",
+      );
+    }
+
+    // precisa ter carregamento aberto pra saber dieta/fabricação
+    final car = await getCarregamentoAberto(data: data);
+    if (car == null || car.status != 0) {
+      throw Exception(
+        "Não existe CARREGAMENTO aberto. Abra um carregamento antes de fornecer.",
+      );
+    }
+
+    // ✅ ID_DIETA == ID_RACAO
+    final idDieta = (car.idDieta ?? idRacaoAtual)?.trim();
+    if (idDieta == null || idDieta.isEmpty) {
+      // não impede salvar, mas é bom avisar
+      if (kDebugMode) {
+        debugPrint("⚠️ salvarCadastroFinalizado: idDieta/idRacaoAtual vazio.");
+      }
+    }
+
+    // fabricação: prioriza do carregamento; se não tiver, pega “em aberto”
+    final idFabricacao = (car.idFabricacao ?? "").trim();
+    final fab = idFabricacao.isNotEmpty
+        ? idFabricacao
+        : ((await _dao.getFabricacaoEmAbertoId(data: data)) ?? "").trim();
+
+    if (fab.isEmpty) {
+      // dependendo da sua regra, aqui você pode BLOQUEAR. Por ora, apenas avisa.
+      if (kDebugMode) {
+        debugPrint("⚠️ salvarCadastroFinalizado: ID_FABRICACAO vazio (vai salvar mesmo assim).");
+      }
+    }
+
+    final idCadastro = _dao.newId40();
+
+    await _dao.salvarFinalizado(
+      id: idCadastro,
       idFornecimento: idFornecimento,
       idFabricacao: fab,
       idBaia: idCurral,
       data: data,
-      pesoInicio: pesoInicio,
-      previsto: previstoKg,
       trato: trato,
-      idUsuario: idUsuario,
-      idDieta: idRacaoAtual, // ✅ ID_DIETA == ID_RACAO
+      idUsuario: user,
+      idDieta: (idDieta != null && idDieta.isNotEmpty) ? idDieta : null,
+      pesoFim: pesoFim,
+      realizado: realizadoKg,
+      previsto: previstoKg,
     );
 
-    return newId;
+    if (kDebugMode) {
+      debugPrint(
+        "✅ SALVO FINALIZADO id=$idCadastro data=${_ymd(data)} trato=$trato "
+        "idFornecimento=$idFornecimento idBaia=$idCurral realizado=$realizadoKg flag_sync=0",
+      );
+      await _dao.debugDumpCadastroFornecimento(limit: 5);
+    }
+
+    return idCadastro;
   }
 
-  Future<void> finalizarCadastroFornecimento({
-    required String idCadastro,
-    required double pesoFim,
-    required double realizadoKg,
-  }) =>
-      _dao.finalizarCadastro(
-        id: idCadastro,
-        pesoFim: pesoFim,
-        realizado: realizadoKg,
-      );
-
-  Future<void> cancelarCadastroFornecimentoAberto(
-          {required String idCadastro}) =>
-      _dao.cancelarCadastroAberto(idCadastro);
-
-  Future<void> salvarParcialFornecimento({
-    required String motivo,
-    required String idCadastro,
-    required double pesoInicio,
-    required double pesoFim,
-    required double realizadoKg,
-  }) =>
-      _dao.salvarParcial(
-        motivo: motivo,
-        id: idCadastro,
-        pesoInicio: pesoInicio,
-        pesoFim: pesoFim,
-        realizado: realizadoKg,
-      );
-
+  // ===========================
+  // PREVISAO (REALIZADO)
+  // ===========================
   Future<double> getRealizadoAcumuladoDoCurral({
     required String idFornecimento,
     required String idCurral,
@@ -329,7 +462,7 @@ class FornecimentoRepo {
       );
 
   Future<void> setPrevRealizado({
-    required String idFornecimento, // mantido
+    required String idFornecimento,
     required String idCurral,
     required DateTime data,
     required int trato,
@@ -340,17 +473,21 @@ class FornecimentoRepo {
         trato: trato,
         idBaia: idCurral,
         realizadoKg: realizadoKg,
+        idFornecimento: idFornecimento,
       );
 
   // ===========================
-  // Mantidos
+  // SYNC
   // ===========================
-  Future<void> abrir(FornecimentoRow row) => _dao.upsert(row);
-
   Future<List<FornecimentoRow>> pendentesSync({int limit = 200}) =>
       _dao.listPendentesSync(limit: limit);
 
   Future<void> marcarSyncOk(String id) => _dao.marcarSyncOk(id);
+
+  // ===========================
+  // Mantidos (upsert usado por import/sync de fora)
+  // ===========================
+  Future<void> abrir(FornecimentoRow row) => _dao.upsert(row);
 
   Future<void> upsertBaia(BaiaRow b) => _dao.upsertBaia(b);
   Future<BaiaRow?> getBaiaByRfid(String rfid) => _dao.getBaiaByRfid(rfid);
@@ -365,7 +502,8 @@ class FornecimentoRepo {
     required String idFazenda,
     required DateTime data,
     int? trato,
-    String? racaoNome, // mantido, mas não usado no SQL (sem tabela)
+    String? idRacao,
+    String? racaoNome,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
@@ -375,6 +513,7 @@ class FornecimentoRepo {
       idFazenda: idFazenda,
       dataYYYYMMDD: ymd,
       trato: trato,
+      idRacao: idRacao,
       racaoNome: racaoNome,
       curralNome: curralNome,
       realizadoMaiorZero: realizadoMaiorZero,
@@ -385,7 +524,8 @@ class FornecimentoRepo {
     required String idFazenda,
     required String dataYYYYMMDD,
     int? trato,
-    String? racaoNome, // mantido (não usado)
+    String? idRacao,
+    String? racaoNome,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
@@ -393,6 +533,8 @@ class FornecimentoRepo {
       dataYYYYMMDD: dataYYYYMMDD,
       trato: trato,
       idFazenda: idFazenda,
+      idRacao: idRacao,
+      racaoNome: racaoNome,
       curralNome: curralNome,
       realizadoMaiorZero: realizadoMaiorZero,
     );
@@ -400,77 +542,139 @@ class FornecimentoRepo {
     return rows.map((m) => CurralPrev.fromMap(m)).toList();
   }
 
-  // ===========================
-  // ✅ SQL centralizado (usando FornTables)
-  // ===========================
+  // =========================================================
+  // 🔥 QUERY “MAPA” (igual Delphi) + filtros
+  // =========================================================
   Future<List<Map<String, Object?>>> _listPrevRaw({
     required String dataYYYYMMDD,
     int? trato,
     String? idFazenda,
     String? idRacao,
+    String? racaoNome,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
     final where = StringBuffer("WHERE 1=1 ");
     final args = <Object?>[];
 
-    // DATA_LEITURA
-    where.write(" AND a.${FornTables.pv_data} = ? ");
+    where.write(" AND substr(a.${FornTables.pvData}, 1, 10) = ? ");
     args.add(dataYYYYMMDD);
 
-    // fazenda via DETALHES_BAIAS (se vier)
     final faz = (idFazenda ?? "").trim();
     if (faz.isNotEmpty) {
-      where.write(" AND db.${FornTables.db_idFazenda} = ? ");
-      args.add(faz);
+      final hasIdFaz = await _hasColumn(FornTables.detalhesBaias, "ID_FAZENDA");
+      if (hasIdFaz) {
+        where.write(" AND TRIM(db.ID_FAZENDA) = TRIM(?) ");
+        args.add(faz);
+      }
     }
 
     if (trato != null) {
-      where.write(" AND a.${FornTables.pv_trato} = ? ");
+      where.write(" AND a.${FornTables.pvTrato} = ? ");
       args.add(trato);
     }
 
-    final racao = (idRacao ?? "").trim();
-    if (racao.isNotEmpty) {
-      where.write(" AND a.${FornTables.pv_idRacao} = ? ");
-      args.add(racao);
+    final racaoId = (idRacao ?? "").trim();
+    if (racaoId.isNotEmpty) {
+      where.write(" AND TRIM(a.${FornTables.pvIdRacao}) = TRIM(?) ");
+      args.add(racaoId);
     }
 
     final curral = (curralNome ?? "").trim();
     if (curral.isNotEmpty) {
-      where.write(" AND db.${FornTables.db_nomeLocal} = ? ");
-      args.add(curral);
+      where.write(" AND UPPER(db.${FornTables.dbNomeLocal}) LIKE UPPER(?) ");
+      args.add("%$curral%");
     }
 
     if (realizadoMaiorZero == true) {
-      where.write(" AND COALESCE(a.${FornTables.pv_realizadoKg},0) > 0 ");
+      where.write(" AND COALESCE(a.${FornTables.pvRealizadoKg},0) > 0 ");
     } else if (realizadoMaiorZero == false) {
-      where.write(" AND COALESCE(a.${FornTables.pv_realizadoKg},0) = 0 ");
+      where.write(" AND COALESCE(a.${FornTables.pvRealizadoKg},0) = 0 ");
     }
 
-    // ✅ Aliases compatíveis com CurralPrev.fromMap (sem inventar tabelas)
-    final sql = '''
-SELECT
-  a.${FornTables.pv_idFornecimento} AS idFornecimento,
-  a.${FornTables.pv_idBaia}         AS idBaia,
-  db.${FornTables.db_nomeLocal}     AS nomeBaia,
-  db.${FornTables.db_nomeLocal}     AS nomeLocal,
-  COALESCE(db.${FornTables.db_linha}, 0) AS linha,
-  COALESCE(db.${FornTables.db_rfid}, '') AS rfid,
-  '' AS racaoNome,
-  a.${FornTables.pv_previstoKg}     AS previstoKg,
-  COALESCE(a.${FornTables.pv_realizadoKg}, 0) AS realizadoKg,
-  a.${FornTables.pv_trato}          AS trato,
-  0 AS sync
-FROM ${FornTables.previsao} a
-JOIN ${FornTables.detalhesBaias} db
-  ON db.${FornTables.db_id} = a.${FornTables.pv_idBaia}
-${where.toString()}
-ORDER BY
-  a.${FornTables.pv_trato},
-  COALESCE(db.${FornTables.db_orderTrato}, 0),
-  db.${FornTables.db_nomeLocal}
-''';
+    final hasDieta = await _hasTable("DIETA");
+
+    if (hasDieta) {
+      final rn2 = (racaoNome ?? "").trim();
+      if (rn2.isNotEmpty) {
+        where.write(" AND UPPER(COALESCE(d.NOME,'')) LIKE UPPER(?) ");
+        args.add("%$rn2%");
+      }
+    }
+
+    final joinOn = """
+      TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+      TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT))
+    """;
+
+    String linhaText(String expr) => "COALESCE(CAST($expr AS TEXT), '')";
+
+    final sql = hasDieta
+        ? '''
+      SELECT
+        COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
+        a.${FornTables.pvIdFornecimento}           AS idFornecimento,
+        ${linhaText("db.${FornTables.dbLinha}")}   AS linha,
+        CASE
+          WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
+            substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
+          ELSE
+            '1'
+        END AS numero,
+        db.${FornTables.dbNomeLocal}              AS nomeLocal,
+        COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
+        COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizadoKg,
+        COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,
+        a.${FornTables.pvIdBaia}                  AS idBaia,
+        a.${FornTables.pvTrato}                   AS trato,
+        COALESCE(d.NOME, '')                      AS racaoNome
+      FROM ${FornTables.previsao} a
+      JOIN ${FornTables.detalhesBaias} db
+        ON $joinOn
+      LEFT JOIN DIETA d
+        ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT))
+      ${where.toString()}
+      ORDER BY
+        a.${FornTables.pvTrato},
+        COALESCE(db.${FornTables.dbOrderTrato}, 0),
+        ${linhaText("db.${FornTables.dbLinha}")},
+        db.${FornTables.dbNomeLocal}
+      '''
+        : '''
+      SELECT
+        COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
+        a.${FornTables.pvIdFornecimento}           AS idFornecimento,
+        ${linhaText("db.${FornTables.dbLinha}")}   AS linha,
+        CASE
+          WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
+            substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
+          ELSE
+            '1'
+        END AS numero,
+        db.${FornTables.dbNomeLocal}              AS nomeLocal,
+        COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
+        COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizadoKg,
+        COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,
+        a.${FornTables.pvIdBaia}                  AS idBaia,
+        a.${FornTables.pvTrato}                   AS trato,
+        ''                                        AS racaoNome
+      FROM ${FornTables.previsao} a
+      JOIN ${FornTables.detalhesBaias} db
+        ON $joinOn
+      ${where.toString()}
+      ORDER BY
+        a.${FornTables.pvTrato},
+        COALESCE(db.${FornTables.dbOrderTrato}, 0),
+        ${linhaText("db.${FornTables.dbLinha}")},
+        db.${FornTables.dbNomeLocal}
+      ''';
+
+    if (kDebugMode) {
+      debugPrint("PREV SQL (MAPA) => $sql");
+      debugPrint("ARGS => $args");
+    }
 
     return _dao.rawQuery(sql, args);
   }

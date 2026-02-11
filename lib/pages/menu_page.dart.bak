@@ -1,0 +1,260 @@
+﻿// lib/pages/menu_page.dart
+import "package:flutter/material.dart";
+import "../widgets/app_logo.dart";
+
+class MenuPage extends StatelessWidget {
+  const MenuPage({super.key});
+
+  void _go(BuildContext context, String route) {
+    Navigator.pushNamed(context, route);
+  }
+
+  static void _toast(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const padding = 18.0;
+    const gap = 12.0;
+
+    // âœ… ajuste pro seu caminho real
+    const bgAsset = "assets/images/bg_boi_tech.png";
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // FUNDO ocupa 100%
+          Image.asset(
+            bgAsset,
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            errorBuilder: (_, __, ___) => const SizedBox.expand(),
+          ),
+
+          // leve â€œwashâ€ para a logo e botÃµes destacarem
+          Container(color: Colors.white.withValues(alpha: 0.50)),
+
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(padding),
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final w = c.maxWidth;
+
+                  // 2 colunas fixas
+                  final tileW = (w - gap) / 2;
+
+                  // âœ… altura um pouco maior (antes ~56-70)
+                  final tileH = (w * 0.18).clamp(66.0, 86.0);
+
+                  return Column(
+                    children: [
+                      // ConteÃºdo scrollÃ¡vel
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 6),
+
+                              // LOGO grande
+                              ConstrainedBox(
+                                constraints:
+                                    const BoxConstraints(maxHeight: 260),
+                                child:
+                                    const Center(child: AppLogo(height: 230)),
+                              ),
+
+                              const SizedBox(height: 14),
+
+                              // ===== LINHA 1 =====
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.settings,
+                                      title: "ConfiguraÃ§Ã£o",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () =>
+                                          Navigator.pushReplacementNamed(
+                                              context, "/config"),
+                                    ),
+                                  ),
+                                  const SizedBox(width: gap),
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.sync,
+                                      title: "SincronizaÃ§Ã£o",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () => _go(context, "/sync"),
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: gap),
+
+                              // ===== LINHA 2 =====
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.precision_manufacturing,
+                                      title: "FabricaÃ§Ã£o",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () => _go(context, "/fabricacao"),
+                                    ),
+                                  ),
+                                  const SizedBox(width: gap),
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.local_shipping,
+                                      title: "Fornecimento",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () =>
+                                          _go(context, "/fornecimento"),
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: gap),
+
+                              // ===== LINHA 3 =====
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.nfc,
+                                      title: "Gravar TAG",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () => _toast(
+                                          context, "Em breve: Gravar TAG"),
+                                    ),
+                                  ),
+                                  const SizedBox(width: gap),
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.dashboard_outlined,
+                                      title: "Dashboard",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () => _toast(
+                                          context, "Em breve: Dashboard"),
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: 18),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // âœ… SAIR NO RODAPÃ‰ (fixo)
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.red.shade700,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          onPressed: () =>
+                              Navigator.pushReplacementNamed(context, "/login"),
+                          icon: const Icon(Icons.logout),
+                          label: const Text(
+                            "Sair",
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Tile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Color bg;
+  final Color fg;
+  final VoidCallback onTap;
+
+  const _Tile({
+    required this.icon,
+    required this.title,
+    required this.bg,
+    required this.fg,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.topCenter,
+              child: Icon(icon, size: 28, color: fg),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1,5 +1,6 @@
+// lib/features/fornecimento/ui/widgets/currais_grid.dart
 import "package:flutter/material.dart";
-import "../../data/fornecimento_models.dart";
+import "../../domain/fornecimento_models.dart";
 import "curral_card.dart";
 
 class CurraisGrid extends StatelessWidget {
@@ -16,10 +17,14 @@ class CurraisGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
 
-    int crossAxisCount = 2;
-    if (w >= 1100) crossAxisCount = 4;
-    else if (w >= 800) crossAxisCount = 3;
-    else crossAxisCount = 2;
+    var crossAxisCount = 2;
+    if (w >= 1100) {
+      crossAxisCount = 4;
+    } else if (w >= 800) {
+      crossAxisCount = 3;
+    } else {
+      crossAxisCount = 2;
+    }
 
     return GridView.builder(
       padding: const EdgeInsets.all(12),
