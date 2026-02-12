@@ -172,126 +172,161 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
   @override
   Widget build(BuildContext context) {
+    final keyboardBottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
       appBar: AppBar(title: const Text("Nova Fabricação")),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey(_dietaId),
-                        initialValue: _dietaId,
-                        items: _dietas
-                            .map(
-                              (d) => DropdownMenuItem<String>(
-                                value: (d["ID"] ?? "").toString(),
-                                child: Text((d["NOME"] ?? "").toString()),
+      body: SafeArea(
+        top: false,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      16,
+                      16,
+                      16 + keyboardBottomInset,
+                    ),
+                    child: ConstrainedBox(
+                      constraints:
+                          BoxConstraints(minHeight: constraints.maxHeight),
+                      child: IntrinsicHeight(
+                        child: Column(
+                          children: [
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: DropdownButtonFormField<String>(
+                                  key: ValueKey(_dietaId),
+                                  initialValue: _dietaId,
+                                  items: _dietas
+                                      .map(
+                                        (d) => DropdownMenuItem<String>(
+                                          value: (d["ID"] ?? "").toString(),
+                                          child: Text(
+                                              (d["NOME"] ?? "").toString()),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (v) =>
+                                      setState(() => _dietaId = v),
+                                  decoration:
+                                      const InputDecoration(labelText: "Dieta"),
+                                ),
                               ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() => _dietaId = v),
-                        decoration: const InputDecoration(labelText: "Dieta"),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Trato",
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [1, 2, 3, 4].map((t) {
-                              final sel = _tratoSelecionado == t;
-                              return ChoiceChip(
-                                label: Text("Trato $t"),
-                                selected: sel,
-                                onSelected: (_) =>
-                                    setState(() => _tratoSelecionado = t),
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: TextField(
-                        controller: _kgCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r"[0-9.,]"),
-                          ),
-                          TextInputFormatter.withFunction((oldValue, newValue) {
-                            final raw = newValue.text.trim();
-                            if (raw.isEmpty) return newValue;
-                            final v =
-                                double.tryParse(raw.replaceAll(",", "."));
-                            if (v == null) return oldValue;
-                            return v > 15000 ? oldValue : newValue;
-                          }),
-                        ],
-                        decoration: const InputDecoration(
-                          labelText: "Quantidade total (KG)",
-                          helperText: "Máximo: 15.000 KG",
+                            ),
+                            const SizedBox(height: 12),
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Trato",
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w800),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 10,
+                                      runSpacing: 10,
+                                      children: [1, 2, 3, 4].map((t) {
+                                        final sel = _tratoSelecionado == t;
+                                        return ChoiceChip(
+                                          label: Text("Trato $t"),
+                                          selected: sel,
+                                          onSelected: (_) => setState(
+                                            () => _tratoSelecionado = t,
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: TextField(
+                                  controller: _kgCtrl,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r"[0-9.,]"),
+                                    ),
+                                    TextInputFormatter.withFunction(
+                                      (oldValue, newValue) {
+                                        final raw = newValue.text.trim();
+                                        if (raw.isEmpty) return newValue;
+                                        final v = double.tryParse(
+                                          raw.replaceAll(",", "."),
+                                        );
+                                        if (v == null) return oldValue;
+                                        return v > 15000 ? oldValue : newValue;
+                                      },
+                                    ),
+                                  ],
+                                  decoration: const InputDecoration(
+                                    labelText: "Quantidade total (KG)",
+                                    helperText: "Máximo: 15.000 KG",
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: DropdownButtonFormField<String>(
+                                  key: ValueKey(_operadorId),
+                                  initialValue: _operadorId,
+                                  items: _users
+                                      .map(
+                                        (u) => DropdownMenuItem<String>(
+                                          value: (u["ID"] ?? "").toString(),
+                                          child: Text(
+                                              (u["NOME"] ?? "").toString()),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (v) =>
+                                      setState(() => _operadorId = v),
+                                  decoration: const InputDecoration(
+                                    labelText: "Operador",
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: _onFabricar,
+                                child: const Text("Fabricar"),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey(_operadorId),
-                        initialValue: _operadorId,
-                        items: _users
-                            .map(
-                              (u) => DropdownMenuItem<String>(
-                                value: (u["ID"] ?? "").toString(),
-                                child: Text((u["NOME"] ?? "").toString()),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() => _operadorId = v),
-                        decoration:
-                            const InputDecoration(labelText: "Operador"),
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: _onFabricar,
-                      child: const Text("Fabricar"),
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
-            ),
+      ),
     );
   }
 }

@@ -807,103 +807,145 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 16),
 
                 _sectionTitle("Identificação Vagão"),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey("vagao:$validVagaoValue"),
-                        initialValue: _vagoes.isEmpty ? null : validVagaoValue,
-                        items: _vagoes
-                            .map((e) {
-                              final id = _vagaoId(e);
-                              final nome = _vagaoNome(e);
-                              return DropdownMenuItem<String>(
-                                value: id,
-                                child: Text(nome),
-                              );
-                            })
-                            .where((it) => (it.value ?? "").isNotEmpty)
-                            .toList(),
-                        onChanged: (v) {
-                          setState(() {
-                            _idVagao = v;
-                            final row = _vagoes.firstWhere(
-                              (x) => _vagaoId(x) == (v ?? ""),
-                              orElse: () => {},
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 430;
+                    final field = DropdownButtonFormField<String>(
+                      key: ValueKey("vagao:$validVagaoValue"),
+                      isExpanded: true,
+                      initialValue: _vagoes.isEmpty ? null : validVagaoValue,
+                      items: _vagoes
+                          .map((e) {
+                            final id = _vagaoId(e);
+                            final nome = _vagaoNome(e);
+                            return DropdownMenuItem<String>(
+                              value: id,
+                              child: Text(
+                                nome,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             );
-                            _nomeVagao = _vagaoNome(row);
-                            if (_nomeVagao != null &&
-                                _nomeVagao!.trim().isEmpty) {
-                              _nomeVagao = null;
-                            }
-                          });
-                        },
-                        decoration: const InputDecoration(
-                          labelText: "Vagão",
-                          border: OutlineInputBorder(),
-                        ),
+                          })
+                          .where((it) => (it.value ?? "").isNotEmpty)
+                          .toList(),
+                      onChanged: (v) {
+                        setState(() {
+                          _idVagao = v;
+                          final row = _vagoes.firstWhere(
+                            (x) => _vagaoId(x) == (v ?? ""),
+                            orElse: () => {},
+                          );
+                          _nomeVagao = _vagaoNome(row);
+                          if (_nomeVagao != null && _nomeVagao!.trim().isEmpty) {
+                            _nomeVagao = null;
+                          }
+                        });
+                      },
+                      decoration: const InputDecoration(
+                        labelText: "Vagão",
+                        border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
+                    );
+
+                    final button = SizedBox(
                       height: 56,
+                      width: compact ? double.infinity : null,
                       child: ElevatedButton.icon(
                         onPressed: _onBaixarVagao,
                         icon: _loadingVagao
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Vagão"),
                       ),
-                    ),
-                  ],
+                    );
+
+                    if (compact) {
+                      return Column(
+                        children: [
+                          field,
+                          const SizedBox(height: 12),
+                          button,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 12),
+                        button,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
 
                 _sectionTitle("Fazenda"),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        key: ValueKey("fazenda:$validFazendaValue"),
-                        initialValue:
-                            _fazendas.isEmpty ? null : validFazendaValue,
-                        items: _fazendas
-                            .map(
-                              (e) => DropdownMenuItem(
-                                value: (e["ID"] ?? "").toString(),
-                                child: Text((e["NOME"] ?? "").toString()),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 430;
+                    final field = DropdownButtonFormField<String>(
+                      key: ValueKey("fazenda:$validFazendaValue"),
+                      isExpanded: true,
+                      initialValue: _fazendas.isEmpty ? null : validFazendaValue,
+                      items: _fazendas
+                          .map(
+                            (e) => DropdownMenuItem(
+                              value: (e["ID"] ?? "").toString(),
+                              child: Text(
+                                (e["NOME"] ?? "").toString(),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() => _idFazenda = v),
-                        decoration: const InputDecoration(
-                          labelText: "Fazenda",
-                          border: OutlineInputBorder(),
-                        ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _idFazenda = v),
+                      decoration: const InputDecoration(
+                        labelText: "Fazenda",
+                        border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
+                    );
+
+                    final button = SizedBox(
                       height: 56,
+                      width: compact ? double.infinity : null,
                       child: ElevatedButton.icon(
                         onPressed: _onBaixarFazendas,
                         icon: _loadingFazendas
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Fazendas"),
                       ),
-                    ),
-                  ],
+                    );
+
+                    if (compact) {
+                      return Column(
+                        children: [
+                          field,
+                          const SizedBox(height: 12),
+                          button,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 12),
+                        button,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
 

@@ -1,4 +1,4 @@
-﻿import "package:flutter/material.dart";
+import "package:flutter/material.dart";
 
 import "package:rfeed_flutter/helpers/scale_comm.dart";
 import "package:rfeed_flutter/helpers/rfid_comm.dart";
@@ -56,6 +56,13 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
     super.dispose();
   }
 
+  void _msg(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
+  }
+
   Future<void> _buscar() async {
     if (!mounted) return;
     setState(() => _loading = true);
@@ -71,9 +78,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
         idFazenda: widget.idFazenda,
         data: _date,
         trato: _trato,
-        racaoNome: (_racao == null || _racao!.trim().isEmpty)
-            ? null
-            : _racao!.trim(),
+        racaoNome:
+            (_racao == null || _racao!.trim().isEmpty) ? null : _racao!.trim(),
         curralNome:
             _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
         realizadoMaiorZero: realizadoMaiorZero,
@@ -115,9 +121,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
 
   Future<int?> _pickTratoModal() async {
     // ✅ opções: se tem itens na lista, usa os tratos presentes; senão, 1..6
-    final opts = _tratoOptions.isNotEmpty
-        ? _tratoOptions
-        : <int>[1, 2, 3, 4, 5, 6];
+    final opts =
+        _tratoOptions.isNotEmpty ? _tratoOptions : <int>[1, 2, 3, 4, 5, 6];
 
     return showModalBottomSheet<int>(
       context: context,
@@ -173,7 +178,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
   void _open(CurralPrev c) {
     _openDashboard(
       trato: c.trato,
-      idRacaoFiltro: (c.idRacao ?? "").trim().isEmpty ? null : c.idRacao!.trim(),
+      idRacaoFiltro:
+          (c.idRacao ?? "").trim().isEmpty ? null : c.idRacao!.trim(),
     );
   }
 
@@ -183,6 +189,64 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
 
     // ✅ abre dashboard no trato escolhido
     _openDashboard(trato: trato);
+  }
+
+  Future<void> _replicarPrevisaoDiaAnterior() async {
+    final d = _date;
+    final ontem = d.subtract(const Duration(days: 1));
+
+    String ymd(DateTime x) =>
+        "${x.year.toString().padLeft(4, "0")}-${x.month.toString().padLeft(2, "0")}-${x.day.toString().padLeft(2, "0")}";
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Replicar previsão"),
+        content: Text(
+          "Replicar a previsão de ${ymd(ontem)} para ${ymd(d)}?\n\n"
+          "A ação só é permitida se o dia destino ainda não tiver previsão.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Replicar"),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    if (!mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final res = await widget.repo.replicarPrevisaoDoDiaAnterior(
+        dataDestino: d,
+        idFazenda: widget.idFazenda,
+      );
+
+      switch (res.status) {
+        case ReplicarPrevisaoStatus.copiado:
+          _msg(
+              "Previsão replicada com sucesso (${res.registrosCopiados} registros).");
+          break;
+        case ReplicarPrevisaoStatus.diaJaPossuiPrevisao:
+          _msg("Já existe previsão para a data selecionada.");
+          break;
+        case ReplicarPrevisaoStatus.diaAnteriorSemPrevisao:
+          _msg("Não existe previsão no dia anterior para replicar.");
+          break;
+      }
+
+      await _buscar();
+    } catch (e) {
+      _msg("Erro ao replicar previsão: $e");
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   // =========================================================
@@ -413,9 +477,11 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
               alignment: Alignment.centerLeft,
               child: SegmentedButton<_StatusFiltro>(
                 segments: const <ButtonSegment<_StatusFiltro>>[
-                  ButtonSegment(value: _StatusFiltro.todos, label: Text("Todos")),
                   ButtonSegment(
-                      value: _StatusFiltro.realizados, label: Text("Realizados")),
+                      value: _StatusFiltro.todos, label: Text("Todos")),
+                  ButtonSegment(
+                      value: _StatusFiltro.realizados,
+                      label: Text("Realizados")),
                   ButtonSegment(
                       value: _StatusFiltro.pendentes, label: Text("Pendentes")),
                 ],
@@ -485,7 +551,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                     const SizedBox(height: 6),
                     Text(
                       "Linha: $linhaTxt",
-                      style: TextStyle(color: Colors.black.withValues(alpha: 0.70)),
+                      style: TextStyle(
+                          color: Colors.black.withValues(alpha: 0.70)),
                     ),
                   ],
                 ),
@@ -520,7 +587,9 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: Icon(
-                        c.concluido ? Icons.check_circle : Icons.arrow_forward_ios,
+                        c.concluido
+                            ? Icons.check_circle
+                            : Icons.arrow_forward_ios,
                         size: 18,
                         color: c.concluido
                             ? Colors.green
@@ -585,6 +654,11 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
       appBar: AppBar(
         title: const Text("Fornecimento"),
         actions: [
+          IconButton(
+            tooltip: "Replicar previsão de ontem",
+            onPressed: _loading ? null : _replicarPrevisaoDiaAnterior,
+            icon: const Icon(Icons.copy_all),
+          ),
           IconButton(onPressed: _buscar, icon: const Icon(Icons.refresh)),
         ],
       ),
@@ -596,7 +670,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
                 ? const Center(child: CircularProgressIndicator())
                 : _items.isEmpty
                     ? const Center(
-                        child: Text("Sem previsão para os filtros selecionados."))
+                        child:
+                            Text("Sem previsão para os filtros selecionados."))
                     : ListView.separated(
                         padding: const EdgeInsets.only(top: 6, bottom: 6),
                         itemCount: _items.length,

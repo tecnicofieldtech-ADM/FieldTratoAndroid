@@ -35,6 +35,22 @@ class FornecimentoConnParams {
 }
 
 /// Modelo mínimo pro carregamento aberto (sem inventar campos)
+enum ReplicarPrevisaoStatus {
+  copiado,
+  diaJaPossuiPrevisao,
+  diaAnteriorSemPrevisao,
+}
+
+class ReplicarPrevisaoResult {
+  ReplicarPrevisaoResult({
+    required this.status,
+    this.registrosCopiados = 0,
+  });
+
+  final ReplicarPrevisaoStatus status;
+  final int registrosCopiados;
+}
+
 class CarregamentoAberto {
   CarregamentoAberto({
     required this.id,
@@ -242,7 +258,7 @@ class FornecimentoRepo {
       if (car is! Map) return false;
 
       await _carregDao.upsertFromRemote(
-        Map<String, Object?>.from(car as Map),
+        Map<String, Object?>.from(car),
       );
 
       final id = (car["id"] ?? car["ID"] ?? "").toString().trim();
@@ -414,7 +430,8 @@ class FornecimentoRepo {
     if (fab.isEmpty) {
       // dependendo da sua regra, aqui você pode BLOQUEAR. Por ora, apenas avisa.
       if (kDebugMode) {
-        debugPrint("⚠️ salvarCadastroFinalizado: ID_FABRICACAO vazio (vai salvar mesmo assim).");
+        debugPrint(
+            "⚠️ salvarCadastroFinalizado: ID_FABRICACAO vazio (vai salvar mesmo assim).");
       }
     }
 
@@ -540,6 +557,45 @@ class FornecimentoRepo {
     );
 
     return rows.map((m) => CurralPrev.fromMap(m)).toList();
+  }
+
+  Future<ReplicarPrevisaoResult> replicarPrevisaoDoDiaAnterior({
+    required DateTime dataDestino,
+    required String idFazenda,
+  }) async {
+    final destinoYmd = _ymd(dataDestino);
+    final origemYmd = _ymd(dataDestino.subtract(const Duration(days: 1)));
+
+    final existeNoDestino = await _dao.countPrevisaoByData(
+      dataYmd: destinoYmd,
+      idFazenda: idFazenda,
+    );
+    if (existeNoDestino > 0) {
+      return ReplicarPrevisaoResult(
+        status: ReplicarPrevisaoStatus.diaJaPossuiPrevisao,
+      );
+    }
+
+    final existeNaOrigem = await _dao.countPrevisaoByData(
+      dataYmd: origemYmd,
+      idFazenda: idFazenda,
+    );
+    if (existeNaOrigem <= 0) {
+      return ReplicarPrevisaoResult(
+        status: ReplicarPrevisaoStatus.diaAnteriorSemPrevisao,
+      );
+    }
+
+    final copiados = await _dao.replicarPrevisaoEntreDatas(
+      dataOrigemYmd: origemYmd,
+      dataDestinoYmd: destinoYmd,
+      idFazenda: idFazenda,
+    );
+
+    return ReplicarPrevisaoResult(
+      status: ReplicarPrevisaoStatus.copiado,
+      registrosCopiados: copiados,
+    );
   }
 
   // =========================================================

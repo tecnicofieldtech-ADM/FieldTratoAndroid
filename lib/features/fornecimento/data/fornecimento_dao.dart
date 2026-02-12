@@ -7,8 +7,6 @@ import "../../../db/app_db.dart";
 import "fornecimento_tables.dart";
 import "../domain/fornecimento_models.dart";
 
-
-
 class FornecimentoDao {
   Future<Database> get _db async => AppDb.instance.db;
 
@@ -57,7 +55,7 @@ class FornecimentoDao {
   // =========================================================
   // 🧪 DEBUG: dump rápido do CADASTRO_FORNECIMENTO
   // =========================================================
-    // =========================================================
+  // =========================================================
   // 🧪 DEBUG: dump rápido do CADASTRO_FORNECIMENTO
   // =========================================================
   Future<void> debugDumpCadastroFornecimento({int limit = 20}) async {
@@ -96,7 +94,6 @@ class FornecimentoDao {
       }
     }
   }
-
 
   // =========================================================
   // ✅ LOGIN / USUÁRIO (ULTIMO_LOGIN)
@@ -709,5 +706,92 @@ class FornecimentoDao {
 
     if (rows.isEmpty) return null;
     return BaiaRow.fromMap(rows.first);
+  }
+
+  // =========================================================
+  // PREVISAO - replicar dia anterior
+  // =========================================================
+  Future<int> countPrevisaoByData({
+    required String dataYmd,
+    String? idFazenda,
+  }) async {
+    final db = await _db;
+    final faz = (idFazenda ?? "").trim();
+
+    if (faz.isEmpty) {
+      final rows = await db.rawQuery(
+        """
+        SELECT COUNT(*) AS c
+        FROM ${FornTables.previsao}
+        WHERE substr(${FornTables.pvData},1,10) = ?
+        """,
+        [dataYmd],
+      );
+      return (rows.first["c"] as int?) ?? 0;
+    }
+
+    final rows = await db.rawQuery(
+      """
+      SELECT COUNT(*) AS c
+      FROM ${FornTables.previsao} p
+      JOIN ${FornTables.detalhesBaias} db
+        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
+      WHERE substr(p.${FornTables.pvData},1,10) = ?
+        AND TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)
+      """,
+      [dataYmd, faz],
+    );
+    return (rows.first["c"] as int?) ?? 0;
+  }
+
+  Future<int> replicarPrevisaoEntreDatas({
+    required String dataOrigemYmd,
+    required String dataDestinoYmd,
+    String? idFazenda,
+  }) async {
+    final db = await _db;
+    final faz = (idFazenda ?? "").trim();
+
+    final whereFaz = faz.isEmpty
+        ? ""
+        : """
+        AND TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)
+      """;
+
+    final args = <Object?>[dataDestinoYmd, dataOrigemYmd];
+    if (faz.isNotEmpty) args.add(faz);
+
+    await db.rawInsert(
+      """
+      INSERT INTO ${FornTables.previsao} (
+        ${FornTables.pvIdFornecimento},
+        ${FornTables.pvData},
+        ${FornTables.pvIdBaia},
+        ${FornTables.pvTrato},
+        ${FornTables.pvPrevistoKg},
+        ${FornTables.pvRealizadoKg},
+        ${FornTables.pvIdRacao}
+      )
+      SELECT
+        p.${FornTables.pvIdFornecimento},
+        ?,
+        p.${FornTables.pvIdBaia},
+        p.${FornTables.pvTrato},
+        p.${FornTables.pvPrevistoKg},
+        0,
+        p.${FornTables.pvIdRacao}
+      FROM ${FornTables.previsao} p
+      JOIN ${FornTables.detalhesBaias} db
+        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
+      WHERE substr(p.${FornTables.pvData},1,10) = ?
+      $whereFaz
+      """,
+      args,
+    );
+
+    final changed = await db.rawQuery("SELECT changes() AS c");
+    return (changed.first["c"] as int?) ?? 0;
   }
 }

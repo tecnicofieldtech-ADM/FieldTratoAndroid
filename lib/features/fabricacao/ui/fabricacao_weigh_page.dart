@@ -718,25 +718,40 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         children: [
           Row(
             children: [
-              const Icon(Icons.scale, color: Colors.white, size: 28),
-              const SizedBox(width: 10),
-              const Text(
-                "A FABRICAR (kg)",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 26,
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.scale, color: Colors.white, size: 28),
+                    const SizedBox(width: 10),
+                    const Flexible(
+                      child: Text(
+                        "A FABRICAR (kg)",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 26,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const Spacer(),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 132),
-                child: _PulseChip(
-                  icon: Icons.timer,
-                  active: c.autoCountdown > 0,
-                  label: c.autoCountdown > 0
-                      ? "Pulo: ${c.autoCountdown}s"
-                      : "Pulo: pronto",
+              const SizedBox(width: 10),
+              Flexible(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 132),
+                    child: _PulseChip(
+                      icon: Icons.timer,
+                      active: c.autoCountdown > 0,
+                      label: c.autoCountdown > 0
+                          ? "Pulo: ${c.autoCountdown}s"
+                          : "Pulo: pronto",
+                    ),
+                  ),
                 ),
               ),
             ],
