@@ -1,11 +1,11 @@
 // lib/features/fornecimento/ui/fornecimento_dashboard_page.dart
 import "dart:async";
-import "dart:math";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
+import "package:shared_preferences/shared_preferences.dart";
 
-import "package:rfeed_flutter/helpers/scale_comm.dart";
-import "package:rfeed_flutter/helpers/rfid_comm.dart";
+import "../../../helpers/scale_comm.dart";
+import "../../../helpers/rfid_comm.dart";
 
 import "../controller/fornecimento_dashboard_controller.dart";
 import "../data/fornecimento_repo.dart";
@@ -23,6 +23,7 @@ class FornecimentoDashboardPage extends StatefulWidget {
     required this.rfid,
     this.data,
     this.idRacaoFiltro,
+    this.startCleared = false,
   });
 
   final String idFazenda;
@@ -31,6 +32,7 @@ class FornecimentoDashboardPage extends StatefulWidget {
 
   final DateTime? data;
   final String? idRacaoFiltro;
+  final bool startCleared;
 
   final FornecimentoRepo repo;
   final ScaleComm scale;
@@ -45,9 +47,16 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   late final FornecimentoDashboardController _ctrl;
 
   final _cfgRepo = ConfigRepo();
+  static const _kMapaHorizontal = "forn_dash_mapa_horizontal";
+  static const _kLinhaFiltro = "forn_dash_linha_filtro";
+  static const _kCurralSelecionado = "forn_dash_curral_sel";
 
   // ✅ beep/alerta
   late final _BeepAlerter _beeper;
+  bool _showRfidControls = false;
+  bool _mapaHorizontalFixo = false;
+  String? _linhaFiltroSaved;
+  String? _curralSelSaved;
 
   @override
   void initState() {
@@ -66,6 +75,42 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     );
 
     _boot();
+  }
+
+  Future<void> _loadUiPrefs() async {
+    final sp = await SharedPreferences.getInstance();
+    _mapaHorizontalFixo = sp.getBool(_kMapaHorizontal) ?? false;
+
+    final linha = (sp.getString(_kLinhaFiltro) ?? "").trim();
+    _linhaFiltroSaved = linha.isEmpty ? null : linha;
+
+    final curral = (sp.getString(_kCurralSelecionado) ?? "").trim();
+    _curralSelSaved = curral.isEmpty ? null : curral;
+  }
+
+  Future<void> _saveMapaHorizontalPref(bool value) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(_kMapaHorizontal, value);
+  }
+
+  Future<void> _saveLinhaFiltroPref(String? linha) async {
+    final sp = await SharedPreferences.getInstance();
+    final v = (linha ?? "").trim();
+    if (v.isEmpty) {
+      await sp.remove(_kLinhaFiltro);
+    } else {
+      await sp.setString(_kLinhaFiltro, v);
+    }
+  }
+
+  Future<void> _saveCurralSelecionadoPref(String? idFornecimento) async {
+    final sp = await SharedPreferences.getInstance();
+    final v = (idFornecimento ?? "").trim();
+    if (v.isEmpty) {
+      await sp.remove(_kCurralSelecionado);
+    } else {
+      await sp.setString(_kCurralSelecionado, v);
+    }
   }
 
   String _currentUserId() {
@@ -126,12 +171,23 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
 
       final hostR = (await _cfgRepo.getHostRfid()).trim();
       final portR = await _cfgRepo.getPortaRfid();
+      final canUseRfid = hostR.isNotEmpty;
+
+      if (_showRfidControls != canUseRfid && mounted) {
+        setState(() => _showRfidControls = canUseRfid);
+      } else {
+        _showRfidControls = canUseRfid;
+      }
 
       if (hostR.isNotEmpty && portR > 0) {
+        // Garante estado limpo antes de reconectar (evita corrida connect/disconnect).
+        try {
+          await widget.rfid.disconnect();
+        } catch (_) {}
+
         widget.rfid.configure(host: hostR, port: portR);
+        await widget.rfid.connect();
         _ctrl.setLeituraRfid(true);
-        // ignore: unawaited_futures
-        widget.rfid.connect();
       } else {
         _ctrl.setLeituraRfid(false);
       }
@@ -141,6 +197,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   }
 
   Future<void> _boot() async {
+    await _loadUiPrefs();
     await _ensureLoggedOrRedirect();
     if (!mounted) return;
 
@@ -179,9 +236,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       return;
     }
 
-    // ✅ conecta por config
-    // ignore: unawaited_futures
-    _connectDevicesFromConfig();
+    // ✅ conecta por config (await para evitar corrida de lifecycle)
+    await _connectDevicesFromConfig();
 
     await _ctrl.init(
       data: widget.data ?? DateTime.now(),
@@ -189,6 +245,18 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       idFazenda: widget.idFazenda,
       idRacaoFiltro: idDietaCarregada,
     );
+
+    if ((_linhaFiltroSaved ?? "").trim().isNotEmpty) {
+      _ctrl.setLinhaFiltro(_linhaFiltroSaved);
+    }
+    if (widget.startCleared) {
+      // sempre inicia zerado no fluxo "Novo Fornecimento"
+      await _saveCurralSelecionadoPref(null);
+      _curralSelSaved = null;
+      _ctrl.restaurarSelecaoPorIdFornecimento("");
+    } else if ((_curralSelSaved ?? "").trim().isNotEmpty) {
+      _ctrl.restaurarSelecaoPorIdFornecimento(_curralSelSaved!);
+    }
   }
 
   @override
@@ -197,8 +265,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       widget.scale.stopNow();
     } catch (_) {}
     try {
-      // ignore: unawaited_futures
-      widget.rfid.disconnect();
+      widget.rfid.setLeituraAtiva(false);
     } catch (_) {}
 
     _beeper.dispose();
@@ -221,16 +288,6 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   double _progress(double realizado, double previsto) {
     if (previsto <= 0) return 0;
     return (realizado / previsto).clamp(0.0, 1.0);
-  }
-
-  Future<void> _onIniciarSeguro() async {
-    try {
-      await _ensureLoggedOrRedirect();
-      if (_currentUserId().isEmpty) return;
-      await _ctrl.iniciarCarregamento();
-    } catch (e) {
-      _ctrl.setError("Erro ao iniciar: $e");
-    }
   }
 
   Future<void> _onSalvarSeguro() async {
@@ -257,7 +314,12 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
               animation: _ctrl,
               builder: (_, __) {
                 final linhas = _ctrl.linhasDisponiveis;
-                final cols = _gridCols(MediaQuery.of(ctx).size.width);
+                final width = MediaQuery.of(ctx).size.width;
+                final cols = _gridCols(width);
+                final isNarrow = width < 390;
+                final cardRatio = cols <= 2
+                    ? (isNarrow ? 1.68 : 1.85)
+                    : (cols == 3 ? 1.95 : 2.05);
                 final list = _ctrl.curraisFiltrados;
 
                 return Column(
@@ -282,7 +344,11 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                               ),
                             ),
                           ],
-                          onChanged: (v) => _ctrl.setLinhaFiltro(v),
+                          onChanged: (v) {
+                            _ctrl.setLinhaFiltro(v);
+                            // ignore: unawaited_futures
+                            _saveLinhaFiltroPref(_ctrl.linhaFiltro);
+                          },
                         ),
                         const Spacer(),
                         Text("${list.length} currais"),
@@ -297,7 +363,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                           crossAxisCount: cols,
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 8,
-                          childAspectRatio: 2.05,
+                          childAspectRatio: cardRatio,
                         ),
                         itemBuilder: (_, i) {
                           final c = list[i];
@@ -308,7 +374,10 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                             c: c,
                             isSelected: isSel,
                             onTap: () {
+                              // ignore: unawaited_futures
                               _ctrl.selecionarCurralPorClique(c);
+                              // ignore: unawaited_futures
+                              _saveCurralSelecionadoPref(c.idFornecimento);
                               Navigator.pop(ctx);
                             },
                           );
@@ -390,13 +459,6 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 rfidPausado: _ctrl.rfidPausado,
               ),
               const SizedBox(height: 8),
-              _TotaisBar(
-                previsto: _ctrl.totais.totalPrevistoKg,
-                realizado: _ctrl.totais.totalRealizadoKg,
-                dif: _ctrl.totais.diffKg,
-                fmt: _fmtNum,
-              ),
-              const SizedBox(height: 8),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -406,13 +468,24 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                     fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
                     realizadoEstimadoKg: realizadoEst,
                     aFornecerEstimadoKg: aFornecerEst,
-                    onIniciar: _onIniciarSeguro,
                     onSalvar: _onSalvarSeguro,
                     ultimo: _ctrl.ultimo,
                     fmt: _fmtNum,
                     progress: progress,
                     level: level,
                   ),
+                ),
+              ),
+              if (_mapaHorizontalFixo) _mapaHorizontalBar(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: _BottomActions(
+                  onMapa: _openMapaPopup,
+                  onToggleRfid: _ctrl.toggleRfidPausado,
+                  rfidPausado: _ctrl.rfidPausado,
+                  showMapaButton: !_mapaHorizontalFixo,
+                  showRfidButton: _showRfidControls,
+                  disabled: _ctrl.loading || _ctrl.error != null,
                 ),
               ),
             ],
@@ -429,67 +502,140 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 tooltip: "Reconectar",
               ),
               IconButton(
-                onPressed: _ctrl.toggleRfidPausado,
-                icon: Icon(_ctrl.rfidPausado ? Icons.pause : Icons.play_arrow),
-                tooltip: _ctrl.rfidPausado ? "RFID pausado" : "RFID ativo",
+                onPressed: () async {
+                  final next = !_mapaHorizontalFixo;
+                  setState(() => _mapaHorizontalFixo = next);
+                  await _saveMapaHorizontalPref(next);
+                },
+                icon: Icon(
+                  _mapaHorizontalFixo ? Icons.view_carousel : Icons.grid_view,
+                ),
+                tooltip: _mapaHorizontalFixo
+                    ? "Mapa horizontal ativo"
+                    : "Mapa popup ativo",
               ),
-            ],
-          ),
-          body: Stack(
-            children: [
-              mainBody(),
-
-              // ✅ Notice bonito
-              if ((_ctrl.uiNotice ?? "").trim().isNotEmpty)
-                Positioned(
-                  top: 10,
-                  left: 12,
-                  right: 12,
-                  child: _NoticeCard(
-                    title: "Curral sem previsto",
-                    message: _ctrl.uiNotice!.trim(),
-                    onClose: _ctrl.clearNotice,
-                  ),
+              if (_showRfidControls)
+                IconButton(
+                  onPressed: _ctrl.toggleRfidPausado,
+                  icon:
+                      Icon(_ctrl.rfidPausado ? Icons.pause : Icons.play_arrow),
+                  tooltip: _ctrl.rfidPausado ? "RFID pausado" : "RFID ativo",
                 ),
             ],
           ),
-
-          // ✅ BOTÃO MAPA EMBAIXO (bottom)
-          // ✅ BOTÃO MAPA EMBAIXO (bottom)
-          // ✅ BOTOES EMBAIXO: MAPA + PAUSE (mesmo tamanho)
-          floatingActionButton: SizedBox(
-            width: MediaQuery.of(context).size.width * 0.92,
-            height: 54,
-            child: Row(
+          body: SafeArea(
+            top: false,
+            child: Stack(
               children: [
-                Expanded(
-                  child: FloatingActionButton.extended(
-                    heroTag: "fab_mapa",
-                    onPressed: _ctrl.loading || _ctrl.error != null
-                        ? null
-                        : _openMapaPopup,
-                    icon: const Icon(Icons.grid_view),
-                    label: const Text("Mapa"),
+                mainBody(),
+
+                // ✅ Notice bonito
+                if ((_ctrl.uiNotice ?? "").trim().isNotEmpty)
+                  Positioned(
+                    top: 10,
+                    left: 12,
+                    right: 12,
+                    child: _NoticeCard(
+                      title: "Curral sem previsto",
+                      message: _ctrl.uiNotice!.trim(),
+                      onClose: _ctrl.clearNotice,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FloatingActionButton.extended(
-                    heroTag: "fab_pause",
-                    onPressed: _ctrl.loading || _ctrl.error != null
-                        ? null
-                        : _ctrl.toggleRfidPausado,
-                    icon: Icon(
-                        _ctrl.rfidPausado ? Icons.play_arrow : Icons.pause),
-                    label: Text(
-                        _ctrl.rfidPausado ? "RFID pausado" : "Pausar RFID"),
-                  ),
-                ),
               ],
             ),
           ),
-          floatingActionButtonLocation:
-              FloatingActionButtonLocation.centerFloat,
+        );
+      },
+    );
+  }
+
+  Widget _mapaHorizontalBar() {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        final list = _ctrl.curraisFiltrados;
+        final linhas = _ctrl.linhasDisponiveis;
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    "Mapa horizontal",
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      isExpanded: true,
+                      initialValue: _ctrl.linhaFiltro,
+                      decoration: const InputDecoration(
+                        labelText: "Linha",
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text("Todas"),
+                        ),
+                        ...linhas.map(
+                          (l) => DropdownMenuItem<String?>(
+                            value: l,
+                            child: Text(l),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) {
+                        _ctrl.setLinhaFiltro(v);
+                        // ignore: unawaited_futures
+                        _saveLinhaFiltroPref(_ctrl.linhaFiltro);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text("${list.length}"),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 125,
+                child: list.isEmpty
+                    ? const Center(
+                        child: Text("Sem currais para o filtro selecionado."))
+                    : ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: list.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (_, i) {
+                          final c = list[i];
+                          final isSel = _ctrl.selected?.idFornecimento ==
+                              c.idFornecimento;
+                          return SizedBox(
+                            width: 250,
+                            child: _CurralCardSmall(
+                              c: c,
+                              isSelected: isSel,
+                              onTap: () async {
+                                await _ctrl.selecionarCurralPorClique(c);
+                                // ignore: unawaited_futures
+                                _saveCurralSelecionadoPref(c.idFornecimento);
+                              },
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -607,16 +753,29 @@ class _HeaderBar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              chip("Trato", trato.toString(), icon: Icons.restaurant),
-              chip("Dieta", dietaTxt, icon: Icons.grass),
-              chip("Peso", pesoTxt, icon: Icons.monitor_weight),
-              chip("Balança", _statusTxt(scaleStatus), dot: scaleDot),
-              chip("RFID", rfidTxt, dot: rfidDot),
+              Expanded(
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    chip("Trato", trato.toString(), icon: Icons.restaurant),
+                    chip("Dieta", dietaTxt, icon: Icons.grass),
+                    chip("Peso", pesoTxt, icon: Icons.monitor_weight),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  chip("Balança", _statusTxt(scaleStatus), dot: scaleDot),
+                  const SizedBox(height: 8),
+                  chip("RFID", rfidTxt, dot: rfidDot),
+                ],
+              ),
             ],
           ),
           if ((scaleMsg ?? "").trim().isNotEmpty ||
@@ -635,57 +794,48 @@ class _HeaderBar extends StatelessWidget {
   }
 }
 
-class _TotaisBar extends StatelessWidget {
-  const _TotaisBar({
-    required this.previsto,
-    required this.realizado,
-    required this.dif,
-    required this.fmt,
+class _BottomActions extends StatelessWidget {
+  const _BottomActions({
+    required this.onMapa,
+    required this.onToggleRfid,
+    required this.rfidPausado,
+    required this.showMapaButton,
+    required this.showRfidButton,
+    required this.disabled,
   });
 
-  final double previsto;
-  final double realizado;
-  final double dif;
-  final String Function(num, {int dec}) fmt;
+  final VoidCallback onMapa;
+  final VoidCallback onToggleRfid;
+  final bool rfidPausado;
+  final bool showMapaButton;
+  final bool showRfidButton;
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
-    Widget box(String title, String value) {
-      return Expanded(
-        child: Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-            color: Colors.white,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+    return SizedBox(
+      height: 54,
       child: Row(
         children: [
-          box("Total Previsto (kg)", fmt(previsto, dec: 0)),
-          const SizedBox(width: 10),
-          box("Total Realizado (kg)", fmt(realizado, dec: 0)),
-          const SizedBox(width: 10),
-          box("Diferença (kg)", fmt(dif, dec: 0)),
+          if (showMapaButton)
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: disabled ? null : onMapa,
+                icon: const Icon(Icons.grid_view),
+                label: const Text("Mapa"),
+              ),
+            ),
+          if (showMapaButton && showRfidButton) const SizedBox(width: 10),
+          if (showRfidButton)
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: disabled ? null : onToggleRfid,
+                icon: Icon(rfidPausado ? Icons.play_arrow : Icons.pause),
+                label: Text(rfidPausado ? "RFID pausado" : "Pausar RFID"),
+              ),
+            ),
+          if (!showMapaButton && !showRfidButton)
+            const Expanded(child: SizedBox.shrink()),
         ],
       ),
     );
@@ -832,7 +982,6 @@ class _RightPanel extends StatelessWidget {
     required this.fornecidoSessaoKg,
     required this.realizadoEstimadoKg,
     required this.aFornecerEstimadoKg,
-    required this.onIniciar,
     required this.onSalvar,
     required this.ultimo,
     required this.fmt,
@@ -847,7 +996,6 @@ class _RightPanel extends StatelessWidget {
   final double realizadoEstimadoKg;
   final double aFornecerEstimadoKg;
 
-  final Future<void> Function() onIniciar;
   final Future<void> Function() onSalvar;
 
   final UltimoFornecimentoVM? ultimo;
@@ -858,6 +1006,9 @@ class _RightPanel extends StatelessWidget {
   final _BeepLevel level;
 
   Color _scoreBg() {
+    if (selected == null) {
+      return const Color(0xFF90A4AE);
+    }
     switch (level) {
       case _BeepLevel.near:
         return Colors.amber.shade700;
@@ -866,7 +1017,6 @@ class _RightPanel extends StatelessWidget {
       case _BeepLevel.reached:
         return Colors.green.shade700;
       case _BeepLevel.ok:
-      default:
         return Colors.black;
     }
   }
@@ -880,7 +1030,6 @@ class _RightPanel extends StatelessWidget {
       case _BeepLevel.reached:
         return "ATINGIU";
       case _BeepLevel.ok:
-      default:
         return "OK";
     }
   }
@@ -888,108 +1037,132 @@ class _RightPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = selected;
+    final hasSel = s != null;
+    final screenH = MediaQuery.of(context).size.height;
+    final cardH = (screenH * 0.28).clamp(180.0, 240.0);
 
     String linhaTxt(String? l) {
       final t = (l ?? "").trim();
       return t.isEmpty ? "-" : t;
     }
 
-    final previsto = s?.previstoKg ?? 0.0;
-    final faltandoEst = (s == null) ? 0.0 : (previsto - realizadoEstimadoKg);
+    final previsto = hasSel ? s.previstoKg : 0.0;
+    final realizado = hasSel ? s.realizadoKg : 0.0;
+    final dif = hasSel ? s.diffKg : 0.0;
+    final difEst = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
+    final curralNome = hasSel ? s.curralNome : "ESPERANDO CURRAL";
+    final linha = hasSel ? linhaTxt(s.linha) : "-";
+    final progressValue = hasSel ? progress : 0.0;
+    String signed(num v) {
+      final t = fmt(v, dec: 0);
+      return v > 0 ? "+$t" : t;
+    }
+
+    String aFornecerSigned() {
+      final t = fmt(aFornecerEstimadoKg, dec: 0);
+      return difEst > 0 ? "+$t" : t;
+    }
 
     return SingleChildScrollView(
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-              color: Colors.white,
+              color: hasSel ? Colors.white : const Color(0xFFF3F5F8),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  s == null
-                      ? "Selecione um curral (Mapa)"
-                      : "Curral selecionado",
-                  style: const TextStyle(
+                const Text(
+                  "Modo Pesagem",
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
                   ),
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  curralNome,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 46,
+                    height: 0.98,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.alt_route,
+                        size: 18, color: Colors.black.withValues(alpha: 0.65)),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Linha: $linha",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black.withValues(alpha: 0.75),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: Colors.black.withValues(alpha: 0.06),
+                      ),
+                      child: Text(
+                        _levelTxt(),
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 10),
-                if (s != null) ...[
-                  Text(
-                    s.curralNome,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 52,
-                      height: 0.98,
-                      letterSpacing: 0.2,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: SizedBox(
+                    height: 10,
+                    child: LinearProgressIndicator(value: progressValue),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _infoBig(
+                      "Previsto",
+                      fmt(previsto, dec: 0),
+                      icon: Icons.flag,
+                      inactive: !hasSel,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.alt_route,
-                          size: 18,
-                          color: Colors.black.withValues(alpha: 0.65)),
-                      const SizedBox(width: 6),
-                      Text(
-                        "Linha: ${linhaTxt(s.linha)}",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.black.withValues(alpha: 0.75),
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          color: Colors.black.withValues(alpha: 0.06),
-                        ),
-                        child: Text(
-                          _levelTxt(),
-                          style: const TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: SizedBox(
-                      height: 12,
-                      child: LinearProgressIndicator(value: progress),
+                    const SizedBox(width: 10),
+                    _infoBig(
+                      "Realizado",
+                      fmt(realizado, dec: 0),
+                      icon: Icons.check_circle_outline,
+                      inactive: !hasSel,
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      _infoBig("Previsto", fmt(s.previstoKg, dec: 0),
-                          icon: Icons.flag),
-                      const SizedBox(width: 10),
-                      _infoBig("Realizado", fmt(s.realizadoKg, dec: 0),
-                          icon: Icons.check_circle_outline),
-                      const SizedBox(width: 10),
-                      _infoBig("Dif", fmt(s.diffKg, dec: 0),
-                          icon: Icons.swap_vert),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Container(
-                    constraints: const BoxConstraints(
-                      minHeight: 280, // ✅ dobra a altura visual do card
+                    const SizedBox(width: 10),
+                    _infoBig(
+                      "Dif",
+                      signed(dif),
+                      icon: Icons.swap_vert,
+                      inactive: !hasSel,
                     ),
-                    padding: const EdgeInsets.fromLTRB(
-                        24, 28, 24, 28), // mais respiro
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: cardH,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.fromLTRB(18, 18, 18, 18), // compacto
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(26),
                       color: _scoreBg(),
@@ -1014,13 +1187,13 @@ class _RightPanel extends StatelessWidget {
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
-                                fontSize: 26, // 🔼 título maior
+                                fontSize: 22,
                               ),
                             ),
                             const Spacer(),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 8),
+                                  horizontal: 12, vertical: 6),
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(999),
                                 color: Colors.white.withValues(alpha: 0.16),
@@ -1030,85 +1203,89 @@ class _RightPanel extends StatelessWidget {
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.95),
                                   fontWeight: FontWeight.w900,
-                                  fontSize: 16,
+                                  fontSize: 14,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 26),
+                        const SizedBox(height: 14),
 
                         // 🔥 NÚMERO GIGANTE
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            fmt(max(0.0, aFornecerEstimadoKg), dec: 0),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 200, // ✅ DOBRADO
-                              fontWeight: FontWeight.w900,
-                              height: 0.90,
-                              letterSpacing: 1.5,
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              aFornecerSigned(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 160,
+                                fontWeight: FontWeight.w900,
+                                height: 0.90,
+                                letterSpacing: 1.5,
+                              ),
                             ),
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 8),
 
                         Text(
-                          "Real (est.): ${fmt(realizadoEstimadoKg, dec: 0)}  •  Falta (est.): ${fmt(faltandoEst, dec: 0)}",
+                          "Real (est.): ${fmt(realizadoEstimadoKg, dec: 0)}  •  A fornecer: ${aFornecerSigned()}  •  Dif (est.): ${signed(difEst)}",
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.92),
                             fontWeight: FontWeight.w800,
-                            fontSize: 16,
+                            fontSize: 14,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: s == null ? null : onIniciar,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text("Iniciar"),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed:
-                            (!sessaoAtiva || s == null) ? null : onSalvar,
-                        icon: const Icon(Icons.save),
-                        label: const Text("Salvar"),
-                      ),
-                    ),
-                  ],
                 ),
+                const SizedBox(height: 14),
+                if (hasSel)
+                  FilledButton.icon(
+                    onPressed: !sessaoAtiva ? null : onSalvar,
+                    icon: const Icon(Icons.save),
+                    label: const Text("Salvar"),
+                  ),
               ],
             ),
           ),
           const SizedBox(height: 10),
           if (ultimo != null)
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+                color: Colors.green.shade100,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text("Último fornecimento",
-                      style: TextStyle(fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 6),
-                  Text("Curral: ${ultimo!.curralNome}"),
-                  Text("Fornecido: ${fmt(ultimo!.fornecidoKg, dec: 0)} kg"),
+                  const Text(
+                    "Último fornecimento",
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          "Curral: ${ultimo!.curralNome}",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        "Realizado: ${fmt(ultimo!.fornecidoKg, dec: 0)} kg",
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1117,14 +1294,14 @@ class _RightPanel extends StatelessWidget {
     );
   }
 
-  Widget _infoBig(String t, String v, {IconData? icon}) {
+  Widget _infoBig(String t, String v, {IconData? icon, bool inactive = false}) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-          color: Colors.white,
+          color: inactive ? const Color(0xFFEFF2F6) : Colors.white,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

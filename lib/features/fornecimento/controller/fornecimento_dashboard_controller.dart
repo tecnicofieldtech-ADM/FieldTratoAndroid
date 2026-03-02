@@ -2,10 +2,10 @@
 import "dart:async";
 import "package:flutter/foundation.dart";
 
-import "package:rfeed_flutter/helpers/scale_comm.dart";
-import "package:rfeed_flutter/helpers/rfid_comm.dart";
-import "package:rfeed_flutter/features/fornecimento/data/fornecimento_repo.dart";
-import "package:rfeed_flutter/services/session_service.dart";
+import "../../../helpers/scale_comm.dart";
+import "../../../helpers/rfid_comm.dart";
+import "../data/fornecimento_repo.dart";
+import "../../../services/session_service.dart";
 
 class FornecimentoHeaderVM {
   final int trato;
@@ -44,7 +44,7 @@ class CurralCardVM {
     required this.epc,
   });
 
-  double get diffKg => previstoKg - realizadoKg;
+  double get diffKg => realizadoKg - previstoKg;
 }
 
 class TotaisVM {
@@ -56,7 +56,7 @@ class TotaisVM {
     required this.totalRealizadoKg,
   });
 
-  double get diffKg => totalPrevistoKg - totalRealizadoKg;
+  double get diffKg => totalRealizadoKg - totalPrevistoKg;
 }
 
 class UltimoFornecimentoVM {
@@ -179,9 +179,12 @@ class FornecimentoDashboardController extends ChangeNotifier {
   StreamSubscription<RfidTagEvent>? _rfidSub;
 
   bool _rfidProcessing = false;
+  bool _rfidPauseToggleBusy = false;
 
   String _lastRfidHandled = "";
   DateTime _lastRfidHandledAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _pendingEpcBoot;
+  Timer? _pendingEpcTimer;
 
   // ===========================
   // Sessão
@@ -197,6 +200,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
   String? _idCadastroAberto;
 
   String _idFazenda = "";
+
+  int _origemMapa = 0; // 0 = RFID, 1 = Mapa
 
   // Proteção double-start
   bool _startingSessao = false;
@@ -217,8 +222,12 @@ class FornecimentoDashboardController extends ChangeNotifier {
   double get aFornecerEstimadoKg {
     final s = _selected;
     if (s == null) return 0;
-    final v = s.previstoKg - s.realizadoKg - fornecidoSessaoKg;
-    return v < 0 ? 0 : v;
+    final previsto = s.previstoKg;
+    final realizadoEst = s.realizadoKg + fornecidoSessaoKg;
+    if (realizadoEst <= previsto) {
+      return previsto - realizadoEst;
+    }
+    return realizadoEst - previsto;
   }
 
   double get realizadoEstimadoKg {
@@ -286,6 +295,23 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _error = msg;
     _loading = false;
     notifyListeners();
+  }
+
+  bool _consumeBlockingErrorAsNotice({
+    required String title,
+    required String key,
+  }) {
+    final msg = (_error ?? "").trim();
+    if (msg.isEmpty) return false;
+
+    _error = null;
+    _loading = false;
+    _setNotice(
+      "$title\n$msg",
+      key: key,
+      cooldownMs: 1500,
+    );
+    return true;
   }
 
   double _toD(dynamic v) {
@@ -396,6 +422,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _rfidSub?.cancel();
     _scaleStatusSub?.cancel();
     _rfidStatusSub?.cancel();
+    _pendingEpcTimer?.cancel();
+    _pendingEpcTimer = null;
     super.dispose();
   }
 
@@ -405,13 +433,15 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     _scaleStatusSub = _scale.statusStream.listen((ev) {
       _scaleStatus = ev.status;
-      _scaleMsg = (ev.message ?? "").trim().isNotEmpty ? ev.message!.trim() : null;
+      _scaleMsg =
+          (ev.message ?? "").trim().isNotEmpty ? ev.message!.trim() : null;
       notifyListeners();
     }, onError: (_) {});
 
     _rfidStatusSub = _rfid.statusStream.listen((ev) {
       _rfidStatus = ev.status;
-      _rfidMsg = (ev.message ?? "").trim().isNotEmpty ? ev.message!.trim() : null;
+      _rfidMsg =
+          (ev.message ?? "").trim().isNotEmpty ? ev.message!.trim() : null;
       notifyListeners();
     }, onError: (_) {});
   }
@@ -442,12 +472,47 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
       if (kDebugMode) debugPrint("RFID EPC => $epc");
 
+      // Evita falso "sem previsto" quando a tag chega antes do mapa carregar.
+      if (_loading || _header == null || _curraisAll.isEmpty) {
+        _queuePendingBootEpc(epc);
+        return;
+      }
+
       if (_autoFlowRfid) {
         await _handleRfidAutoFlow(epc);
       } else {
         await selecionarCurralPorEpc(epc);
       }
     }, onError: (_) {});
+  }
+
+  void _queuePendingBootEpc(String epc) {
+    _pendingEpcBoot = _normalizeEpc(epc);
+    if (_pendingEpcBoot == null || _pendingEpcBoot!.isEmpty) return;
+    if (_pendingEpcTimer?.isActive == true) return;
+
+    _pendingEpcTimer = Timer(const Duration(milliseconds: 700), () {
+      _pendingEpcTimer = null;
+      _flushPendingBootEpc();
+    });
+  }
+
+  void _flushPendingBootEpc() {
+    final epc = (_pendingEpcBoot ?? "").trim();
+    if (epc.isEmpty) return;
+
+    if (_loading || _header == null || _curraisAll.isEmpty) {
+      _queuePendingBootEpc(epc);
+      return;
+    }
+
+    _pendingEpcBoot = null;
+
+    if (_autoFlowRfid) {
+      unawaited(_handleRfidAutoFlow(epc));
+    } else {
+      unawaited(selecionarCurralPorEpc(epc));
+    }
   }
 
   // ===========================
@@ -467,9 +532,28 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     _rfidProcessing = true;
     try {
+      final currentSessao = _selected;
+      final currentEpc = _normalizeEpc(currentSessao?.epc ?? "").toUpperCase();
+      final lidoEpc = _normalizeEpc(epc).toUpperCase();
+      final tagDiferenteDaSessaoAtual =
+          currentEpc.isEmpty || currentEpc != lidoEpc;
+
       final target = await _findCurralByEpc(epc);
 
       if (target == null) {
+        // Se leu outra tag e havia sessao ativa, persiste igual ao botao Salvar.
+        if (_sessaoAtiva &&
+            currentSessao != null &&
+            tagDiferenteDaSessaoAtual) {
+          await salvarFornecimento(idFazenda: _idFazenda);
+          if (_consumeBlockingErrorAsNotice(
+            title: "Falha ao salvar a sessao atual ao trocar de tag.",
+            key: "rfid_autosave_error",
+          )) {
+            return;
+          }
+        }
+
         final h = _header;
         final racaoNome = (h?.racaoNome ?? "").trim();
         final racaoTxt = racaoNome.isNotEmpty ? racaoNome : (h?.racaoId ?? "-");
@@ -499,18 +583,35 @@ class FornecimentoDashboardController extends ChangeNotifier {
       // se tinha sessão ativa em outro curral, salva (sem explodir UI)
       if (_sessaoAtiva && current != null) {
         await salvarFornecimento(idFazenda: _idFazenda);
+        if (_consumeBlockingErrorAsNotice(
+          title: "Falha ao salvar a sessao anterior antes de iniciar outra.",
+          key: "rfid_autosave_error",
+        )) {
+          return;
+        }
       }
 
       _selected = target;
+      _origemMapa = 0;
       clearNotice();
       notifyListeners();
 
       await iniciarCarregamento();
+      if (_consumeBlockingErrorAsNotice(
+        title: "Falha ao iniciar sessao para a tag lida.",
+        key: "rfid_autostart_error",
+      )) {
+        return;
+      }
 
       _lastRfidHandled = epc;
       _lastRfidHandledAt = now;
     } catch (e) {
-      setError(e.toString());
+      _setNotice(
+        "Falha ao processar leitura RFID.\n$e",
+        key: "rfid_flow_exception",
+        cooldownMs: 1500,
+      );
     } finally {
       _rfidProcessing = false;
     }
@@ -571,7 +672,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     final cards = rows.map((r) {
       final idForne = (r.idFornecimento ?? "").toString().trim();
-      final idBaia = (r.idBaia ?? "").toString().trim();
+      final idBaia = r.idBaia.trim();
 
       final nome = (r.nomeLocal ?? "").toString().trim();
 
@@ -648,6 +749,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _totais = TotaisVM(totalPrevistoKg: tp, totalRealizadoKg: tr);
 
     notifyListeners();
+    _flushPendingBootEpc();
   }
 
   // ===========================
@@ -655,9 +757,44 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // ===========================
 
   void toggleRfidPausado() {
-    _rfidPausado = !_rfidPausado;
-    _rfid.setLeituraAtiva(!_rfidPausado);
-    notifyListeners();
+    unawaited(_toggleRfidPausadoAsync());
+  }
+
+  Future<void> _toggleRfidPausadoAsync() async {
+    if (_rfidPauseToggleBusy) return;
+    _rfidPauseToggleBusy = true;
+    try {
+      final vaiPausar = !_rfidPausado;
+
+      // Ao pausar, precisa persistir a sessão aberta antes de desligar leitura.
+      if (vaiPausar && _sessaoAtiva && _selected != null) {
+        await salvarFornecimento(idFazenda: _idFazenda);
+
+        final hadError = (_error ?? "").trim().isNotEmpty;
+        if (hadError) {
+          _setNotice(
+            "Falha ao pausar RFID: não foi possível salvar a sessão aberta.",
+            key: "rfid_pause_save_error",
+            cooldownMs: 1200,
+          );
+          return;
+        }
+      }
+
+      _rfidPausado = vaiPausar;
+      _rfid.setLeituraAtiva(!_rfidPausado);
+      notifyListeners();
+
+      if (_rfidPausado) {
+        _setNotice(
+          "RFID pausado. Sessão aberta salva no banco.",
+          key: "rfid_pause_saved",
+          cooldownMs: 1200,
+        );
+      }
+    } finally {
+      _rfidPauseToggleBusy = false;
+    }
   }
 
   void setLeituraRfid(bool on) {
@@ -673,11 +810,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
   Future<void> selecionarCurralPorClique(CurralCardVM c) async {
     final current = _selected;
 
-    if (_sessaoAtiva && current != null && current.idFornecimento != c.idFornecimento) {
+    if (_sessaoAtiva &&
+        current != null &&
+        current.idFornecimento != c.idFornecimento) {
       await salvarFornecimento(idFazenda: _idFazenda);
     }
 
     _selected = c;
+    _origemMapa = 1;
     clearNotice();
     notifyListeners();
 
@@ -701,6 +841,26 @@ class FornecimentoDashboardController extends ChangeNotifier {
     }
 
     _selected = target;
+    _origemMapa = 0;
+    clearNotice();
+    notifyListeners();
+  }
+
+  void restaurarSelecaoPorIdFornecimento(String idFornecimento) {
+    final id = idFornecimento.trim();
+    if (id.isEmpty) return;
+
+    CurralCardVM? found;
+    for (final c in _curraisAll) {
+      if (c.idFornecimento == id) {
+        found = c;
+        break;
+      }
+    }
+    if (found == null) return;
+
+    _selected = found;
+    _origemMapa = 1;
     clearNotice();
     notifyListeners();
   }
@@ -809,6 +969,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
         pesoFim: _pesoAtual,
         realizadoKg: fornecidoKg,
         idUsuario: idUsuario,
+        origemMapa: _origemMapa,
       );
 
       // ✅ 2) Atualiza PREVISAO (mapa) somando no realizado
