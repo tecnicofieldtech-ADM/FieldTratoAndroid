@@ -36,7 +36,12 @@ class AppDb {
         );
         """);
 
-        await db.execute("CREATE INDEX idx_targets_ativo ON mirror_targets(ativo);");
+        await db.execute(
+          "CREATE INDEX idx_targets_ativo ON mirror_targets(ativo);",
+        );
+      },
+      onDowngrade: (db, oldV, newV) async {
+        // Keep local data on downgrade in dev builds.
       },
     );
   }

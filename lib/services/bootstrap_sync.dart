@@ -258,7 +258,7 @@ class BootstrapSync {
     int inserted = 0;
 
     // --- helper: lê realizado local antes de limpar (pra preservar) ---
-    Future<Map<String, double>> _loadRealizadoLocalMap(Transaction txn) async {
+    Future<Map<String, double>> loadRealizadoLocalMap(Transaction txn) async {
       // chave: "idFornecimento|idBaia|trato|data|idRacao"
       final map = <String, double>{};
 
@@ -291,7 +291,7 @@ class BootstrapSync {
     }
 
     // --- helper: delete seletivo (dia/trato/ração) ---
-    Future<void> _clearPrevisaoDiaTratoRacao(
+    Future<void> clearPrevisaoDiaTratoRacao(
       Transaction txn, {
       required String dayYmd,
       required int trato,
@@ -311,7 +311,7 @@ class BootstrapSync {
 
     await db.transaction((txn) async {
       // 1) snapshot do realizado local do dia (pra preservar)
-      final realizadoLocal = await _loadRealizadoLocalMap(txn);
+      final realizadoLocal = await loadRealizadoLocalMap(txn);
 
       // 2) decide “escopo” do delete:
       //    - se a API retorna só 1 ração (comum), a gente limpa apenas essa ração
@@ -338,7 +338,7 @@ class BootstrapSync {
         if (setRacoes.length == 1) racaoUnica = setRacoes.first;
 
         for (final t in setTratos) {
-          await _clearPrevisaoDiaTratoRacao(
+          await clearPrevisaoDiaTratoRacao(
             txn,
             dayYmd: dataYmd,
             trato: t,
@@ -443,3 +443,5 @@ class BootstrapSync {
     return inserted;
   }
 }
+
+

@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:convert";
 import "dart:io";
+import "package:flutter/foundation.dart";
 
 enum RfidStatus { disconnected, connecting, connected, error }
 
@@ -63,6 +64,7 @@ class RfidComm {
 
   DateTime _lastAnyDataAt = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _watchdogTimer;
+  Timer? _reconnectTimer;
 
   final _statusCtrl = StreamController<RfidStatusEvent>.broadcast();
   final _tagCtrl = StreamController<RfidTagEvent>.broadcast();
@@ -91,9 +93,11 @@ class RfidComm {
 
     _connecting = true;
     _emitStatus(RfidStatus.connecting);
+    _debug("connect() host=$_host port=$_port");
 
     try {
       _stopWatchdog();
+      _cancelReconnect();
 
       await _stopReader();
       await _safeCloseSocket(); // ✅ garante fechar socket antigo antes de reconectar
@@ -114,7 +118,9 @@ class RfidComm {
 
       _startWatchdog();
       _emitStatus(RfidStatus.connected);
+      _debug("connected");
     } catch (e) {
+      _debug("connect error: $e");
       _emitStatus(RfidStatus.error, message: e.toString());
       await _safeCloseSocket();
       if (_autoReconnect && !_shuttingDown) _scheduleReconnect();
@@ -125,6 +131,7 @@ class RfidComm {
 
   Future<void> disconnect() async {
     _shuttingDown = true;
+    _cancelReconnect();
     _emitStatus(RfidStatus.disconnected);
     _stopWatchdog();
     await _stopReader();
@@ -186,6 +193,7 @@ class RfidComm {
 
   void _onSocketError(Object e) {
     if (_shuttingDown) return;
+    _debug("socket error: $e");
     _emitStatus(RfidStatus.error, message: e.toString());
     _stopWatchdog();
     _safeCloseSocket();
@@ -194,6 +202,7 @@ class RfidComm {
 
   void _onSocketDone() {
     if (_shuttingDown) return;
+    _debug("socket done");
     _emitStatus(RfidStatus.disconnected);
     _stopWatchdog();
     _safeCloseSocket();
@@ -201,10 +210,18 @@ class RfidComm {
   }
 
   void _scheduleReconnect() {
-    Future.delayed(_reconnectDelay, () {
+    if (_reconnectTimer?.isActive == true) return;
+    _reconnectTimer = Timer(_reconnectDelay, () {
+      _reconnectTimer = null;
       if (_shuttingDown) return;
+      _debug("reconnect timer fired");
       connect();
     });
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
   }
 
   Future<void> _stopReader() async {
@@ -226,7 +243,16 @@ class RfidComm {
     _statusCtrl.add(RfidStatusEvent(s, message: message));
   }
 
+  void _debug(String msg) {
+    if (!kDebugMode) return;
+    debugPrint("[RFID] $msg");
+  }
+
   void _startWatchdog() {
+    if (_readWatchdog <= Duration.zero) {
+      _debug("watchdog disabled");
+      return;
+    }
     _stopWatchdog();
     _watchdogTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_shuttingDown) return;
@@ -234,6 +260,10 @@ class RfidComm {
 
       final now = DateTime.now();
       if (now.difference(_lastAnyDataAt) > _readWatchdog) {
+        final msg =
+            "RFID sem dados por ${_readWatchdog.inSeconds}s (watchdog)";
+        _debug(msg);
+        _emitStatus(RfidStatus.error, message: msg);
         try {
           _socket?.destroy();
         } catch (_) {}
@@ -284,3 +314,5 @@ class RfidComm {
     return t;
   }
 }
+
+

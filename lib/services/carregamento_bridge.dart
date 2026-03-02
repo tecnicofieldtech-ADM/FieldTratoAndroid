@@ -1,10 +1,10 @@
-// lib/services/carregamento_bridge.dart
 import "dart:convert";
 import "dart:io";
 
 import "package:flutter/foundation.dart";
 
-import "../features/fornecimento/data/carregamento_dao.dart";
+import "../features/estacionario/data/carregamento_bridge_repo.dart";
+import "../features/fabricacao/domain/fabricacao_flow.dart";
 
 class CarregamentoBridgeServer {
   CarregamentoBridgeServer._();
@@ -12,6 +12,7 @@ class CarregamentoBridgeServer {
   static final CarregamentoBridgeServer instance = CarregamentoBridgeServer._();
 
   HttpServer? _server;
+  final _repo = CarregamentoBridgeRepo();
 
   bool get running => _server != null;
 
@@ -22,6 +23,7 @@ class CarregamentoBridgeServer {
     _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
     statusText.value = "ON :$port";
     _server!.listen(_handle, onError: (_) {});
+    _touch("bridge on");
   }
 
   Future<void> stop() async {
@@ -35,70 +37,112 @@ class CarregamentoBridgeServer {
 
   Future<void> _handle(HttpRequest req) async {
     try {
-      _touch("REQ ${req.method} ${req.uri.path}");
       final path = req.uri.path;
-      if (req.method == "GET" && path == "/carregamento/aberto") {
-        final dataStr = req.uri.queryParameters["data"];
-        DateTime? data;
-        if (dataStr != null && dataStr.length >= 10) {
-          data = DateTime.tryParse(dataStr.substring(0, 10));
-        }
+      _touch("REQ ${req.method} $path");
 
-        final dao = CarregamentoDao();
-        final car = await dao.getAbertoHoje(data: data ?? DateTime.now());
-        if (car == null) {
-        _touch("SEM ABERTO");
-        return _json(req, 200, {"ok": false, "message": "sem_aberto"});
-        }
-
-        _touch("ABERTO OK");
-        return _json(req, 200, {
-          "ok": true,
-          "carregamento": _mapCarregamento(car),
-        });
-      }
-
-      if (req.method == "POST" && path == "/carregamento/consumido") {
-        final body = await utf8.decoder.bind(req).join();
-        final data = (body.trim().isEmpty) ? {} : jsonDecode(body);
-
-        final id = (data["id"] ?? data["ID"] ?? "").toString().trim();
-        if (id.isEmpty) {
-          return _json(req, 400, {"ok": false, "message": "id_vazio"});
-        }
-
-        final dao = CarregamentoDao();
-        await dao.marcarConsumido(id);
-        _touch("CONSUMIDO $id");
+      if (req.method == "GET" && path == "/health") {
         return _json(req, 200, {"ok": true});
       }
 
-      _touch("404 ${req.method} ${req.uri.path}");
+      if (req.method == "GET" && path == "/carregamentos") {
+        return _listCarregamentos(req);
+      }
+
+      if (req.method == "GET" && path.startsWith("/carregamentos/")) {
+        final id = _extractId(path);
+        if (id == null || id.isEmpty) {
+          return _json(req, 400, {"erro": "id_invalido"});
+        }
+        return _getCarregamentoDetalhe(req, id);
+      }
+
       return _json(req, 404, {"ok": false, "message": "not_found"});
-    } catch (_) {
-      _touch("ERRO");
-      return _json(req, 500, {"ok": false, "message": "erro_interno"});
+    } catch (e) {
+      _touch("ERRO $e");
+      return _json(req, 500, {
+        "ok": false,
+        "message": "erro_interno",
+        "erro": e.toString(),
+      });
     }
   }
 
-  Map<String, Object?> _mapCarregamento(Map<String, Object?> m) {
-    Object? pick(List<String> keys) {
-      for (final k in keys) {
-        if (m.containsKey(k)) return m[k];
-      }
-      return null;
+  Future<void> _listCarregamentos(HttpRequest req) async {
+    final rows = await _repo.listDisponiveis();
+    final items = rows
+        .map(
+          (m) => {
+            "idLocal": (m["id_local"] ?? "").toString(),
+            "handoffId": (m["handoff_id"] ?? "").toString(),
+            "data": (m["data"] ?? "").toString(),
+            "hora": (m["hora"] ?? "").toString(),
+            "nome_racao": (m["nome_racao"] ?? "").toString(),
+            "total_fabricado_kg": _toNum(m["total_fabricado_kg"]),
+            "status": fabricacaoStatusToApi(
+              fabricacaoStatusFromDb(m["fab_status"]),
+            ),
+          },
+        )
+        .toList();
+
+    _touch("LISTA ${items.length}");
+    return _json(req, 200, items);
+  }
+
+  Future<void> _getCarregamentoDetalhe(HttpRequest req, String idLocal) async {
+    final c = await _repo.getByFabricacaoId(idLocal);
+    if (c == null) {
+      return _json(req, 404, {"erro": "fabricacao_nao_encontrada"});
     }
 
-    return {
-      "id": (pick(["ID", "id"]) ?? "").toString(),
-      "dataRegistro": (pick(["DATA_REGISTRO", "data_registro"]) ?? "").toString(),
-      "status": pick(["STATUS", "status"]),
-      "idFabricacao": (pick(["ID_FABRICACAO", "id_fabricacao"]) ?? "").toString(),
-      "idDieta": (pick(["ID_DIETA", "id_dieta"]) ?? "").toString(),
-      "pesoFabricado": pick(["PESO_FABRICADO", "peso_fabricado"]),
-      "pesoCarregado": pick(["PESO_CARREGADO", "peso_carregado"]),
-      "idVagao": (pick(["ID_VAGAO", "id_vagao"]) ?? "").toString(),
+    final insumos = await _repo.listInsumosFabricacao(idLocal);
+
+    final status = fabricacaoStatusFromDb(c["fab_status"]);
+
+    final payload = {
+      "fabricacao": {
+        "id_local": idLocal,
+        "id_origem": idLocal,
+        "handoff_id": (c["handoff_id"] ?? "").toString(),
+        "status": fabricacaoStatusToApi(status),
+        "data": _coalesceStr(c["data_fabricacao"]),
+        "hora_inicio": _coalesceStr(c["hora_inicio"]),
+        "hora_fim": _coalesceStr(c["hora_fim"]),
+        "id_racao": _coalesceStr(c["id_dieta"]),
+        "nome_racao": _coalesceStr(c["nome_racao"]),
+        "total_previsto_kg": _toNum(c["qtd_prevista"]),
+        "total_realizado_kg": _toNum(c["qtd_realizada"]),
+        "observacao": "",
+        "finalizada": status == FabricacaoStatus.finalizada,
+        "exportado_em": _coalesceStr(c["exportado_em"]),
+        "origin_device": _coalesceStr(c["origin_device"], fallback: "ESTACIONARIO"),
+      },
+      "insumos": insumos,
+      "meta": {
+        "origem": "ESTACIONARIO",
+        "versao": 1,
+      }
     };
+
+    _touch("DETALHE $idLocal");
+    return _json(req, 200, payload);
+  }
+
+  String? _extractId(String path) {
+    final seg = path.split("/").where((e) => e.trim().isNotEmpty).toList();
+    if (seg.length < 2) return null;
+    return seg[1];
+  }
+
+  String _coalesceStr(Object? v, {String fallback = ""}) {
+    final s = (v ?? "").toString().trim();
+    return s.isEmpty ? fallback : s;
+  }
+
+  double _toNum(Object? v, {double fallback = 0}) {
+    if (v == null) return fallback;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().replaceAll(",", ".")) ?? fallback;
   }
 
   void _json(HttpRequest req, int status, Object body) {
@@ -111,6 +155,7 @@ class CarregamentoBridgeServer {
   void _touch(String msg) {
     if (_server == null) return;
     final t = DateTime.now();
-    statusText.value = "${t.hour.toString().padLeft(2, "0")}:${t.minute.toString().padLeft(2, "0")}:${t.second.toString().padLeft(2, "0")}  $msg";
+    statusText.value =
+        "${t.hour.toString().padLeft(2, "0")}:${t.minute.toString().padLeft(2, "0")}:${t.second.toString().padLeft(2, "0")}  $msg";
   }
 }

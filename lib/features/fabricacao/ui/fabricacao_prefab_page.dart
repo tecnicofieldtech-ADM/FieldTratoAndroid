@@ -34,6 +34,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
   int? _tratoSelecionado;
   final _kgCtrl = TextEditingController(text: "0");
+  bool _loadingResumo = false;
+  List<_ResumoTrato> _resumos = [];
 
   @override
   void initState() {
@@ -44,10 +46,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
   Future<void> _loadCombos() async {
     if (mounted) setState(() => _loading = true);
     try {
-      // se você quiser filtrar dieta por fazenda selecionada:
       final idFazendaSel = await _cfg.getIdFazendaSelecionada();
       final dietas = await _dietaRepo.listAll(idFazenda: idFazendaSel);
-
       final users = await _userRepo.listAll();
 
       if (!mounted) return;
@@ -63,8 +63,35 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
           _operadorId = (_users.first["ID"] ?? "").toString();
         }
       });
+      await _loadResumo();
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadResumo() async {
+    final id = (_dietaId ?? "").trim();
+    if (id.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _resumos = [];
+          _loadingResumo = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) setState(() => _loadingResumo = true);
+    try {
+      final rows = await widget.repo.listResumoPorDietaDataTrato(
+        idDieta: id,
+        trato: _tratoSelecionado,
+      );
+      final list = rows.map(_ResumoTrato.fromMap).toList();
+      if (!mounted) return;
+      setState(() => _resumos = list);
+    } finally {
+      if (mounted) setState(() => _loadingResumo = false);
     }
   }
 
@@ -79,6 +106,48 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
+  String _fmt(num v) => v.toStringAsFixed(0).replaceAll(".", ",");
+
+  Future<void> _applyPrevisto(double previstoTotal) async {
+    if (previstoTotal <= 0) return;
+
+    var total = previstoTotal;
+    if (previstoTotal > 5000) {
+      final ctrl = TextEditingController(text: "2");
+      final n = await showDialog<int>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("Dividir fabricacao?"),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: "Quantidade de fabricacoes",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancelar"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final v = int.tryParse(ctrl.text.trim()) ?? 1;
+                Navigator.pop(context, v <= 0 ? 1 : v);
+              },
+              child: const Text("Ok"),
+            ),
+          ],
+        ),
+      );
+      if (n != null && n > 1) {
+        total = previstoTotal / n;
+      }
+    }
+
+    _kgCtrl.text = total.toStringAsFixed(0).replaceAll(".", ",");
+  }
+
   Future<void> _onFabricar() async {
     if ((_dietaId ?? "").isEmpty) return _msg("Selecione a dieta.");
     if ((_operadorId ?? "").isEmpty) return _msg("Selecione o operador.");
@@ -88,18 +157,16 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
     final kg = double.tryParse(_kgCtrl.text.trim().replaceAll(",", "."));
     if (kg == null || kg <= 0) return _msg("Informe o previsto em KG.");
-    if (kg > 15000) return _msg("Quantidade máxima é 15.000 KG.");
+    if (kg > 15000) return _msg("Quantidade maxima e 15.000 KG.");
 
-    // ✅ GARANTE LOGIN (global)
     final idUsuarioLogado = SessionService.instance.userId;
     if (idUsuarioLogado == null || idUsuarioLogado.trim().isEmpty) {
-      _msg("Sessão vazia. Faça login novamente.");
+      _msg("Sessao vazia. Faca login novamente.");
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, "/login");
       return;
     }
 
-    // ✅ 1) Se existe fabricação em aberto (FINALIZADA=0), pergunta
     final aberto = await widget.repo.getFabricacaoEmAberto();
     if (!mounted) return;
 
@@ -108,14 +175,14 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
-          title: const Text("Fabricação em aberto"),
+          title: const Text("Fabricacao em aberto"),
           content: const Text(
-            "Existe uma fabricação em aberto. Deseja continuar de onde parou?",
+            "Existe uma fabricacao em aberto. Deseja continuar de onde parou?",
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text("Não"),
+              child: const Text("Nao"),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
@@ -138,7 +205,6 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       return;
     }
 
-    // ✅ 2) Se não tem em aberto, cria e popula tabelas e vai pra tela fabricar
     if (mounted) setState(() => _loading = true);
     try {
       final idFazenda = await _cfg.getIdFazendaSelecionada();
@@ -164,7 +230,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         ),
       );
     } catch (e) {
-      _msg("Erro ao criar fabricação: $e");
+      _msg("Erro ao criar fabricacao: $e");
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -175,9 +241,22 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     final keyboardBottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Nova Fabricação")),
-      body: SafeArea(
+      appBar: AppBar(title: const Text("Nova Fabricacao")),
+      bottomNavigationBar: SafeArea(
         top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _onFabricar,
+              child: const Text("Fabricar"),
+            ),
+          ),
+        ),
+      ),
+      body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : LayoutBuilder(
@@ -187,7 +266,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                         ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: EdgeInsets.fromLTRB(
                       16,
-                      16,
+                      28,
                       16,
                       16 + keyboardBottomInset,
                     ),
@@ -212,10 +291,45 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                         ),
                                       )
                                       .toList(),
+                                  onChanged: (v) async {
+                                    setState(() => _dietaId = v);
+                                    await _loadResumo();
+                                  },
+                                  decoration: const InputDecoration(
+                                    labelText: "Dieta",
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
+                                    disabledBorder: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: DropdownButtonFormField<String>(
+                                  key: ValueKey(_operadorId),
+                                  initialValue: _operadorId,
+                                  items: _users
+                                      .map(
+                                        (u) => DropdownMenuItem<String>(
+                                          value: (u["ID"] ?? "").toString(),
+                                          child: Text(
+                                              (u["NOME"] ?? "").toString()),
+                                        ),
+                                      )
+                                      .toList(),
                                   onChanged: (v) =>
-                                      setState(() => _dietaId = v),
-                                  decoration:
-                                      const InputDecoration(labelText: "Dieta"),
+                                      setState(() => _operadorId = v),
+                                  decoration: const InputDecoration(
+                                    labelText: "Operador",
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
+                                    disabledBorder: InputBorder.none,
+                                  ),
                                 ),
                               ),
                             ),
@@ -243,9 +357,12 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                         return ChoiceChip(
                                           label: Text("Trato $t"),
                                           selected: sel,
-                                          onSelected: (_) => setState(
-                                            () => _tratoSelecionado = t,
-                                          ),
+                                          onSelected: (_) async {
+                                            setState(
+                                              () => _tratoSelecionado = t,
+                                            );
+                                            await _loadResumo();
+                                          },
                                         );
                                       }).toList(),
                                     ),
@@ -254,11 +371,92 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                               ),
                             ),
                             const SizedBox(height: 12),
+                            if (_loadingResumo)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 6),
+                                child: LinearProgressIndicator(minHeight: 3),
+                              ),
+                            if (_resumos.isNotEmpty)
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        "Resumo por trato",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ..._resumos.map((r) {
+                                        final falta = (r.previsto - r.realizado)
+                                            .clamp(0.0, double.infinity)
+                                            .toDouble();
+                                        return Container(
+                                          margin:
+                                              const EdgeInsets.only(bottom: 8),
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.10),
+                                            ),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      "Trato ${r.trato} - ${r.dataYmd}",
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      "Prev: ${_fmt(r.previsto)}  -  Real: ${_fmt(r.realizado)}  -  Falta: ${_fmt(falta)}",
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              FilledButton(
+                                                onPressed: () async {
+                                                  setState(() =>
+                                                      _tratoSelecionado =
+                                                          r.trato);
+                                                  await _applyPrevisto(falta);
+                                                },
+                                                child: const Text("Selecionar"),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 12),
                             Card(
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: TextField(
                                   controller: _kgCtrl,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 52,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                                   keyboardType:
                                       const TextInputType.numberWithOptions(
                                     decimal: true,
@@ -281,42 +479,12 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                   ],
                                   decoration: const InputDecoration(
                                     labelText: "Quantidade total (KG)",
-                                    helperText: "Máximo: 15.000 KG",
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
+                                    isDense: true,
                                   ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: DropdownButtonFormField<String>(
-                                  key: ValueKey(_operadorId),
-                                  initialValue: _operadorId,
-                                  items: _users
-                                      .map(
-                                        (u) => DropdownMenuItem<String>(
-                                          value: (u["ID"] ?? "").toString(),
-                                          child: Text(
-                                              (u["NOME"] ?? "").toString()),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: (v) =>
-                                      setState(() => _operadorId = v),
-                                  decoration: const InputDecoration(
-                                    labelText: "Operador",
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const Spacer(),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: ElevatedButton(
-                                onPressed: _onFabricar,
-                                child: const Text("Fabricar"),
                               ),
                             ),
                           ],
@@ -327,6 +495,36 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                 },
               ),
       ),
+    );
+  }
+}
+
+class _ResumoTrato {
+  _ResumoTrato({
+    required this.idDieta,
+    required this.dataYmd,
+    required this.trato,
+    required this.previsto,
+    required this.realizado,
+  });
+
+  final String idDieta;
+  final String dataYmd;
+  final int trato;
+  final double previsto;
+  final double realizado;
+
+  static _ResumoTrato fromMap(Map<String, Object?> m) {
+    String s(String k) => (m[k] ?? "").toString().trim();
+    int i(String k) => int.tryParse(s(k)) ?? 0;
+    double d(String k) => double.tryParse(s(k).replaceAll(",", ".")) ?? 0.0;
+
+    return _ResumoTrato(
+      idDieta: s("id_dieta"),
+      dataYmd: s("data_ymd"),
+      trato: i("trato"),
+      previsto: d("previsto"),
+      realizado: d("realizado"),
     );
   }
 }

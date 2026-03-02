@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
-        android:label="rfeed_pa"
+        android:label="RFeed Mirror"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -43,3 +45,4 @@
         </intent>
     </queries>
 </manifest>
+

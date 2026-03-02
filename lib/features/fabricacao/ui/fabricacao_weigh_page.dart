@@ -1,8 +1,9 @@
-// lib/features/fabricacao/ui/fabricacao_weigh_page.dart
+﻿// lib/features/fabricacao/ui/fabricacao_weigh_page.dart
 import "dart:async";
 import "package:flutter/material.dart";
 
 import "../../../repo/config_repo.dart"; // ✅ novo (pra pegar tipoTrabalho e vagão)
+import "../domain/fabricacao_flow.dart";
 import "../controller/fabricacao_controller.dart";
 import "../data/fabricacao_repo.dart";
 import "../domain/models.dart";
@@ -33,6 +34,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   bool _showingPrePesado = false;
 
   bool _finishing = false; // ✅ trava duplo clique no finalizar
+  bool _readOnlyStation = false;
 
   final _cfgRepo = ConfigRepo(); // ✅ config pra criar carregamento
 
@@ -147,6 +149,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       }
 
       if (!mounted) return;
+      final tipo = await _cfgRepo.getTipoTrabalho();
+      final h = c.header;
+      if (tipo == 1 && h != null && h.status == FabricacaoStatus.pendenteCaminhao) {
+        setState(() {
+          _readOnlyStation = true;
+        });
+      }
       setState(() => _booting = false);
 
       _maybeShowPrePesado();
@@ -205,12 +214,12 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
     // 1) tenta pelo CONFIG
     try {
-      idVagao = ((await _cfgRepo.getIdVagao()) ?? "").toString().trim();
+      idVagao = await _cfgRepo.getIdVagao();
     } catch (_) {
       idVagao = "";
     }
 
-    // 2) se não tiver, pega da FABRICAÇÃO (ID_VAGAO do header) usando o ID da fabricação (h.id)
+    // 2) se nao tiver, pega da FABRICACAO (ID_VAGAO do header) usando o ID da fabricacao (h.id)
     if (idVagao.isEmpty) {
       try {
         idVagao = (await widget.repo.getIdVagaoByFabricacaoId(h.id)).trim();
@@ -224,19 +233,130 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
           "Vagão não configurado. Selecione um vagão nas configurações.");
     }
 
-    final totalReal = (h.qtdRealizada is num)
-        ? (h.qtdRealizada as num).toDouble()
-        : (h.qtdRealizada?.toDouble() ?? 0.0);
+    final totalReal = h.qtdRealizada;
 
     final pesoFabricado = totalReal;
     final pesoCarregado = (tipoTrabalho == 0) ? totalReal : 0.0;
 
     await widget.repo.ensureCarregamentoAberto(
       idFabricacao: h.id,
-      idDieta: (h.idDieta ?? "").toString(),
+      idDieta: h.idDieta,
       pesoFabricado: pesoFabricado,
       pesoCarregado: pesoCarregado,
       idVagao: idVagao, // ✅ string (UUID)
+    );
+  }
+
+  Future<void> _goFabricacaoList() async {
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => FabricacaoListPage(repo: widget.repo),
+      ),
+    );
+  }
+
+  Future<FabricacaoFlowMode> _getFlowMode() async {
+    return _cfgRepo.getFabricacaoFlowMode();
+  }
+
+  Future<void> _finalizarParcialEstacionario() async {
+    final h = c.header;
+    if (h == null) return;
+
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Finalizar parcialmente"),
+            content: const Text(
+              "Finalizar parcialmente vai gerar um carregamento para o caminhão completar.\n"
+              "Após isso, esta fabricação ficará PENDENTE e este tablet NÃO enviará essa fabricação ao servidor.\n"
+              "Deseja continuar?",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text("Não"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text("Sim"),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!ok) return;
+
+    await c.salvarIngredienteAtual();
+    await c.atualizaFabricacaoParcial();
+    await widget.repo.marcarPendenteCaminhao(h.id);
+
+    if (!mounted) return;
+    setState(() => _readOnlyStation = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Fabricação marcada como pendente do caminhão."),
+      ),
+    );
+    await _goFabricacaoList();
+  }
+
+  Future<void> _perguntarIrParaFornecimento({
+    required int trato,
+  }) async {
+    final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
+    if (tipoTrabalho == 1) {
+      await _goFabricacaoList();
+      return;
+    }
+
+    if (!mounted) return;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Fornecimento"),
+        content: const Text("Deseja fornecer essa ração agora?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Não"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Sim"),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (go != true) {
+      await _goFabricacaoList();
+      return;
+    }
+
+    final idFazenda = (await _cfgRepo.getIdFazendaSelecionada()).trim();
+    if (!mounted) return;
+    if (idFazenda.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text("Nenhuma fazenda selecionada na configuração."),
+        ),
+      );
+      await _goFabricacaoList();
+      return;
+    }
+
+    Navigator.of(context).pushReplacementNamed(
+      "/fornecimento",
+      arguments: {
+        "idFazenda": idFazenda,
+        "autoOpenNovoFornecimento": true,
+        "tratoSugerido": trato,
+      },
     );
   }
 
@@ -302,8 +422,30 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     if (!mounted) return;
     if (selectedIndex == null) return;
 
-    await c.goToIndex(selectedIndex);
-    _maybeShowPrePesado();
+    try {
+      await c.goToIndex(selectedIndex);
+      _maybeShowPrePesado();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Não foi possível navegar: $e")),
+      );
+    }
+  }
+
+  Future<void> _tentarDestravarNavegacao() async {
+    try {
+      await c.tentarDestravarNavegacao();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Gravação concluída. Navegação liberada.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Falha ao gravar novamente: $e")),
+      );
+    }
   }
 
   FabIngrediente? get _prox {
@@ -442,11 +584,71 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                 ),
               ),
             ),
+            if (c.navLockedBySaveError)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Card(
+                  color: Colors.red.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.red),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            c.navLockReason.isEmpty
+                                ? "Navegação travada por falha de gravação."
+                                : c.navLockReason,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: _tentarDestravarNavegacao,
+                          child: const Text("Tentar gravar"),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            if (_readOnlyStation)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Card(
+                  color: Colors.blue.shade50,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_outline, color: Colors.blue),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            "Fabricacao pendente do caminhao. Edicao bloqueada neste tablet.",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: _bottomListaBar(),
             ),
-            _bottomNav(isLast: isLast),
+            _bottomNav(
+              isLast: isLast,
+              highlightFinalize: dentroTol,
+            ),
           ],
         ),
       ),
@@ -461,6 +663,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     final connected = c.scaleConnected;
     final connecting = c.scaleConnecting;
     final recebendo = _recebendoAgora;
+    final pausado = c.pesoPausado;
 
     final mirrorOn = c.mirrorEnabled;
     final mirrorOk = c.mirrorConnected;
@@ -472,7 +675,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     if (connecting) {
       color = Colors.blueGrey;
       icon = Icons.wifi_tethering;
-      text = "Conectando…";
+      text = "Conectando...";
     } else if (!connected) {
       color = Colors.red;
       icon = Icons.portable_wifi_off;
@@ -521,6 +724,15 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                       : const Icon(Icons.refresh, size: 18),
                   label: Text(_reconnecting ? "..." : "Reconectar"),
                 ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: connecting ? null : c.togglePausaPesagem,
+                  icon: Icon(
+                    pausado ? Icons.play_arrow : Icons.pause,
+                    size: 18,
+                  ),
+                  label: Text(pausado ? "Retomar" : "Pausar"),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -534,7 +746,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          "Balança: $text • $lastAtTxt",
+                          "Balança: $text • $lastAtTxt${pausado ? " • PAUSADA" : ""}",
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -683,8 +895,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     final barValue = prev > 0 ? (real / prev).clamp(0.0, 1.0) : 0.0;
 
     final faltando = prev > 0 ? (prev - real) : 0;
-    final faltandoShow = faltando < 0 ? 0 : faltando;
-    final difText = "$faltandoShow";
+    final difText = (prev > 0 && real > prev) ? "+${real - prev}" : "$faltando";
 
     Color bg;
     if (prev <= 0) {
@@ -944,7 +1155,12 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     );
   }
 
-  Widget _bottomNav({required bool isLast}) {
+  Widget _bottomNav({
+    required bool isLast,
+    required bool highlightFinalize,
+  }) {
+    final pulse = (DateTime.now().millisecond < 500);
+    final destacar = isLast && highlightFinalize && !_finishing;
     return SafeArea(
       top: false,
       child: Container(
@@ -956,14 +1172,45 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         child: Row(
           children: [
             IconButton(
-              onPressed: c.idx == 0 ? null : () => c.prev(),
+              onPressed: (c.idx == 0 || c.navLockedBySaveError || _readOnlyStation)
+                  ? null
+                  : () async {
+                      try {
+                        await c.prev();
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text("Não foi possível voltar: $e")),
+                        );
+                      }
+                    },
               icon: const Icon(Icons.arrow_back),
               tooltip: "Anterior",
             ),
             const SizedBox(width: 6),
             Expanded(
-              child: FilledButton.icon(
-                onPressed: _finishing
+              child: AnimatedScale(
+                scale: destacar ? (pulse ? 1.03 : 1.0) : 1.0,
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeInOut,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: destacar
+                        ? [
+                            BoxShadow(
+                              color: Colors.green.withValues(alpha: 0.35),
+                              blurRadius: pulse ? 18 : 10,
+                              spreadRadius: pulse ? 1.5 : 0.2,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: destacar ? Colors.green.shade700 : null,
+                ),
+                onPressed: (_finishing || c.navLockedBySaveError || _readOnlyStation)
                     ? null
                     : () async {
                         if (!isLast) {
@@ -973,7 +1220,19 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                           final realAntes = ingAntes?.realizadoKg ?? 0;
                           final tolPct = c.toleranciaPct;
 
-                          await c.next();
+                          try {
+                            await c.next();
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  "Não foi possível avançar: $e",
+                                ),
+                              ),
+                            );
+                            return;
+                          }
 
                           if (!mounted) return;
 
@@ -988,36 +1247,77 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                           return;
                         }
 
-                        final ok = await showDialog<bool>(
-                          context: context,
-                          builder: (_) => AlertDialog(
-                            title: const Text("Finalizar fabricação"),
-                            content:
-                                const Text("Deseja finalizar a fabricação?"),
-                            actions: [
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(false),
-                                child: const Text("Não"),
-                              ),
-                              FilledButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(true),
-                                child: const Text("Sim"),
-                              ),
-                            ],
-                          ),
-                        );
+                        final flowMode = await _getFlowMode();
+                        final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
 
-                        if (ok != true) return;
+                        if (flowMode ==
+                                FabricacaoFlowMode.startStationFinishTruck &&
+                            tipoTrabalho == 1) {
+                          final acao = await showModalBottomSheet<String>(
+                            context: context,
+                            builder: (_) => SafeArea(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ListTile(
+                                    leading: const Icon(Icons.outbox),
+                                    title: const Text(
+                                        "Finalizar Parcial (Gerar Carregamento)"),
+                                    onTap: () =>
+                                        Navigator.of(context).pop("PARCIAL"),
+                                  ),
+                                  ListTile(
+                                    leading: const Icon(Icons.check_circle),
+                                    title: const Text("Finalizar Completa"),
+                                    onTap: () =>
+                                        Navigator.of(context).pop("COMPLETA"),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                          if (acao == "PARCIAL") {
+                            await _finalizarParcialEstacionario();
+                            return;
+                          }
+                          if (acao != "COMPLETA") return;
+                        } else {
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text("Finalizar fabricação"),
+                              content:
+                                  const Text("Deseja finalizar a fabricação?"),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(false),
+                                  child: const Text("Não"),
+                                ),
+                                FilledButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(true),
+                                  child: const Text("Sim"),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok != true) return;
+                        }
 
                         setState(() => _finishing = true);
                         try {
                           final minutos =
                               await c.finalizarFabricacaoAntesDoTimer();
+                          final h = c.header;
+                          if (h != null) {
+                            await widget.repo.marcarFinalizadaComOrigem(
+                              h.id,
+                              tipoTrabalho == 2 ? "CAMINHAO" : "ESTACIONARIO",
+                            );
+                          }
                           if (!mounted) return;
 
-                          // ✅ cria/garante carregamento aberto (STATUS=0)
                           try {
                             await _ensureCarregamentoAbertoAposFinalizar();
                           } catch (e) {
@@ -1033,32 +1333,35 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                           if (!mounted) return;
 
                           if (minutos <= 0) {
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    FabricacaoListPage(repo: widget.repo),
-                              ),
+                            await _perguntarIrParaFornecimento(
+                              trato: c.header?.trato ?? 0,
                             );
                             return;
                           }
 
-                          Navigator.of(context).pushReplacement(
+                          await Navigator.of(context).push<bool>(
                             MaterialPageRoute(
                               builder: (_) => MisturaTimerPage(
                                 minutos: minutos,
                                 repo: widget.repo,
                                 fabricacaoId: c.header?.id,
                                 titulo: "Mistura",
-                                onDonePopToRoot: true,
+                                onDonePopToRoot: false,
                               ),
                             ),
+                          );
+                          if (!mounted) return;
+                          await _perguntarIrParaFornecimento(
+                            trato: c.header?.trato ?? 0,
                           );
                         } finally {
                           if (mounted) setState(() => _finishing = false);
                         }
                       },
-                icon: Icon(isLast ? Icons.check : Icons.arrow_forward),
-                label: Text(isLast ? "Finalizar" : "Próximo"),
+                    icon: Icon(isLast ? Icons.check : Icons.arrow_forward),
+                    label: Text(isLast ? "Finalizar" : "Próximo"),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1137,10 +1440,10 @@ class _PulseChipState extends State<_PulseChip>
             child: _chipBase(
               icon: widget.icon,
               label: widget.label,
-              color: _alpha(Colors.orange, 0.15),
-              border: _alpha(Colors.orange, 0.45),
+              color: Colors.white.withValues(alpha: 0.92),
+              border: _alpha(Colors.orange, 0.60),
               iconColor: Colors.deepOrange,
-              textColor: Colors.deepOrange,
+              textColor: Colors.black87,
             ),
           ),
         );
@@ -1213,3 +1516,6 @@ class _TopAppBar extends StatelessWidget implements PreferredSizeWidget {
     );
   }
 }
+
+
+

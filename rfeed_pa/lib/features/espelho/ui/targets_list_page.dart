@@ -5,9 +5,17 @@ import "../domain/mirror_target.dart";
 import "target_form_page.dart";
 
 class TargetsListPage extends StatefulWidget {
-  const TargetsListPage({super.key, required this.repo, required this.server});
+  const TargetsListPage({
+    super.key,
+    required this.repo,
+    required this.server,
+    this.onSelected,
+    this.autoPopOnSelect = false,
+  });
   final MirrorTargetsRepo repo;
   final PaServerController server;
+  final ValueChanged<MirrorTarget>? onSelected;
+  final bool autoPopOnSelect;
 
   @override
   State<TargetsListPage> createState() => _TargetsListPageState();
@@ -96,6 +104,11 @@ class _TargetsListPageState extends State<TargetsListPage> {
     // atualiza estado + lista (t.ativo muda)
     await widget.server.loadActive();
     await _load();
+
+    widget.onSelected?.call(t);
+    if (widget.autoPopOnSelect && mounted) {
+      Navigator.of(context).pop(true);
+    }
   }
 
   @override
@@ -167,3 +180,5 @@ class _TargetsListPageState extends State<TargetsListPage> {
     );
   }
 }
+
+

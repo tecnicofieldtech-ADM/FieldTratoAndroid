@@ -1,0 +1,64 @@
+﻿# Operacao do Estacionario - Guia de Teste Manual
+
+## Objetivo
+Validar o fluxo com 2 tablets:
+- Tablet A (ESTACIONARIO): fabrica e expõe carregamentos por HTTP
+- Tablet B (DISTRIBUIDOR): conecta na rede do estacionario, busca e recebe carregamento
+
+## Pre-requisitos
+1. Ambos os tablets com o app desta branch instalado.
+2. Tablet A configurado no modo estacionario (`TIPO_TRABALHO = 1`).
+3. Tablet B configurado no modo distribuidor (`TIPO_TRABALHO = 2`).
+4. Tablet B com usuario logado e fazenda selecionada.
+5. Wi-Fi do estacionario ativo (USR-W610) com IP fixo conhecido.
+
+## Fluxo 1 - Publicar carregamentos no estacionario
+1. No Tablet A, finalizar uma fabricacao.
+2. Garantir que exista carregamento aberto associado (status 0).
+3. No menu, conferir status do `Bridge: ON :<porta>`.
+4. Testar endpoint `GET /health` na rede local (retorno `ok=true`).
+
+## Fluxo 2 - Cadastrar rede no distribuidor
+1. No Tablet B, abrir `Carregamento` no menu.
+2. Clicar no icone Wi-Fi e cadastrar:
+- Nome amigavel
+- SSID
+- Senha
+- IP do estacionario
+- Porta
+3. Selecionar a rede cadastrada.
+
+## Fluxo 3 - Conectar e buscar carregamentos
+1. Clicar `Conectar`.
+2. Se a troca silenciosa falhar, o app abre Configuracoes Wi-Fi do Android (fallback).
+3. Clicar `Testar conexao`.
+4. Clicar `Buscar carregamentos`.
+5. Conferir cards com data/hora, racao, total kg e status.
+
+## Fluxo 4 - Receber carregamento
+1. Escolher um item e clicar `Receber`.
+2. Confirmar no dialog.
+3. O app deve:
+- Fazer `GET /carregamentos/{id}`
+- Validar payload
+- Importar fabricacao + insumos em transacao local
+- Salvar origem = `ESTACIONARIO`
+- Salvar `ID_ORIGEM_ESTACIONARIO` para dedupe
+- Fazer `POST /carregamentos/{id}/ack`
+4. App redireciona para tela de fornecimento.
+
+## Regras de validacao esperadas
+1. Importacao atomica: se falhar qualquer insert, nada fica gravado.
+2. Dedupe: receber o mesmo carregamento 2x deve bloquear com mensagem.
+3. Integridade: divergencia forte entre total da fabricacao e soma dos insumos gera log de alerta.
+4. UI responsiva: operacoes com loading e erro amigavel.
+
+## Endpoints disponiveis no estacionario
+- `GET /health`
+- `GET /carregamentos`
+- `GET /carregamentos/{id}`
+- `POST /carregamentos/{id}/ack`
+
+Compatibilidade antiga mantida:
+- `GET /carregamento/aberto`
+- `POST /carregamento/consumido`

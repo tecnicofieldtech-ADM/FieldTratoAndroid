@@ -67,6 +67,7 @@ class FornecimentoController extends ChangeNotifier {
   String? get erro => _erro;
 
   bool _switching = false;
+  int _origemMapa = 0; // 0=RFID, 1=Mapa
 
   // -----------------------
   // Helpers
@@ -81,7 +82,8 @@ class FornecimentoController extends ChangeNotifier {
     final pi = pesoInicio;
     if (pi == null) return 0;
     // realizado = pesoInicio - pesoAtual (mantém lógica original)
-    return _round3(pi - pesoAtual);
+    final v = pi - pesoAtual;
+    return _round3(v < 0 ? 0 : v);
   }
 
   void _setLoading(bool v) {
@@ -125,7 +127,6 @@ class FornecimentoController extends ChangeNotifier {
         _subRfid = rfid.lines.listen((line) async {
           final epc = RfidTcpService.extractEpc(line);
           histerese = p.histerese ?? HistereseParams.defaults;
-
 
           lastEpc = epc;
           notifyListeners();
@@ -244,6 +245,7 @@ class FornecimentoController extends ChangeNotifier {
 
   Future<void> iniciarPorClique(int index) async {
     if (index < 0 || index >= currais.length) return;
+    _origemMapa = 1;
     await _trocarParaIndex(index);
   }
 
@@ -256,6 +258,7 @@ class FornecimentoController extends ChangeNotifier {
 
     _switching = true;
     try {
+      _origemMapa = 0;
       final target = epc.trim();
       final i = currais.indexWhere(
         (c) => (c.rfid ?? "").trim() == target,
@@ -341,6 +344,7 @@ class FornecimentoController extends ChangeNotifier {
         pesoFim: pesoAtual,
         realizadoKg: realizado,
         idUsuario: idUsuario,
+        origemMapa: _origemMapa,
       );
 
       // 3) soma com acumulado e atualiza PREVISAO (por data+trato+baia)

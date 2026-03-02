@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:rfeed_flutter/repo/config_repo.dart';
-import 'package:rfeed_flutter/repo/user_repo.dart';
+import "../repo/config_repo.dart";
+import "../repo/user_repo.dart";
 
 Future<void> salvarConfigEVoltar({
   required BuildContext context,
@@ -25,3 +25,5 @@ Future<void> salvarConfigEVoltar({
     Navigator.of(context).pushNamedAndRemoveUntil('/menu', (_) => false);
   }
 }
+
+

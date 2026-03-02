@@ -1,4 +1,4 @@
-// lib/services/sync_orchestrator.dart
+import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../repo/config_repo.dart";
 import "api_service.dart";
 import "bootstrap_sync.dart";
@@ -24,11 +24,11 @@ class SyncOrchestrator {
   }) async {
     final cfg = await cfgRepo.getConfig();
     if (cfg == null) {
-      throw Exception("Config não encontrada.");
+      throw Exception("Config nao encontrada.");
     }
 
     final baseUrl = cfgRepo.buildBaseUrl(cfg);
-    if (baseUrl.isEmpty) throw Exception("HOST/PORTA inválidos.");
+    if (baseUrl.isEmpty) throw Exception("HOST/PORTA invalidos.");
 
     final idFazenda = (cfg["ID_FAZENDA"] ?? "").toString().trim();
     if (idFazenda.isEmpty) {
@@ -36,6 +36,8 @@ class SyncOrchestrator {
     }
 
     final idVagao = (cfg["ID_VAGAO"] ?? "").toString().trim();
+    final tipoTrabalho = int.tryParse((cfg["TIPO_TRABALHO"] ?? "0").toString()) ?? 0;
+    final flowMode = fabricacaoFlowModeFromDb(cfg["FLOW_MODE"]);
 
     final api = ApiService(baseUrl: baseUrl);
     final outbox = OutboxSync(api: api);
@@ -44,39 +46,45 @@ class SyncOrchestrator {
 
     return [
       SyncStep(
-        title: "🔎 Testando servidor...",
+        title: "Testando servidor...",
         run: () async {
           final ok = await api.getTeste();
-          if (!ok) throw Exception("Servidor indisponível.");
-          log("✅ Servidor online");
+          if (!ok) throw Exception("Servidor indisponivel.");
+          log("Servidor online");
         },
       ),
-
-      // ====== ENVIO ======
+      SyncStep(title: "Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
       SyncStep(
-          title: "⏫ Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
+        title: "Sincronizando Fabrica Racao",
+        run: () => outbox.syncFabricacao(
+          log,
+          idVagao,
+          flowMode: flowMode,
+          tipoTrabalho: tipoTrabalho,
+        ),
+      ),
       SyncStep(
-          title: "⏫ Sincronizando Fábrica Ração",
-          run: () => outbox.syncFabricacao(log, idVagao)),
+        title: "Sincronizando Fornecimento",
+        run: () => outbox.syncFornecimento(log),
+      ),
       SyncStep(
-          title: "⏫ Sincronizando Fornecimento",
-          run: () => outbox.syncFornecimento(log)),
-
-      // ====== DOWNLOAD ======
+        title: "Baixando Usuarios",
+        run: () => bootstrap.baixarUsuarios(cfg, idFazenda),
+      ),
       SyncStep(
-          title: "⏬ Baixando Usuários",
-          run: () => bootstrap.baixarUsuarios(cfg, idFazenda)),
+        title: "Baixando Baias",
+        run: () => bootstrap.baixarBaias(cfg, idFazenda),
+      ),
       SyncStep(
-          title: "⏬ Baixando Baias",
-          run: () => bootstrap.baixarBaias(cfg, idFazenda)),
+        title: "Baixando Dietas",
+        run: () => bootstrap.baixarDietas(cfg, idFazenda),
+      ),
       SyncStep(
-          title: "⏬ Baixando Dietas",
-          run: () => bootstrap.baixarDietas(cfg, idFazenda)),
+        title: "Baixando Dietas Detalhes",
+        run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda),
+      ),
       SyncStep(
-          title: "⏬ Baixando Dietas Detalhes",
-          run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda)),
-      SyncStep(
-        title: "⏬ Baixando Previsão de Trato (hoje)",
+        title: "Baixando Previsao de Trato (hoje)",
         run: () => bootstrap.baixarPrevisaoTrato(
           cfg,
           idFazenda,

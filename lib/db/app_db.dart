@@ -18,17 +18,28 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 6, // ✅ bump para corrigir PK da PREVISAO + add tolerancia_kg
+      version: 9, // flow estacionario/caminhao + handoff
       onConfigure: (db) async {
         await db.execute("PRAGMA foreign_keys = ON;");
       },
       onCreate: (db, v) async {
         await _createAll(db);
         await _ensureConfigRow(db);
+        await _removeReviewerUser(db);
       },
       onUpgrade: (db, oldV, newV) async {
         await _onUpgrade(db, oldV, newV);
         await _ensureConfigRow(db);
+        await _removeReviewerUser(db);
+      },
+      onDowngrade: (db, oldV, newV) async {
+        // Avoid automatic data wipe on version downgrade during local builds.
+        await _ensureConfigRow(db);
+        await _removeReviewerUser(db);
+      },
+      onOpen: (db) async {
+        await _ensureConfigRow(db);
+        await _removeReviewerUser(db);
       },
     );
   }
@@ -59,6 +70,11 @@ class AppDb {
       INCREMENTO_PESO INTEGER DEFAULT 1,
       TEMPO_MISTURA INTEGER,
       TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0,
+      FLOW_MODE INTEGER DEFAULT 0,
+      STATION_WIFI_SSID TEXT,
+      STATION_WIFI_PASSWORD TEXT,
+      STATION_BASE_URL TEXT,
+      STATION_BASE_URL_LEGACY TEXT,
 
       -- ✅ NOVO: tolerância em KG (ConfigRepo já garante, mas aqui nasce certo)
       TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0
@@ -86,6 +102,30 @@ class AppDb {
       ID   TEXT PRIMARY KEY NOT NULL,
       NOME TEXT
     );
+    """);
+
+    await db.execute("""
+    CREATE TABLE IF NOT EXISTS ESTACIONARIO_REDE (
+      ID TEXT PRIMARY KEY NOT NULL,
+      NOME TEXT,
+      SSID TEXT NOT NULL,
+      SENHA TEXT,
+      HOST_ESTACIONARIO TEXT NOT NULL,
+      PORTA_ESTACIONARIO INTEGER NOT NULL DEFAULT 8080,
+      ATIVO INTEGER NOT NULL DEFAULT 1,
+      CREATED_AT TEXT DEFAULT (datetime('now', 'localtime')),
+      UPDATED_AT TEXT
+    );
+    """);
+
+    await db.execute("""
+    CREATE INDEX IF NOT EXISTS IDX_EST_REDE_ATIVO
+    ON ESTACIONARIO_REDE (ATIVO);
+    """);
+
+    await db.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS UQ_EST_REDE_SSID_HOST_PORTA
+    ON ESTACIONARIO_REDE (SSID, HOST_ESTACIONARIO, PORTA_ESTACIONARIO);
     """);
 
     await db.execute("""
@@ -130,6 +170,12 @@ class AppDb {
       STATUS INTEGER NOT NULL DEFAULT 1,
       FLAG_SYNC INTEGER NOT NULL DEFAULT 0,
       ID_FAZENDA TEXT NOT NULL,
+      ORIGEM TEXT,
+      ID_ORIGEM_ESTACIONARIO TEXT,
+      FAB_STATUS INTEGER NOT NULL DEFAULT 0,
+      HANDOFF_ID TEXT,
+      EXPORTADO_EM TEXT,
+      ORIGIN_DEVICE TEXT,
       MS_PREVISTA NUMERIC DEFAULT 0,
       MS_REALIZADA NUMERIC DEFAULT 0
     );
@@ -151,6 +197,17 @@ class AppDb {
     """);
 
     await db.execute("""
+    CREATE INDEX IF NOT EXISTS IDX_FAB_FLOW_STATUS
+    ON CADASTRO_FABRICA_RACAO (FAB_STATUS);
+    """);
+
+    await db.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS UQ_FAB_HANDOFF_ID
+    ON CADASTRO_FABRICA_RACAO (HANDOFF_ID)
+    WHERE HANDOFF_ID IS NOT NULL AND TRIM(HANDOFF_ID) <> '';
+    """);
+
+    await db.execute("""
     CREATE TABLE IF NOT EXISTS CADASTRO_FORNECIMENTO (
       ID TEXT PRIMARY KEY NOT NULL,
       ID_FORNECIMENTO TEXT NOT NULL,
@@ -166,7 +223,8 @@ class AppDb {
       FLAG_SYNC INTEGER NOT NULL DEFAULT 0,
       TRATO INTEGER NOT NULL,
       ID_USUARIO TEXT NOT NULL,
-      ID_DIETA TEXT
+      ID_DIETA TEXT,
+      MAPA INTEGER DEFAULT 0
     );
     """);
 
@@ -374,8 +432,22 @@ class AppDb {
         "TEMPO_MISTURA": null,
         "TOLERANCIA_CARREGAMENTO": 0,
         "TOLERANCIA_CARREGAMENTO_KG": 0,
+        "FLOW_MODE": 0,
+        "STATION_WIFI_SSID": null,
+        "STATION_WIFI_PASSWORD": null,
+        "STATION_BASE_URL": null,
       });
     }
+  }
+
+  Future<void> _removeReviewerUser(Database db) async {
+    try {
+      await db.delete(
+        "CADASTRO_USUARIO",
+        where: "ID = ? OR LOGIN = ?",
+        whereArgs: ["PLAY_REVIEW_DEMO", "playreview"],
+      );
+    } catch (_) {}
   }
 
   Future<void> _addColumnIgnore(Database db, String table, String ddl) async {
@@ -504,6 +576,75 @@ class AppDb {
       } catch (_) {
         // se falhar, não derruba o app
       }
+    }
+
+    if (oldV < 7) {
+      await _addColumnIgnore(
+        db,
+        "CADASTRO_FORNECIMENTO",
+        "MAPA INTEGER DEFAULT 0",
+      );
+    }
+
+    if (oldV < 8) {
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "ORIGEM TEXT");
+      await _addColumnIgnore(
+        db,
+        "CADASTRO_FABRICA_RACAO",
+        "ID_ORIGEM_ESTACIONARIO TEXT",
+      );
+
+      await db.execute("""
+      CREATE TABLE IF NOT EXISTS ESTACIONARIO_REDE (
+        ID TEXT PRIMARY KEY NOT NULL,
+        NOME TEXT,
+        SSID TEXT NOT NULL,
+        SENHA TEXT,
+        HOST_ESTACIONARIO TEXT NOT NULL,
+        PORTA_ESTACIONARIO INTEGER NOT NULL DEFAULT 8080,
+        ATIVO INTEGER NOT NULL DEFAULT 1,
+        CREATED_AT TEXT DEFAULT (datetime('now', 'localtime')),
+        UPDATED_AT TEXT
+      );
+      """);
+
+      await db.execute("""
+      CREATE INDEX IF NOT EXISTS IDX_EST_REDE_ATIVO
+      ON ESTACIONARIO_REDE (ATIVO);
+      """);
+
+      await db.execute("""
+      CREATE UNIQUE INDEX IF NOT EXISTS UQ_EST_REDE_SSID_HOST_PORTA
+      ON ESTACIONARIO_REDE (SSID, HOST_ESTACIONARIO, PORTA_ESTACIONARIO);
+      """);
+    }
+
+    if (oldV < 9) {
+      await _addColumnIgnore(db, "CONFIG", "FLOW_MODE INTEGER DEFAULT 0");
+      await _addColumnIgnore(db, "CONFIG", "STATION_WIFI_SSID TEXT");
+      await _addColumnIgnore(db, "CONFIG", "STATION_WIFI_PASSWORD TEXT");
+      await _addColumnIgnore(db, "CONFIG", "STATION_BASE_URL TEXT");
+      await _addColumnIgnore(db, "CONFIG", "STATION_BASE_URL_LEGACY TEXT");
+
+      await _addColumnIgnore(
+        db,
+        "CADASTRO_FABRICA_RACAO",
+        "FAB_STATUS INTEGER NOT NULL DEFAULT 0",
+      );
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "HANDOFF_ID TEXT");
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "EXPORTADO_EM TEXT");
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "ORIGIN_DEVICE TEXT");
+
+      await db.execute("""
+      CREATE INDEX IF NOT EXISTS IDX_FAB_FLOW_STATUS
+      ON CADASTRO_FABRICA_RACAO (FAB_STATUS);
+      """);
+
+      await db.execute("""
+      CREATE UNIQUE INDEX IF NOT EXISTS UQ_FAB_HANDOFF_ID
+      ON CADASTRO_FABRICA_RACAO (HANDOFF_ID)
+      WHERE HANDOFF_ID IS NOT NULL AND TRIM(HANDOFF_ID) <> '';
+      """);
     }
   }
 }

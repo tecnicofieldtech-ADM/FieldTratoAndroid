@@ -41,9 +41,11 @@ class _SyncPageState extends State<SyncPage> {
   final List<String> _log = [];
 
   // ✅ pendências (cards)
+  int _pendTag = 0;
   int _pendFab = 0;
   int _pendFor = 0;
   bool _loadingPend = false;
+  ScaffoldMessengerState? _messenger;
 
   @override
   void initState() {
@@ -53,16 +55,25 @@ class _SyncPageState extends State<SyncPage> {
     _loadPendencias();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _messenger = ScaffoldMessenger.maybeOf(context);
+  }
+
   Future<void> _loadPendencias() async {
+    if (!mounted) return;
     if (_loadingPend) return;
     setState(() => _loadingPend = true);
 
     try {
+      final tag = await _cfgRepo.countGravaTagPendenteSync();
       final fab = await _cfgRepo.countFabricacaoPendenteSync();
       final forn = await _cfgRepo.countFornecimentoPendenteSync();
 
       if (!mounted) return;
       setState(() {
+        _pendTag = tag;
         _pendFab = fab;
         _pendFor = forn;
       });
@@ -79,7 +90,11 @@ class _SyncPageState extends State<SyncPage> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    final messenger = _messenger;
+    if (messenger == null) return;
+    try {
+      messenger.showSnackBar(SnackBar(content: Text(msg)));
+    } catch (_) {}
   }
 
   double get _progress {
@@ -250,24 +265,35 @@ class _SyncPageState extends State<SyncPage> {
         child: Column(
           children: [
             // ✅ CARDS DE PENDÊNCIA
-            Row(
+            Column(
               children: [
-                Expanded(
-                  child: _PendingCard(
-                    title: "Fabricação",
-                    subtitle: "pendente para enviar",
-                    count: _pendFab,
-                    icon: Icons.factory_outlined,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _PendingCard(
+                        title: "Grava TAG",
+                        subtitle: "pendente para enviar",
+                        count: _pendTag,
+                        icon: Icons.nfc_outlined,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _PendingCard(
+                        title: "Fabricação",
+                        subtitle: "pendente para enviar",
+                        count: _pendFab,
+                        icon: Icons.factory_outlined,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _PendingCard(
-                    title: "Fornecimento",
-                    subtitle: "pendente para enviar",
-                    count: _pendFor,
-                    icon: Icons.local_shipping_outlined,
-                  ),
+                const SizedBox(height: 10),
+                _PendingCard(
+                  title: "Fornecimento",
+                  subtitle: "pendente para enviar",
+                  count: _pendFor,
+                  icon: Icons.local_shipping_outlined,
                 ),
               ],
             ),

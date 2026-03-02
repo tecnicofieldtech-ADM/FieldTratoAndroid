@@ -1,10 +1,10 @@
-﻿import "dart:async";
+import "dart:async";
 import "dart:math" as math;
 
 import "package:flutter/material.dart";
 
-import "package:rfeed_flutter/helpers/scale_comm.dart";
-import "package:rfeed_flutter/helpers/rfid_comm.dart";
+import "../../../helpers/scale_comm.dart";
+import "../../../helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
@@ -48,6 +48,8 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
   String? error;
 
   DateTime _lastEpcAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _handlingPop = false;
+  bool _savingByTag = false;
 
   CurralPrev get curral => widget.curral;
 
@@ -125,7 +127,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
     }, onError: (_) {});
 
     _subEpc ??= _rfidEpcStream().listen((raw) {
-      _onEpc(raw);
+      unawaited(_onEpc(raw));
     }, onError: (_) {});
   }
 
@@ -140,7 +142,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
     return t.replaceAll(";", "").trim();
   }
 
-  void _onEpc(String raw) {
+  Future<void> _onEpc(String raw) async {
     final epc = _normalizeEpc(raw);
     if (epc.isEmpty) return;
 
@@ -153,6 +155,22 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
       info = null;
       error = null;
     });
+
+    final epcAtual = _rfidAtual().toUpperCase();
+    final epcLido = epc.toUpperCase();
+    final tagDiferente = epcAtual.isEmpty || epcAtual != epcLido;
+    if (!tagDiferente || !hasSessaoAberta || _savingByTag) return;
+
+    _savingByTag = true;
+    try {
+      await salvar();
+      if (!mounted) return;
+      if (error == null) {
+        setState(() => info = "Sessao salva automaticamente por troca de tag.");
+      }
+    } finally {
+      _savingByTag = false;
+    }
   }
 
   // ---------------------------
@@ -182,6 +200,9 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
   }
 
   num get realizadoFinal => curral.realizadoKg + realizadoSessao;
+  bool get hasSessaoAberta => pesoInicial != null;
+  bool get hasSessaoAbertaComRealizado =>
+      pesoInicial != null && realizadoSessao > 0;
 
   num get metaConcluirKg {
     final previsto = curral.previstoKg;
@@ -230,7 +251,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
 
       setState(() {
         pesoInicial = null;
-        info = concluiu ? "Salvo e concluído ✅" : "Salvo ✅";
+        info = concluiu ? "Salvo e concluído ?" : "Salvo ?";
       });
     } catch (e) {
       setState(() => error = "Falha ao salvar: $e");
@@ -248,12 +269,63 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
     final prog =
         (previsto <= 0) ? 0.0 : (finalKg / previsto).clamp(0, 1).toDouble();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Pesagem"),
-      ),
-      body: SafeArea(
-        child: ListView(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _handlingPop) return;
+        _handlingPop = true;
+        try {
+          final nav = Navigator.of(context);
+          if (!hasSessaoAbertaComRealizado) {
+            if (!mounted) return;
+            nav.pop();
+            return;
+          }
+
+          if (!mounted) return;
+          final acao = await showDialog<_ExitAction>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Sessao em aberto"),
+              content: const Text(
+                "Existe fornecimento em andamento com realizado maior que zero. Deseja salvar antes de sair?",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.cancel),
+                  child: const Text("Cancelar"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.discard),
+                  child: const Text("Sair sem salvar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.save),
+                  child: const Text("Salvar e sair"),
+                ),
+              ],
+            ),
+          );
+
+          if (!mounted || acao == null || acao == _ExitAction.cancel) return;
+          if (acao == _ExitAction.discard) {
+            nav.pop();
+            return;
+          }
+
+          await salvar();
+          if (!mounted) return;
+          if (error == null) nav.pop();
+        } finally {
+          _handlingPop = false;
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Pesagem"),
+        ),
+        body: SafeArea(
+          child: ListView(
           padding: const EdgeInsets.all(14),
           children: [
             Card(
@@ -265,7 +337,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                   children: [
                     const Text("RFID", style: TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 8),
-                    Text("Último EPC: ${lastEpc.isEmpty ? "—" : lastEpc}"),
+                    Text("Último EPC: ${lastEpc.isEmpty ? "" : lastEpc}"),
                   ],
                 ),
               ),
@@ -306,7 +378,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                     const SizedBox(height: 8),
                     Text(
                       pesoInicial == null
-                          ? "Peso inicial: —"
+                          ? "Peso inicial: "
                           : "Peso inicial: ${pesoInicial!.toStringAsFixed(3)}",
                     ),
                     const SizedBox(height: 10),
@@ -367,11 +439,20 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
             else if (error != null)
               _BannerError(text: error!),
           ],
+          ),
         ),
       ),
     );
   }
+
+  String _rfidAtual() {
+    final dynamic d = curral as dynamic;
+    final Object? raw = _try(() => d.rfid);
+    return (raw?.toString().trim() ?? "");
+  }
 }
+
+enum _ExitAction { save, discard, cancel }
 
 class _BannerInfo extends StatelessWidget {
   const _BannerInfo({required this.text});
@@ -424,3 +505,6 @@ class _BannerError extends StatelessWidget {
     );
   }
 }
+
+
+

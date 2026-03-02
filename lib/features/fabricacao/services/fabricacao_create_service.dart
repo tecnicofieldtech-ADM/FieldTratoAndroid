@@ -2,6 +2,7 @@ import "package:sqflite/sqflite.dart";
 import "package:uuid/uuid.dart";
 
 import "../../../db/app_db.dart";
+import "../domain/fabricacao_flow.dart";
 
 class FabricacaoCreateService {
   Future<Database> get _db async => AppDb.instance.db;
@@ -23,6 +24,7 @@ class FabricacaoCreateService {
   }) async {
     final db = await _db;
     final idFab = _newId();
+    final handoffId = _newId();
     final now = DateTime.now();
 
     final dataFab =
@@ -48,6 +50,11 @@ class FabricacaoCreateService {
         "STATUS": 1,
         "FLAG_SYNC": 0,
         "ID_FAZENDA": idFazenda,
+        "ORIGEM": "ESTACIONARIO",
+        "FAB_STATUS": fabricacaoStatusEmAndamento,
+        "HANDOFF_ID": handoffId,
+        "EXPORTADO_EM": null,
+        "ORIGIN_DEVICE": "ESTACIONARIO",
         "MS_PREVISTA": 0,
         "MS_REALIZADA": 0,
       });
@@ -72,12 +79,20 @@ class FabricacaoCreateService {
         throw Exception("Nenhum ingrediente encontrado em DETALHES_DIETAS.");
       }
 
+      var totalPrevisto = 0.0;
+      var totalMs = 0.0;
+
+
       // 3) Inserir DETALHES_FABRICA_RACAO com proporcional
       for (final r in det) {
         final mnPercent = _toNum(r["MN_PERCENT"]); // 1..100
         final previsto = (totalKg * (mnPercent / 100.0)).round(); // igual Delphi (arredonda)
         final ordem = _toInt(r["ORDEM"]);
         final prePesado = _toInt(r["PRE_PESADO"]);
+        final msInsumo = _toNum(r["MS_INSUMO"]);
+
+        totalPrevisto += previsto;
+        totalMs += (previsto * (msInsumo / 100.0));
 
         await txn.insert("DETALHES_FABRICA_RACAO", {
           "ID": _newId(),
@@ -95,12 +110,23 @@ class FabricacaoCreateService {
           "FLAG_SYNC": 0,
           "ID_FAZENDA": idFazenda,
           "INSUMO_NOME": (r["INSUMO"] ?? "").toString(),
-          "MS_INSUMO": _toNum(r["MS_INSUMO"]),
+          "MS_INSUMO": msInsumo,
           "MS_INCLUSAO": _toNum(r["MS_INCLUSAO"]),
           "MN_PERC": _toNum(r["MN_PERC"]),
           "PRE_PESADO": prePesado, // ✅ copia da dieta
         });
       }
+
+      final msPrevista = totalPrevisto > 0
+          ? (totalMs / totalPrevisto) * 100
+          : 0.0;
+
+      await txn.update(
+        "CADASTRO_FABRICA_RACAO",
+        {"MS_PREVISTA": msPrevista},
+        where: "ID = ?",
+        whereArgs: [idFab],
+      );
     });
 
     return idFab;
@@ -119,3 +145,6 @@ class FabricacaoCreateService {
     return int.tryParse(v.toString()) ?? 0;
   }
 }
+
+
+

@@ -21,19 +21,42 @@ class FornecimentoBiPage extends StatefulWidget {
   State<FornecimentoBiPage> createState() => _FornecimentoBiPageState();
 }
 
-class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
+class _FornecimentoBiPageState extends State<FornecimentoBiPage>
+    with SingleTickerProviderStateMixin {
   bool _loading = true;
   DateTime _data = DateTime.now();
   int? _trato;
 
   List<CurralPrev> _items = const [];
 
+  late final AnimationController _truckAc;
+  final ScrollController _timelineScrollCtrl = ScrollController();
+  double _timelineMax = 0;
+
   @override
   void initState() {
     super.initState();
     _data = widget.dataInicial ?? DateTime.now();
     _trato = widget.tratoInicial;
+    _truckAc = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4),
+    )
+      ..addListener(_syncTimelineScroll)
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _truckAc.reset();
+          _truckAc.forward();
+        }
+      });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _truckAc.dispose();
+    _timelineScrollCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -46,10 +69,44 @@ class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
         trato: _trato,
       );
       if (!mounted) return;
-      setState(() => _items = rows);
+      final filtrados = rows.where((i) => i.realizadoKg > 0).toList()
+        ..sort((a, b) {
+          final byTrato = a.trato.compareTo(b.trato);
+          if (byTrato != 0) return byTrato;
+          final aNome = (a.nomeLocal ?? a.idBaia).toString();
+          final bNome = (b.nomeLocal ?? b.idBaia).toString();
+          return aNome.compareTo(bNome);
+        });
+      setState(() => _items = filtrados);
+      _resetTruckAnimation();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _resetTruckAnimation() {
+    final count = _items.isEmpty ? 1 : _items.length;
+    final secs = (count * 4).clamp(4, 600);
+    _timelineMax = 0;
+    _truckAc
+      ..duration = Duration(seconds: secs)
+      ..reset()
+      ..forward();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_timelineScrollCtrl.hasClients) return;
+      _timelineMax = _timelineScrollCtrl.position.maxScrollExtent;
+      _timelineScrollCtrl.jumpTo(0);
+    });
+  }
+
+  void _syncTimelineScroll() {
+    if (!_timelineScrollCtrl.hasClients) return;
+    final max = _timelineMax <= 0
+        ? _timelineScrollCtrl.position.maxScrollExtent
+        : _timelineMax;
+    if (max <= 0) return;
+    final pos = max * _truckAc.value;
+    _timelineScrollCtrl.jumpTo(pos);
   }
 
   String _fmtDate(DateTime d) {
@@ -85,6 +142,105 @@ class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
     return out;
   }
 
+  Widget _timeline() {
+    if (_items.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.10)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Linha do fornecimento",
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 68,
+              child: LayoutBuilder(
+                builder: (ctx, c) {
+                  final w = c.maxWidth;
+                  final truckW = 32.0;
+                  return Stack(
+                    children: [
+                      Positioned.fill(
+                        child: ListView.separated(
+                          controller: _timelineScrollCtrl,
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _items.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 8),
+                          itemBuilder: (_, i) {
+                            final it = _items[i];
+                            final nome = (it.nomeLocal ?? "").trim();
+                            return Container(
+                              width: 140,
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color:
+                                      Colors.black.withValues(alpha: 0.10),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    nome.isEmpty ? "(Sem nome)" : nome,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Prev ${it.previstoKg.toStringAsFixed(0)} • Real ${it.realizadoKg.toStringAsFixed(0)} • Dif ${(it.realizadoKg - it.previstoKg).toStringAsFixed(0)}",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.70),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      AnimatedBuilder(
+                        animation: _truckAc,
+                        builder: (_, __) {
+                          final x = _truckAc.value * (w - truckW);
+                          return Positioned(
+                            left: x,
+                            bottom: 0,
+                            child: const _TruckIcon(size: 30),
+                          );
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final totalPrev = _items.fold<double>(0, (a, b) => a + b.previstoKg);
@@ -104,6 +260,7 @@ class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
       );
       byCurral[key]!.previsto += i.previstoKg;
       byCurral[key]!.realizado += i.realizadoKg;
+      byCurral[key]!.tratos.add(i.trato);
     }
 
     final maioresErros = byCurral.values.toList()
@@ -232,6 +389,7 @@ class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
                     ],
                   ),
                 ),
+                _timeline(),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(12, 4, 12, 6),
                   child: Align(
@@ -272,7 +430,7 @@ class _FornecimentoBiPageState extends State<FornecimentoBiPage> {
                                   ),
                                 ),
                                 subtitle: Text(
-                                  "Prev ${c.previsto.toStringAsFixed(0)} kg  •  Real ${c.realizado.toStringAsFixed(0)} kg",
+                                  "Trato ${c.tratosLabel}  •  Prev ${c.previsto.toStringAsFixed(0)} kg  •  Real ${c.realizado.toStringAsFixed(0)} kg",
                                 ),
                                 trailing: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -346,7 +504,35 @@ class _CurralBi {
   final String nome;
   double previsto = 0;
   double realizado = 0;
+  final Set<int> tratos = {};
+
+  String get tratosLabel {
+    if (tratos.isEmpty) return "-";
+    final list = tratos.toList()..sort();
+    return list.join(",");
+  }
 
   double get dif => realizado - previsto;
   double get erroAbs => dif.abs();
 }
+
+class _TruckIcon extends StatelessWidget {
+  const _TruckIcon({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      "assets/images/truck.png",
+      width: size,
+      height: size * 0.7,
+      fit: BoxFit.contain,
+    );
+  }
+}
+
+
+
+
+

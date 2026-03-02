@@ -444,6 +444,7 @@ class FornecimentoDao {
     required double pesoFim,
     required double realizado,
     required double previsto,
+    int mapa = 0,
   }) async {
     final db = await _db;
     final d = toSqlDate(data);
@@ -467,6 +468,7 @@ class FornecimentoDao {
         FornTables.cfTrato: trato,
         FornTables.cfIdUsuario: idUsuario,
         FornTables.cfIdDieta: idDieta,
+        FornTables.cfMapa: mapa,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -671,6 +673,28 @@ class FornecimentoDao {
     );
   }
 
+  Future<int> marcarSyncPendentePorChave({
+    required DateTime data,
+    required int trato,
+    required String idFornecimento,
+    required String idBaia,
+  }) async {
+    final db = await _db;
+    final dataSql = toSqlDate(data);
+
+    return db.update(
+      FornTables.cadastroFornecimento,
+      {FornTables.cfFlagSync: 0},
+      where: """
+        substr(${FornTables.cfData},1,10) = ?
+        AND ${FornTables.cfTrato} = ?
+        AND TRIM(${FornTables.cfIdFornecimento}) = TRIM(?)
+        AND TRIM(${FornTables.cfIdBaia}) = TRIM(?)
+      """,
+      whereArgs: [dataSql, trato, idFornecimento, idBaia],
+    );
+  }
+
   Future<void> upsert(FornecimentoRow row) async {
     final db = await _db;
     await db.insert(
@@ -795,3 +819,5 @@ class FornecimentoDao {
     return (changed.first["c"] as int?) ?? 0;
   }
 }
+
+

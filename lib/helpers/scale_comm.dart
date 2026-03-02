@@ -381,13 +381,40 @@ class ScaleComm {
       return b.toString();
     }
 
+    String? firstSignedNumber(String x) {
+      final signed = RegExp(r"[-+]?\d+(?:[.,]\d+)?").firstMatch(x)?.group(0);
+      if (signed != null) return signed;
+
+      final trailingMinus =
+          RegExp(r"(\d+(?:[.,]\d+)?)\s*-\b").firstMatch(x)?.group(1);
+      if (trailingMinus != null) return "-$trailingMinus";
+
+      final unsigned = RegExp(r"\d+(?:[.,]\d+)?").firstMatch(x)?.group(0);
+      if (unsigned == null) return null;
+
+      final hasMinus = x.contains("-");
+      final hasPlus = x.contains("+");
+      if (hasMinus && !hasPlus) return "-$unsigned";
+      if (hasPlus && !hasMinus) return "+$unsigned";
+      return unsigned;
+    }
+
+    String? weightNearKg(String x) {
+      final re = RegExp(
+        r"([+-]?\s*\d+(?:[.,]\d+)?)\s*K(?:G)?\b",
+        caseSensitive: false,
+      );
+      final all = re.allMatches(x).toList();
+      if (all.isEmpty) return null;
+      final raw = all.last.group(1)?.trim();
+      if (raw == null || raw.isEmpty) return null;
+      return raw.replaceAll(" ", "");
+    }
+
     try {
       switch (_model) {
         case ScaleModel.topcom:
-          final up = s.toUpperCase();
-          final p = up.indexOf("K");
-          if (p > 0) return onlyDigits(s.substring(0, p));
-          return null;
+          return weightNearKg(s) ?? firstSignedNumber(s);
 
         case ScaleModel.dg500:
           final up = s.toUpperCase();
@@ -427,9 +454,10 @@ class ScaleComm {
 
         case ScaleModel.alfa:
           if (s.length >= 9) {
-            return onlyDigits(s.substring(4, min(9, s.length)));
+            final cut = s.substring(4, min(9, s.length));
+            return firstSignedNumber(cut) ?? onlyDigits(cut);
           }
-          return onlyDigits(s);
+          return firstSignedNumber(s) ?? onlyDigits(s);
 
         case ScaleModel.raw:
           return s;

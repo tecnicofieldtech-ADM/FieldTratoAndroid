@@ -136,3 +136,5 @@ class ForniFilter {
     return s.realizadoBase + max(0, s.w0 - wConfirm);
   }
 }
+
+

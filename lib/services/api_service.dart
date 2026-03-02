@@ -21,8 +21,8 @@ class ApiService {
     // ✅ log completo no console (ajuda MUITO a achar 500 com {erro:"..."})
     _dio.interceptors.add(
       LogInterceptor(
-        requestBody: true,
-        responseBody: true,
+        requestBody: false,
+        responseBody: false,
         requestHeader: true,
         responseHeader: false,
         error: true,
@@ -105,17 +105,12 @@ class ApiService {
       if (r.statusCode == 200) return true;
 
       log?.call("❌ /Post/GravaTag HTTP ${r.statusCode}");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${r.data}");
       return false;
     } on DioException catch (e) {
       log?.call("❌ /Post/GravaTag EXC HTTP ${e.response?.statusCode}");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${e.response?.data ?? e.message}");
       return false;
     } catch (e) {
       log?.call("❌ /Post/GravaTag ERRO: $e");
-      log?.call("📤 Req: $body");
       return false;
     }
   }
@@ -132,23 +127,17 @@ class ApiService {
         ),
       );
 
-      if (r.statusCode == 200) return true;
+      if (r.statusCode == 200 || r.statusCode == 208 || r.statusCode == 409) return true;
 
       log?.call("❌ /Post/Fabricacao HTTP ${r.statusCode}");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${r.data}");
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      final data = e.response?.data;
 
       log?.call("❌ /Post/Fabricacao EXCEPTION HTTP $status");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${data ?? e.message}");
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fabricacao ERRO: $e");
-      log?.call("📤 Req: $body");
       return false;
     }
   }
@@ -160,8 +149,6 @@ class ApiService {
     try {
       // 🔥 garante que o payload final (string) é exatamente o que vai pra API
       final jsonBody = jsonEncode(body);
-
-      log?.call("🚀 /Post/Fabricacao_Insumo JSON = $jsonBody");
 
       final r = await _dio.post(
         "/Post/Fabricacao_Insumo",
@@ -179,14 +166,11 @@ class ApiService {
       if (r.statusCode == 200) return true;
 
       log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode}");
-      log?.call("📥 Resp: ${r.data}");
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      final data = e.response?.data;
 
       log?.call("❌ /Post/Fabricacao_Insumo EXCEPTION HTTP $status");
-      log?.call("📥 Resp: ${data ?? e.message}");
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fabricacao_Insumo ERRO: $e");
@@ -209,18 +193,15 @@ class ApiService {
       if (r.statusCode == 200) return true;
 
       log?.call("❌ /Post/Fornecimento HTTP ${r.statusCode}");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${r.data}");
       return false;
     } on DioException catch (e) {
       log?.call("❌ /Post/Fornecimento EXC HTTP ${e.response?.statusCode}");
-      log?.call("📤 Req: $body");
-      log?.call("📥 Resp: ${e.response?.data ?? e.message}");
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fornecimento ERRO: $e");
-      log?.call("📤 Req: $body");
       return false;
     }
   }
 }
+
+

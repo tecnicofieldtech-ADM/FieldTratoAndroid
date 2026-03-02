@@ -8,8 +8,13 @@ class FabricacaoDashboardRepo {
   static const det = "DETALHES_FABRICA_RACAO";
 
   /// dataIso: "YYYY-MM-DD"
-  Future<Map<String, num>> totalsDoDia(String dataIso) async {
+  Future<Map<String, num>> totalsDoDia(String dataIso, {String? idDieta}) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     final rows = await db.rawQuery("""
       SELECT
         COALESCE(SUM(COALESCE(QTD_PREVISTA,0)),0) AS previsto,
@@ -18,7 +23,8 @@ class FabricacaoDashboardRepo {
       FROM $head
       WHERE DATE(DATA_FABRICACAO) = DATE(?)
         AND COALESCE(STATUS,1) = 1
-    """, [dataIso]);
+        $filtroDieta
+    """, args);
 
     final r = rows.first;
     return {
@@ -28,27 +34,39 @@ class FabricacaoDashboardRepo {
     };
   }
 
-  Future<int> pendentesSyncDoDia(String dataIso) async {
+  Future<int> pendentesSyncDoDia(String dataIso, {String? idDieta}) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     final rows = await db.rawQuery("""
       SELECT COALESCE(COUNT(*),0) AS c
       FROM $head
       WHERE DATE(DATA_FABRICACAO) = DATE(?)
         AND COALESCE(STATUS,1) = 1
         AND COALESCE(FLAG_SYNC,0) = 0
-    """, [dataIso]);
+        $filtroDieta
+    """, args);
     return ((rows.first["c"] as num?) ?? 0).toInt();
   }
 
   /// Irregulares: finalizada e tem ingrediente com previsto>0 e realizado=0
-  Future<int> irregularesCount(String dataIso) async {
+  Future<int> irregularesCount(String dataIso, {String? idDieta}) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     final rows = await db.rawQuery("""
       SELECT COALESCE(COUNT(*),0) AS c
       FROM $head h
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
         AND COALESCE(h.FINALIZADA,0) = 1
+        $filtroDieta
         AND EXISTS (
           SELECT 1
           FROM $det d
@@ -56,12 +74,17 @@ class FabricacaoDashboardRepo {
             AND COALESCE(d.QTD_PREVISTA,0) > 0
             AND COALESCE(d.QTD_REALIZADA,0) = 0
         )
-    """, [dataIso]);
+    """, args);
     return ((rows.first["c"] as num?) ?? 0).toInt();
   }
 
-  Future<List<Map<String, Object?>>> porRacao(String dataIso) async {
+  Future<List<Map<String, Object?>>> porRacao(String dataIso, {String? idDieta}) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     return db.rawQuery("""
       SELECT
         h.ID_DIETA AS idDieta,
@@ -73,13 +96,19 @@ class FabricacaoDashboardRepo {
       LEFT JOIN DIETA d ON d.ID = h.ID_DIETA
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
+        $filtroDieta
       GROUP BY h.ID_DIETA, COALESCE(d.NOME, h.ID_DIETA)
       ORDER BY realizado DESC
-    """, [dataIso]);
+    """, args);
   }
 
-  Future<List<Map<String, Object?>>> porTrato(String dataIso) async {
+  Future<List<Map<String, Object?>>> porTrato(String dataIso, {String? idDieta}) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     return db.rawQuery("""
       SELECT
         COALESCE(h.TRATO,0) AS trato,
@@ -89,14 +118,23 @@ class FabricacaoDashboardRepo {
       FROM $head h
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
+        $filtroDieta
       GROUP BY COALESCE(h.TRATO,0)
       ORDER BY trato ASC
-    """, [dataIso]);
+    """, args);
   }
 
-  Future<List<Map<String, Object?>>> topInsumosDif(String dataIso,
-      {int limit = 10}) async {
+  Future<List<Map<String, Object?>>> topInsumosDif(
+    String dataIso, {
+    int limit = 10,
+    String? idDieta,
+  }) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     return db.rawQuery("""
       SELECT
         COALESCE(d.INSUMO_NOME, d.ID_INSUMO) AS insumo,
@@ -107,15 +145,24 @@ class FabricacaoDashboardRepo {
       JOIN $head h ON h.ID = d.ID_FABRICACAO
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
+        $filtroDieta
       GROUP BY COALESCE(d.INSUMO_NOME, d.ID_INSUMO)
       ORDER BY ABS(dif) DESC
       LIMIT $limit
-    """, [dataIso]);
+    """, args);
   }
 
-  Future<List<Map<String, Object?>>> irregularesList(String dataIso,
-      {int limit = 50}) async {
+  Future<List<Map<String, Object?>>> irregularesList(
+    String dataIso, {
+    int limit = 50,
+    String? idDieta,
+  }) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     return db.rawQuery("""
       SELECT
         h.ID as id,
@@ -129,6 +176,7 @@ class FabricacaoDashboardRepo {
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
         AND COALESCE(h.FINALIZADA,0) = 1
+        $filtroDieta
         AND EXISTS (
           SELECT 1
           FROM $det x
@@ -138,12 +186,20 @@ class FabricacaoDashboardRepo {
         )
       ORDER BY dieta
       LIMIT $limit
-    """, [dataIso]);
+    """, args);
   }
 
-  Future<List<Map<String, Object?>>> pendentesSyncList(String dataIso,
-      {int limit = 50}) async {
+  Future<List<Map<String, Object?>>> pendentesSyncList(
+    String dataIso, {
+    int limit = 50,
+    String? idDieta,
+  }) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(h.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
     return db.rawQuery("""
       SELECT
         h.ID as id,
@@ -157,17 +213,25 @@ class FabricacaoDashboardRepo {
       WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
         AND COALESCE(h.STATUS,1) = 1
         AND COALESCE(h.FLAG_SYNC,0) = 0
+        $filtroDieta
       ORDER BY h.FINALIZADA ASC, dieta ASC
       LIMIT $limit
-    """, [dataIso]);
+    """, args);
   }
 
   // ✅ Ranking: melhores acertos do dia (por fabricação)
   Future<List<Map<String, Object?>>> topAcertosDoDia(
     String dataIso, {
     int limit = 10,
+    String? idDieta,
   }) async {
     final db = await _db;
+    final args = <Object?>[dataIso];
+    final filtroDieta = (idDieta ?? "").trim().isEmpty
+        ? ""
+        : " AND TRIM(CAST(f.ID_DIETA AS TEXT)) = TRIM(CAST(? AS TEXT)) ";
+    if (filtroDieta.isNotEmpty) args.add(idDieta);
+    args.add(limit);
 
     // Observação:
     // - calcula "acerto_pct" = 100 - |prev-real|/prev*100 (clamp 0..100)
@@ -198,10 +262,28 @@ class FabricacaoDashboardRepo {
     LEFT JOIN DIETA di ON di.ID = f.ID_DIETA
     WHERE date(f.DATA_FABRICACAO) = date(?)
       AND COALESCE(f.STATUS,1) = 1
+      $filtroDieta
     ORDER BY acerto_pct DESC, ABS(COALESCE(f.QTD_PREVISTA,0) - COALESCE(f.QTD_REALIZADA,0)) ASC
     LIMIT ?
     """;
 
-    return await db.rawQuery(sql, [dataIso, limit]);
+    return await db.rawQuery(sql, args);
+  }
+
+  Future<List<Map<String, Object?>>> racoesDoDia(String dataIso) async {
+    final db = await _db;
+    return db.rawQuery("""
+      SELECT
+        TRIM(COALESCE(CAST(h.ID_DIETA AS TEXT), '')) AS idDieta,
+        TRIM(COALESCE(d.NOME, CAST(h.ID_DIETA AS TEXT), '')) AS dieta
+      FROM $head h
+      LEFT JOIN DIETA d ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(h.ID_DIETA AS TEXT))
+      WHERE DATE(h.DATA_FABRICACAO) = DATE(?)
+        AND COALESCE(h.STATUS,1) = 1
+      GROUP BY TRIM(COALESCE(CAST(h.ID_DIETA AS TEXT), '')), TRIM(COALESCE(d.NOME, CAST(h.ID_DIETA AS TEXT), ''))
+      ORDER BY dieta ASC
+    """, [dataIso]);
   }
 }
+
+

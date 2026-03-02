@@ -1,5 +1,7 @@
-﻿// lib/features/fabricacao/ui/fabricacao_list_page.dart
+// lib/features/fabricacao/ui/fabricacao_list_page.dart
 import "package:flutter/material.dart";
+import "../../../repo/config_repo.dart";
+import "../domain/fabricacao_flow.dart";
 
 import "../data/fabricacao_repo.dart";
 import "../domain/models.dart";
@@ -18,19 +20,21 @@ class FabricacaoListPage extends StatefulWidget {
 
 class _FabricacaoListPageState extends State<FabricacaoListPage>
     with SingleTickerProviderStateMixin {
+  final _cfgRepo = ConfigRepo();
   bool _loading = false;
   List<FabricacaoHeader> _items = [];
+  int? _tipoTrabalho;
 
   // ---------- filtros ----------
-  DateTime? _filterDate; // data Ãºnica
-  String? _filterDieta; // nome da raÃ§Ã£o (combo)
+  DateTime? _filterDate; // data única
+  String? _filterDieta; // nome da ração (combo)
   int? _filterTrato; // trato (combo)
 
   // cache listas para combos
   List<String> _dietaOpts = [];
   List<int> _tratoOpts = [];
 
-  // animaÃ§Ã£o â€œfinalizadaâ€
+  // animação "finalizada"
   late final AnimationController _animCtrl;
   late final Animation<double> _pulse;
 
@@ -47,6 +51,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     );
 
     _load();
+    _loadTipoTrabalho();
   }
 
   @override
@@ -68,6 +73,14 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     }
   }
 
+  Future<void> _loadTipoTrabalho() async {
+    try {
+      final t = await _cfgRepo.getTipoTrabalho();
+      if (!mounted) return;
+      setState(() => _tipoTrabalho = t);
+    } catch (_) {}
+  }
+
   void _rebuildFilterOptions() {
     final dietas = <String>{};
     final tratos = <int>{};
@@ -81,7 +94,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     _dietaOpts = dietas.toList()..sort();
     _tratoOpts = tratos.toList()..sort();
 
-    // se a opÃ§Ã£o selecionada nÃ£o existir mais, limpa
+    // se a opção selecionada não existir mais, limpa
     if (_filterDieta != null && !_dietaOpts.contains(_filterDieta)) {
       _filterDieta = null;
     }
@@ -135,6 +148,12 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   }
 
   Future<void> _openAddFlow() async {
+    if (_tipoTrabalho == 2) {
+      if (!mounted) return;
+      Navigator.pushNamed(context, "/carregamento-estacionario");
+      return;
+    }
+
     final aberto = await widget.repo.getFabricacaoEmAbertoHoje();
     if (!mounted) return;
 
@@ -152,7 +171,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text("NÃ£o"),
+              child: const Text("Não"),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
@@ -186,8 +205,8 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     if (!pode) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content:
-                Text("SÃ³ pode excluir se Realizado = 0 e nÃ£o sincronizada.")),
+          content: Text("So pode excluir fabricacao nao sincronizada."),
+        ),
       );
       return;
     }
@@ -337,7 +356,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     );
   }
 
-  // ✅ pill do carregamento (ficou no nível do State, não dentro do _statusPill)
+  // pill do carregamento (ficou no nível do State, não dentro do _statusPill)
   Widget _carregamentoPill(String fabId) {
     return FutureBuilder<Map<String, Object?>?>(
       future: widget.repo.getCarregamentoStatusByFabricacao(fabId),
@@ -348,7 +367,8 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
             decoration: BoxDecoration(
               color: Colors.blueGrey.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.blueGrey.withValues(alpha: 0.25)),
+              border:
+                  Border.all(color: Colors.blueGrey.withValues(alpha: 0.25)),
             ),
             child: const Text(
               "Carregamento: ...",
@@ -405,17 +425,27 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
   // ---------- item visual ----------
   Widget _statusPill(FabricacaoHeader it) {
-    final emAberto = it.emAberto;
+    final emAberto = it.status == FabricacaoStatus.emAndamento;
+    final pendente = it.status == FabricacaoStatus.pendenteCaminhao;
 
     final Color bg = emAberto
         ? Colors.orange.withValues(alpha: 0.12)
-        : Colors.green.withValues(alpha: 0.12);
+        : pendente
+            ? Colors.blue.withValues(alpha: 0.12)
+            : Colors.green.withValues(alpha: 0.12);
     final Color border = emAberto
         ? Colors.orange.withValues(alpha: 0.35)
-        : Colors.green.withValues(alpha: 0.35);
-    final Color fg = emAberto ? Colors.deepOrange : Colors.green.shade800;
+        : pendente
+            ? Colors.blue.withValues(alpha: 0.35)
+            : Colors.green.withValues(alpha: 0.35);
+    final Color fg = emAberto
+        ? Colors.deepOrange
+        : pendente
+            ? Colors.blue.shade800
+            : Colors.green.shade800;
 
-    final icon = emAberto ? Icons.pending_actions : Icons.verified;
+    final icon =
+        emAberto ? Icons.pending_actions : (pendente ? Icons.outbox : Icons.verified);
 
     Widget child = Row(
       mainAxisSize: MainAxisSize.min,
@@ -423,15 +453,15 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
         Icon(icon, size: 16, color: fg),
         const SizedBox(width: 6),
         Text(
-          emAberto ? "Em aberto" : "Finalizada",
+          emAberto ? "Em andamento" : (pendente ? "Pendente caminhão" : "Finalizada"),
           style:
               TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: fg),
         ),
       ],
     );
 
-    // âœ… animação sÃ³ em finalizadas
-    if (!emAberto) {
+    // animação só em finalizadas
+    if (!emAberto && !pendente) {
       child = ScaleTransition(scale: _pulse, child: child);
     }
 
@@ -449,6 +479,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   @override
   Widget build(BuildContext context) {
     final list = _filtered;
+    final isDistribuidor = _tipoTrabalho == 2;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
@@ -471,13 +502,22 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
             },
             icon: const Icon(Icons.insights),
           ),
+          if (isDistribuidor)
+            IconButton(
+              tooltip: "Carregar do Estacionario",
+              onPressed: () =>
+                  Navigator.pushNamed(context, "/carregamento-estacionario"),
+              icon: const Icon(Icons.download_for_offline_outlined),
+            ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openAddFlow,
-        icon: const Icon(Icons.add),
-        label: const Text("Nova"),
-      ),
+      floatingActionButton: isDistribuidor
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _openAddFlow,
+              icon: const Icon(Icons.add),
+              label: const Text("Nova"),
+            ),
       body: Column(
         children: [
           _filtersBar(),
@@ -497,11 +537,14 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                           final pct = it.qtdPrevista <= 0
                               ? 0
                               : (it.qtdRealizada / it.qtdPrevista) * 100.0;
-                          final dif = (it.qtdPrevista - it.qtdRealizada);
+                          final dif = (it.qtdRealizada - it.qtdPrevista);
 
                           final dt = _fmtDateDdMmYy(it.dataFabricacao);
 
-                          final emAberto = it.emAberto;
+                          final emAberto =
+                              it.status == FabricacaoStatus.emAndamento;
+                          final bloqueadaStation = _tipoTrabalho == 1 &&
+                              it.status == FabricacaoStatus.pendenteCaminhao;
 
                           return Card(
                             elevation: 0,
@@ -511,7 +554,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                             ),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: emAberto
+                              onTap: emAberto && !bloqueadaStation
                                   ? () {
                                       Navigator.push(
                                         context,
@@ -520,6 +563,15 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                                 repo: widget.repo)),
                                       ).then((_) => _load());
                                     }
+                                  : bloqueadaStation
+                                      ? () => ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                "Fabricacao pendente no caminhao. Somente leitura no estacionario.",
+                                              ),
+                                            ),
+                                          )
                                   : null,
                               child: Padding(
                                 padding: const EdgeInsets.all(14),
@@ -540,7 +592,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
@@ -583,7 +634,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                               _statusPill(it),
                                             ],
                                           ),
-
                                           const SizedBox(height: 8),
                                           Wrap(
                                             spacing: 8,
@@ -592,7 +642,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                               _carregamentoPill(it.id),
                                             ],
                                           ),
-
                                           Text(
                                             it.dietaNome.trim().isEmpty
                                                 ? "(Sem nome de Ração)"
@@ -603,9 +652,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.w800),
                                           ),
-
                                           const SizedBox(height: 10),
-
                                           Row(
                                             children: [
                                               Expanded(
@@ -616,7 +663,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                                     Text(
                                                       "Prev ${it.qtdPrevista.toStringAsFixed(0)}  até  "
                                                       "Real ${it.qtdRealizada.toStringAsFixed(0)}  até  "
-                                                      "Dif ${dif.toStringAsFixed(0)}",
+                                                      "Dif ${dif >= 0 ? "+" : ""}${dif.toStringAsFixed(0)}",
                                                       style: TextStyle(
                                                           color: Colors
                                                               .grey.shade800,
@@ -664,9 +711,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                               ),
                                             ],
                                           ),
-
                                           const SizedBox(height: 10),
-
                                           Row(
                                             children: [
                                               OutlinedButton.icon(

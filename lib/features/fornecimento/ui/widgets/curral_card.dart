@@ -116,3 +116,5 @@ class CurralCard extends StatelessWidget {
     );
   }
 }
+
+

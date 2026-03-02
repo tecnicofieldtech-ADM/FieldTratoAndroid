@@ -396,6 +396,7 @@ class FornecimentoRepo {
     required double pesoFim,
     required double realizadoKg,
     required String idUsuario,
+    int origemMapa = 0,
   }) async {
     final user = idUsuario.trim();
     if (user.isEmpty) {
@@ -449,6 +450,7 @@ class FornecimentoRepo {
       pesoFim: pesoFim,
       realizado: realizadoKg,
       previsto: previstoKg,
+      mapa: origemMapa,
     );
 
     if (kDebugMode) {
@@ -501,6 +503,32 @@ class FornecimentoRepo {
 
   Future<void> marcarSyncOk(String id) => _dao.marcarSyncOk(id);
 
+  Future<int> reabilitarSyncFiltrados({
+    required DateTime data,
+    required List<CurralPrev> itens,
+  }) async {
+    final vistos = <String>{};
+    var total = 0;
+
+    for (final c in itens) {
+      final idFornecimento = (c.idFornecimento ?? "").trim();
+      final idBaia = c.idBaia.trim();
+      if (idFornecimento.isEmpty || idBaia.isEmpty) continue;
+
+      final key = "${c.trato}|$idFornecimento|$idBaia";
+      if (!vistos.add(key)) continue;
+
+      total += await _dao.marcarSyncPendentePorChave(
+        data: data,
+        trato: c.trato,
+        idFornecimento: idFornecimento,
+        idBaia: idBaia,
+      );
+    }
+
+    return total;
+  }
+
   // ===========================
   // Mantidos (upsert usado por import/sync de fora)
   // ===========================
@@ -521,6 +549,7 @@ class FornecimentoRepo {
     int? trato,
     String? idRacao,
     String? racaoNome,
+    String? linha,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
@@ -532,6 +561,7 @@ class FornecimentoRepo {
       trato: trato,
       idRacao: idRacao,
       racaoNome: racaoNome,
+      linha: linha,
       curralNome: curralNome,
       realizadoMaiorZero: realizadoMaiorZero,
     );
@@ -543,6 +573,7 @@ class FornecimentoRepo {
     int? trato,
     String? idRacao,
     String? racaoNome,
+    String? linha,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
@@ -552,6 +583,7 @@ class FornecimentoRepo {
       idFazenda: idFazenda,
       idRacao: idRacao,
       racaoNome: racaoNome,
+      linha: linha,
       curralNome: curralNome,
       realizadoMaiorZero: realizadoMaiorZero,
     );
@@ -607,6 +639,7 @@ class FornecimentoRepo {
     String? idFazenda,
     String? idRacao,
     String? racaoNome,
+    String? linha,
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
@@ -640,6 +673,12 @@ class FornecimentoRepo {
     if (curral.isNotEmpty) {
       where.write(" AND UPPER(db.${FornTables.dbNomeLocal}) LIKE UPPER(?) ");
       args.add("%$curral%");
+    }
+
+    final linhaTxt = (linha ?? "").trim();
+    if (linhaTxt.isNotEmpty) {
+      where.write(" AND TRIM(db.${FornTables.dbLinha}) = TRIM(?) ");
+      args.add(linhaTxt);
     }
 
     if (realizadoMaiorZero == true) {
@@ -735,3 +774,5 @@ class FornecimentoRepo {
     return _dao.rawQuery(sql, args);
   }
 }
+
+

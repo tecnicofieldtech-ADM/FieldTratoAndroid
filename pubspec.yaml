@@ -1,8 +1,8 @@
 name: rfeed_flutter
-description: RFeed Automação - Flutter
+description: RFeed AutomaÃ§Ã£o - Flutter
 publish_to: "none"
 
-version: 1.0.0+1
+version: 1.0.7+11
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
@@ -25,10 +25,24 @@ dependencies:
   fl_chart: ^0.66.0
   http: ^1.2.2
   flutter_lints: ^5.0.0
+  package_info_plus: ^9.0.0
+
+dev_dependencies:
+  flutter_launcher_icons: ^0.13.1
 
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/logo_rfeed.png
+    - assets/images/logo_rfeed_x.png
+    - assets/images/logo_rfeed_x_padded.png
     - assets/images/bg_boi_tech.png
+    - assets/images/truck.png
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/images/logo_rfeed_x_padded.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/logo_rfeed_x_padded.png"

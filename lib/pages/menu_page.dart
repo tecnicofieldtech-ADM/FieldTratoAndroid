@@ -1,4 +1,4 @@
-﻿// lib/pages/menu_page.dart
+// lib/pages/menu_page.dart
 import "package:flutter/material.dart";
 import "../repo/config_repo.dart";
 import "../services/carregamento_bridge.dart";
@@ -53,7 +53,7 @@ class _MenuPageState extends State<MenuPage> {
     const padding = 18.0;
     const gap = 12.0;
 
-    // âœ… ajuste pro seu caminho real
+    // â ajuste pro seu caminho real
     const bgAsset = "assets/images/bg_boi_tech.png";
 
     return Scaffold(
@@ -69,7 +69,7 @@ class _MenuPageState extends State<MenuPage> {
             errorBuilder: (_, __, ___) => const SizedBox.expand(),
           ),
 
-          // leve â€œwashâ€ para a logo e botÃµes destacarem
+          // leve âwashâ para a logo e botÃµes destacarem
           Container(color: Colors.white.withValues(alpha: 0.50)),
 
           SafeArea(
@@ -82,12 +82,13 @@ class _MenuPageState extends State<MenuPage> {
                   // 2 colunas fixas
                   final tileW = (w - gap) / 2;
 
-                  // âœ… altura um pouco maior (antes ~56-70)
+                  // â altura um pouco maior (antes ~56-70)
                   final tileH = (w * 0.18).clamp(66.0, 86.0);
 
                   final t = _tipoTrabalho;
-                  final podeFabricar = (t == null) || t == 0 || t == 1;
+                  final podeFabricar = (t == null) || t == 0 || t == 1 || t == 2;
                   final podeFornecer = (t == null) || t == 0 || t == 2;
+                  final podeCarregamento = t == 2;
 
                   return Column(
                     children: [
@@ -239,12 +240,19 @@ class _MenuPageState extends State<MenuPage> {
                                     width: tileW,
                                     height: tileH,
                                     child: _Tile(
-                                      icon: Icons.nfc,
-                                      title: "Gravar TAG",
+                                      icon: Icons.download_for_offline_outlined,
+                                      title: "Carregamento",
                                       bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
-                                      onTap: () => _toast(
-                                          context, "Em breve: Gravar TAG"),
+                                      enabled: podeCarregamento,
+                                      onTap: () => _go(
+                                        context,
+                                        "/carregamento-estacionario",
+                                      ),
+                                      onDisabledTap: () => _toast(
+                                        context,
+                                        "Modo Estacionario: funcao exclusiva do distribuidor.",
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: gap),
@@ -256,9 +264,33 @@ class _MenuPageState extends State<MenuPage> {
                                       title: "Dashboard",
                                       bg: Colors.black.withValues(alpha: 0.80),
                                       fg: Colors.white,
-                                      onTap: () => _toast(
-                                          context, "Em breve: Dashboard"),
+                                      onTap: () => _go(context, "/dashboard"),
                                     ),
+                                  ),
+                                ],
+                              ),
+
+                              const SizedBox(height: gap),
+
+                              // ===== LINHA 4 =====
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: _Tile(
+                                      icon: Icons.nfc,
+                                      title: "Gravar TAG",
+                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      fg: Colors.white,
+                                      onTap: () => _go(context, "/grava-tag"),
+                                    ),
+                                  ),
+                                  const SizedBox(width: gap),
+                                  SizedBox(
+                                    width: tileW,
+                                    height: tileH,
+                                    child: const SizedBox.shrink(),
                                   ),
                                 ],
                               ),
@@ -269,7 +301,31 @@ class _MenuPageState extends State<MenuPage> {
                         ),
                       ),
 
-                      // âœ… SAIR NO RODAPÃ‰ (fixo)
+                      // â SAIR NO RODAPÃ (fixo)
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            side: BorderSide(
+                              color: Colors.black.withValues(alpha: 0.35),
+                            ),
+                            foregroundColor: Colors.black87,
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.9),
+                          ),
+                          onPressed: () => _go(context, "/about"),
+                          icon: const Icon(Icons.info_outline),
+                          label: const Text(
+                            "Sobre o app",
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       SizedBox(
                         width: double.infinity,
                         height: 52,

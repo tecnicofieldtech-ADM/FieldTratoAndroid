@@ -1,3 +1,5 @@
+import "fabricacao_flow.dart";
+
 // lib/features/fabricacao/domain/models.dart
 
 class Dieta {
@@ -77,6 +79,10 @@ class FabricacaoHeader {
 
   /// 0/1
   final int finalizada;
+  final FabricacaoStatus status;
+  final String handoffId;
+  final String exportadoEm;
+  final String originDevice;
 
   /// 0/1
   final int carregada;
@@ -92,6 +98,10 @@ class FabricacaoHeader {
     required this.qtdPrevista,
     required this.qtdRealizada,
     required this.finalizada,
+    required this.status,
+    required this.handoffId,
+    required this.exportadoEm,
+    required this.originDevice,
     required this.carregada,
     required this.dataFabricacao,
   });
@@ -109,6 +119,11 @@ class FabricacaoHeader {
         qtdPrevista: _toDouble(m['qtd_prevista'] ?? m['QTD_PREVISTA']),
         qtdRealizada: _toDouble(m['qtd_realizada'] ?? m['QTD_REALIZADA']),
         finalizada: _toInt(m['finalizada'] ?? m['FINALIZADA']),
+        status: fabricacaoStatusFromDb(m["fab_status"] ?? m["FAB_STATUS"]),
+        handoffId: (m["handoff_id"] ?? m["HANDOFF_ID"] ?? "").toString(),
+        exportadoEm: (m["exportado_em"] ?? m["EXPORTADO_EM"] ?? "").toString(),
+        originDevice:
+            (m["origin_device"] ?? m["ORIGIN_DEVICE"] ?? "").toString(),
         carregada: _toInt(m['carregada'] ?? m['CARREGADA']),
         dataFabricacao: (m['data_fabricacao'] ??
                 m['DATA_FABRICACAO'] ??
@@ -119,6 +134,9 @@ class FabricacaoHeader {
       );
 
   bool get emAberto => finalizada == 0;
+  bool get pendenteCaminhao => status == FabricacaoStatus.pendenteCaminhao;
+  bool get finalizadaFlow => status == FabricacaoStatus.finalizada;
+  bool get bloqueadaEdicaoEstacionario => pendenteCaminhao;
 
   /// ✅ usado no ListTile
   String get dataLabel {
@@ -142,6 +160,10 @@ class FabricacaoHeader {
     double? qtdPrevista,
     double? qtdRealizada,
     int? finalizada,
+    FabricacaoStatus? status,
+    String? handoffId,
+    String? exportadoEm,
+    String? originDevice,
     int? carregada,
   }) {
     return FabricacaoHeader(
@@ -152,6 +174,10 @@ class FabricacaoHeader {
       qtdPrevista: qtdPrevista ?? this.qtdPrevista,
       qtdRealizada: qtdRealizada ?? this.qtdRealizada,
       finalizada: finalizada ?? this.finalizada,
+      status: status ?? this.status,
+      handoffId: handoffId ?? this.handoffId,
+      exportadoEm: exportadoEm ?? this.exportadoEm,
+      originDevice: originDevice ?? this.originDevice,
       carregada: carregada ?? this.carregada,
       dataFabricacao: dataFabricacao,
     );
@@ -175,3 +201,5 @@ double _toDouble(Object? v) {
   if (v is num) return v.toDouble();
   return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0.0;
 }
+
+

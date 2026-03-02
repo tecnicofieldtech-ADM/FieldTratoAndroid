@@ -1,10 +1,10 @@
-﻿import "package:flutter/material.dart";
+import "package:flutter/material.dart";
 import "../repo/user_repo.dart";
 import "../widgets/app_logo.dart";
 import "../services/session_service.dart";
 
-import "package:rfeed_flutter/db/app_db.dart";
-import "package:rfeed_flutter/features/fornecimento/data/fornecimento_tables.dart";
+import "../db/app_db.dart";
+import "../features/fornecimento/data/fornecimento_tables.dart";
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -106,7 +106,7 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
 
-      // ✅ sessão global + persistência (sua)
+      // ? sessão global + persistência (sua)
       await SessionService.instance.setLogin(
         userId: id,
         nome: nome,
@@ -114,14 +114,14 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       // =========================================================
-      // ✅🔥 GRAVA ULTIMO_LOGIN (pra getUsuarioAtualId funcionar)
+      // ??? GRAVA ULTIMO_LOGIN (pra getUsuarioAtualId funcionar)
       // =========================================================
       final db = await AppDb.instance.db;
 
       // garante só 1 registro
       await db.delete(FornTables.ultimoLogin);
 
-      // ⚠️ ajuste os nomes das colunas conforme sua tabela ULTIMO_LOGIN
+      // ?? ajuste os nomes das colunas conforme sua tabela ULTIMO_LOGIN
       await db.insert(
         FornTables.ultimoLogin,
         {
@@ -131,7 +131,7 @@ class _LoginPageState extends State<LoginPage> {
         },
       );
 
-      debugPrint("✅ LOGADO userId=${SessionService.instance.userId}");
+      debugPrint("? LOGADO userId=${SessionService.instance.userId}");
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, "/menu");
@@ -292,3 +292,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 }
+
+
+

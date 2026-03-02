@@ -72,6 +72,9 @@ class FornTables {
   static const String cfTrato = "TRATO";
   static const String cfIdUsuario = "ID_USUARIO";
   static const String cfIdDieta = "ID_DIETA";
+  static const String cfMapa = "MAPA";
 
   
 }
+
+

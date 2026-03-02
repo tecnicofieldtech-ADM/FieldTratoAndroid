@@ -1,8 +1,10 @@
 // lib/features/fabricacao/data/fabricacao_repo.dart
 import "dart:math";
+import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
 import "../domain/models.dart";
+import "../domain/fabricacao_flow.dart";
 
 class FabricacaoRepo {
   Future<Database> get _db async => AppDb.instance.db;
@@ -56,6 +58,57 @@ class FabricacaoRepo {
   }
 
   // =========================================================
+  // RESUMO POR DIETA/DATA/TRATO (PREVISAO)
+  // =========================================================
+  Future<List<Map<String, Object?>>> listResumoPorDietaDataTrato({
+    required String idDieta,
+    int? trato,
+    DateTime? data,
+  }) async {
+    const t = "PREVISAO";
+    if (!await _hasTable(t)) return [];
+
+    final where = <String>[];
+    final args = <Object?>[];
+
+    final dieta = idDieta.trim();
+    if (dieta.isNotEmpty) {
+      where.add("TRIM(COALESCE(p.ID_RACAO,'')) = TRIM(?)");
+      args.add(dieta);
+    }
+
+    if (trato != null && trato > 0) {
+      where.add("COALESCE(p.TRATO,0) = ?");
+      args.add(trato);
+    }
+
+    final d = data ?? DateTime.now();
+    final y = d.year.toString().padLeft(4, "0");
+    final m = d.month.toString().padLeft(2, "0");
+    final dd = d.day.toString().padLeft(2, "0");
+    final ymd = "$y-$m-$dd";
+    where.add("substr(COALESCE(p.DATA,''),1,10) = ?");
+    args.add(ymd);
+
+    final sql = """
+      SELECT
+        COALESCE(p.ID_RACAO,'') AS id_dieta,
+        substr(COALESCE(p.DATA,''),1,10) AS data_ymd,
+        COALESCE(p.TRATO,0) AS trato,
+        SUM(COALESCE(p.PREVISTO_KG,0)) AS previsto,
+        SUM(COALESCE(p.REALIZADO_KG,0)) AS realizado
+      FROM PREVISAO p
+      ${where.isEmpty ? "" : "WHERE ${where.join(" AND ")}"}
+      GROUP BY id_dieta, data_ymd, trato
+      ORDER BY data_ymd DESC, trato ASC
+    """;
+
+    final db = await _db;
+    final rows = await db.rawQuery(sql, args);
+    return rows.map((e) => _lowerKeys(Map<String, Object?>.from(e))).toList();
+  }
+
+  // =========================================================
   // COMPAT
   // =========================================================
 
@@ -76,7 +129,11 @@ class FabricacaoRepo {
 
     final statusCol = await _pickCol(t, ["STATUS"]);
     final finalizadaCol = await _pickCol(t, ["FINALIZADA"]);
+    final fabStatusCol = await _pickCol(t, ["FAB_STATUS"]);
     final carregadaCol = await _pickCol(t, ["CARREGADA"]);
+    final handoffCol = await _pickCol(t, ["HANDOFF_ID"]);
+    final exportadoEmCol = await _pickCol(t, ["EXPORTADO_EM"]);
+    final originDeviceCol = await _pickCol(t, ["ORIGIN_DEVICE"]);
 
     final tratoCol = await _pickCol(t, ["TRATO"]);
     final idFazCol = await _pickCol(t, ["ID_FAZENDA", "IDFAZENDA"]);
@@ -123,6 +180,10 @@ class FabricacaoRepo {
       ${sel("qtd_prevista", prevCol != null ? "f.$prevCol" : null, "0")},
       ${sel("qtd_realizada", realCol != null ? "f.$realCol" : null, "0")},
       ${sel("finalizada", finalizadaCol != null ? "f.$finalizadaCol" : null, "0")},
+      ${sel("fab_status", fabStatusCol != null ? "f.$fabStatusCol" : null, "0")},
+      ${sel("handoff_id", handoffCol != null ? "f.$handoffCol" : null, "''")},
+      ${sel("exportado_em", exportadoEmCol != null ? "f.$exportadoEmCol" : null, "''")},
+      ${sel("origin_device", originDeviceCol != null ? "f.$originDeviceCol" : null, "''")},
       ${sel("carregada", carregadaCol != null ? "f.$carregadaCol" : null, "0")},
       ${sel("data_fabricacao", dataFabCol != null ? "f.$dataFabCol" : null, "''")},
       ${sel("hora_inicio", horaIniCol != null ? "f.$horaIniCol" : null, "''")}
@@ -135,6 +196,9 @@ class FabricacaoRepo {
 
     if (statusCol != null) where.add("f.$statusCol = 1");
     if (finalizadaCol != null) where.add("COALESCE(f.$finalizadaCol,0) = 0");
+    if (fabStatusCol != null) {
+      where.add("COALESCE(f.$fabStatusCol,0) = $fabricacaoStatusEmAndamento");
+    }
 
     if (idFazCol != null && idFazenda != null && idFazenda.trim().isNotEmpty) {
       where.add("f.$idFazCol = ?");
@@ -177,7 +241,11 @@ class FabricacaoRepo {
     final idCol = await _pickCol(t, ["ID"]) ?? "ID";
     final statusCol = await _pickCol(t, ["STATUS"]);
     final finalizadaCol = await _pickCol(t, ["FINALIZADA"]);
+    final fabStatusCol = await _pickCol(t, ["FAB_STATUS"]);
     final carregadaCol = await _pickCol(t, ["CARREGADA"]);
+    final handoffCol = await _pickCol(t, ["HANDOFF_ID"]);
+    final exportadoEmCol = await _pickCol(t, ["EXPORTADO_EM"]);
+    final originDeviceCol = await _pickCol(t, ["ORIGIN_DEVICE"]);
     final tratoCol = await _pickCol(t, ["TRATO"]);
 
     final dataFabCol = await _pickCol(
@@ -213,6 +281,10 @@ class FabricacaoRepo {
       ${sel("qtd_prevista", prevCol != null ? "f.$prevCol" : null, "0")},
       ${sel("qtd_realizada", realCol != null ? "f.$realCol" : null, "0")},
       ${sel("finalizada", finalizadaCol != null ? "f.$finalizadaCol" : null, "0")},
+      ${sel("fab_status", fabStatusCol != null ? "f.$fabStatusCol" : null, "0")},
+      ${sel("handoff_id", handoffCol != null ? "f.$handoffCol" : null, "''")},
+      ${sel("exportado_em", exportadoEmCol != null ? "f.$exportadoEmCol" : null, "''")},
+      ${sel("origin_device", originDeviceCol != null ? "f.$originDeviceCol" : null, "''")},
       ${sel("carregada", carregadaCol != null ? "f.$carregadaCol" : null, "0")},
       ${sel("data_fabricacao", dataFabCol != null ? "f.$dataFabCol" : null, "''")},
       ${sel("hora_inicio", horaIniCol != null ? "f.$horaIniCol" : null, "''")}
@@ -357,52 +429,20 @@ class FabricacaoRepo {
     const t = "CADASTRO_FABRICA_RACAO";
     if (!await _hasTable(t)) return false;
 
-    final syncCol = await _pickCol(t, ["SYNCAWS", "SYNC_AWS", "SYNC"]);
-    if (syncCol != null) {
-      final db = await _db;
-      final r = await db.rawQuery(
-        "SELECT COALESCE($syncCol,0) AS v FROM $t WHERE ID = ? LIMIT 1",
-        [idFab],
-      );
-      if (r.isNotEmpty) {
-        final v = (r.first["v"] as num?)?.toInt() ?? 0;
-        if (v != 0) return false;
-      }
-    }
+    // Regra: pode excluir qualquer fabricação ainda não sincronizada.
+    final syncCol =
+        await _pickCol(t, ["FLAG_SYNC", "SYNCAWS", "SYNC_AWS", "SYNC"]);
+    if (syncCol == null) return false;
 
-    final realHeaderCol = await _pickCol(
-        t, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG", "REALIZADO"]);
-    if (realHeaderCol != null) {
-      final db = await _db;
-      final r = await db.rawQuery(
-        "SELECT COALESCE($realHeaderCol,0) AS v FROM $t WHERE ID = ? LIMIT 1",
-        [idFab],
-      );
-      final v =
-          (r.isNotEmpty ? (r.first["v"] as num?)?.toDouble() : 0.0) ?? 0.0;
-      if (v > 0) return false;
-    }
+    final db = await _db;
+    final r = await db.rawQuery(
+      "SELECT COALESCE($syncCol,0) AS v FROM $t WHERE ID = ? LIMIT 1",
+      [idFab],
+    );
+    if (r.isEmpty) return false;
 
-    const d = "DETALHES_FABRICA_RACAO";
-    if (await _hasTable(d)) {
-      final idFabCol = await _pickCol(d,
-              ["ID_FABRICACAO", "IDFABRICACAO", "ID_CABECALHO", "ID_HEADER"]) ??
-          "ID_FABRICACAO";
-      final realDetCol =
-          await _pickCol(d, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG"]);
-      if (realDetCol != null) {
-        final db = await _db;
-        final r = await db.rawQuery(
-          "SELECT COALESCE(SUM(COALESCE($realDetCol,0)),0) AS s FROM $d WHERE $idFabCol = ?",
-          [idFab],
-        );
-        final s =
-            (r.isNotEmpty ? (r.first["s"] as num?)?.toDouble() : 0.0) ?? 0.0;
-        if (s > 0) return false;
-      }
-    }
-
-    return true;
+    final v = (r.first["v"] as num?)?.toInt() ?? 0;
+    return v == 0;
   }
 
   Future<void> deleteFabricacao(String idFab) async {
@@ -497,6 +537,52 @@ class FabricacaoRepo {
     );
   }
 
+  Future<int> updateIngredienteFabricacaoRobusto({
+    required String idDet,
+    required String idFabricacao,
+    required String idInsumo,
+    required int ordem,
+    required double qtdRealizada,
+    required String horaInicio,
+    required String horaFim,
+  }) async {
+    const t = "DETALHES_FABRICA_RACAO";
+    if (!await _hasTable(t)) return 0;
+
+    final realCol =
+        await _pickCol(t, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG"]) ??
+            "QTD_REALIZADA";
+    final horaIniCol =
+        await _pickCol(t, ["HORA_INICIO", "HORAINI", "HORA_INI"]);
+    final horaFimCol =
+        await _pickCol(t, ["HORA_FIM", "HORAFIM", "HORA_FIM_INSUMO"]);
+
+    final values = <String, Object?>{
+      realCol: qtdRealizada,
+    };
+    if (horaIniCol != null) values[horaIniCol] = horaInicio;
+    if (horaFimCol != null) values[horaFimCol] = horaFim;
+
+    final db = await _db;
+    final det = idDet.trim();
+    if (det.isEmpty) return 0;
+
+    final updated = await db.update(
+      t,
+      values,
+      where: "TRIM(COALESCE(ID,'')) = TRIM(?)",
+      whereArgs: [det],
+    );
+
+    if (updated <= 0 && kDebugMode) {
+      debugPrint(
+        "[FAB] persist falhou por ID det='$idDet' fab='$idFabricacao' insumo='$idInsumo' ordem=$ordem",
+      );
+    }
+
+    return updated;
+  }
+
   // =========================================================
   // ✅ TOTAL REALIZADO DO HEADER
   // =========================================================
@@ -536,6 +622,7 @@ class FabricacaoRepo {
         "QTD_REALIZADA";
     final fimCol = await _pickCol(h, ["HORA_FIM", "HORAFIM", "HORA_FIM_FAB"]);
     final finCol = await _pickCol(h, ["FINALIZADA"]);
+    final fabStatusCol = await _pickCol(h, ["FAB_STATUS"]);
 
     final values = <String, Object?>{
       realCol: qtdRealizada,
@@ -543,6 +630,9 @@ class FabricacaoRepo {
 
     if (fimCol != null) values[fimCol] = horaFim;
     if (finCol != null) values[finCol] = finalizada;
+    if (fabStatusCol != null && finalizada == 1) {
+      values[fabStatusCol] = fabricacaoStatusFinalizada;
+    }
 
     final db = await _db;
     await db.update(
@@ -753,6 +843,99 @@ class FabricacaoRepo {
       where: "ID = ?",
       whereArgs: [idFabricacao],
     );
+  }
+
+  Future<String> ensureHandoffId(String idFabricacao) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return "";
+
+    final handoffCol = await _pickCol(h, ["HANDOFF_ID"]);
+    if (handoffCol == null) return "";
+
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE($handoffCol,'') AS v FROM $h WHERE ID = ? LIMIT 1",
+      [idFabricacao],
+    );
+    final atual = rows.isEmpty ? "" : (rows.first["v"] ?? "").toString().trim();
+    if (atual.isNotEmpty) return atual;
+
+    final novo = _genUuid();
+    await db.update(
+      h,
+      {handoffCol: novo},
+      where: "ID = ?",
+      whereArgs: [idFabricacao],
+    );
+    return novo;
+  }
+
+  Future<void> marcarPendenteCaminhao(String idFabricacao) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return;
+
+    final fabStatusCol = await _pickCol(h, ["FAB_STATUS"]);
+    final exportadoEmCol = await _pickCol(h, ["EXPORTADO_EM"]);
+    final finalizadaCol = await _pickCol(h, ["FINALIZADA"]);
+    final originDeviceCol = await _pickCol(h, ["ORIGIN_DEVICE"]);
+
+    final handoffId = await ensureHandoffId(idFabricacao);
+
+    final values = <String, Object?>{};
+    if (fabStatusCol != null) {
+      values[fabStatusCol] = fabricacaoStatusPendenteCaminhao;
+    }
+    if (exportadoEmCol != null) {
+      values[exportadoEmCol] = DateTime.now().toIso8601String();
+    }
+    if (finalizadaCol != null) {
+      values[finalizadaCol] = 0;
+    }
+    if (originDeviceCol != null) {
+      values[originDeviceCol] = "ESTACIONARIO";
+    }
+    if (values.isNotEmpty) {
+      final db = await _db;
+      await db.update(
+        h,
+        values,
+        where: "ID = ?",
+        whereArgs: [idFabricacao],
+      );
+    }
+
+    if (kDebugMode) {
+      debugPrint("[FAB] parcial->pendente fab=$idFabricacao handoff=$handoffId");
+    }
+  }
+
+  Future<void> marcarFinalizadaComOrigem(
+      String idFabricacao, String originDevice) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return;
+    final fabStatusCol = await _pickCol(h, ["FAB_STATUS"]);
+    final originDeviceCol = await _pickCol(h, ["ORIGIN_DEVICE"]);
+    final values = <String, Object?>{};
+    if (fabStatusCol != null) values[fabStatusCol] = fabricacaoStatusFinalizada;
+    if (originDeviceCol != null) values[originDeviceCol] = originDevice;
+    if (values.isEmpty) return;
+    final db = await _db;
+    await db.update(h, values, where: "ID = ?", whereArgs: [idFabricacao]);
+  }
+
+  Future<bool> isPendenteCaminhao(String idFabricacao) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return false;
+    final fabStatusCol = await _pickCol(h, ["FAB_STATUS"]);
+    if (fabStatusCol == null) return false;
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE($fabStatusCol,0) AS st FROM $h WHERE ID = ? LIMIT 1",
+      [idFabricacao],
+    );
+    if (rows.isEmpty) return false;
+    final st = (rows.first["st"] as num?)?.toInt() ?? 0;
+    return st == fabricacaoStatusPendenteCaminhao;
   }
 
   // =========================================================

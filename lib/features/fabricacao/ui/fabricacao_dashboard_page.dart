@@ -1,4 +1,4 @@
-﻿import "dart:math";
+import "dart:math";
 import "package:fl_chart/fl_chart.dart";
 import "package:flutter/material.dart";
 
@@ -34,8 +34,10 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   List<Map<String, Object?>> _pendList = const [];
 
   // RANKING + META
-  double _metaAcertoPct = 0.0; // ✅ vem da config (TOLERANCIA_CARREGAMENTO)
+  double _metaAcertoPct = 0.0; // ? vem da config (TOLERANCIA_CARREGAMENTO)
   List<Map<String, Object?>> _ranking = const [];
+  List<Map<String, Object?>> _racoes = const [];
+  String? _idDietaFiltro;
 
   String _iso(DateTime d) =>
       "${d.year.toString().padLeft(4, "0")}-${d.month.toString().padLeft(2, "0")}-${d.day.toString().padLeft(2, "0")}";
@@ -49,7 +51,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     _load();
   }
 
-  // ✅ double seguro para % (aceita vírgula e ponto)
+  // double seguro para % (aceita virgula e ponto)
   double _asDouble(dynamic v, double def) {
     final s = (v ?? "").toString().trim();
     if (s.isEmpty) return def;
@@ -72,29 +74,46 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final dataIso = _iso(_date);
+    final idDieta =
+        (_idDietaFiltro ?? "").trim().isEmpty ? null : _idDietaFiltro;
 
     try {
-      // ✅ carrega META da configuração (TOLERANCIA_CARREGAMENTO)
+      // ? carrega META da configuracao (TOLERANCIA_CARREGAMENTO)
       final cfg = await _cfgRepo.getConfig();
       final meta = _asDouble(cfg?["TOLERANCIA_CARREGAMENTO"], 0.0);
 
-      final totals = await _dash.totalsDoDia(dataIso);
-      final pend = await _dash.pendentesSyncDoDia(dataIso);
-      final irreg = await _dash.irregularesCount(dataIso);
+      final racoes = await _dash.racoesDoDia(dataIso);
+      final totals = await _dash.totalsDoDia(dataIso, idDieta: idDieta);
+      final pend = await _dash.pendentesSyncDoDia(dataIso, idDieta: idDieta);
+      final irreg = await _dash.irregularesCount(dataIso, idDieta: idDieta);
 
-      final porRacao = await _dash.porRacao(dataIso);
-      final porTrato = await _dash.porTrato(dataIso);
-      final topInsumos = await _dash.topInsumosDif(dataIso, limit: 10);
+      final porRacao = await _dash.porRacao(dataIso, idDieta: idDieta);
+      final porTrato = await _dash.porTrato(dataIso, idDieta: idDieta);
+      final topInsumos =
+          await _dash.topInsumosDif(dataIso, limit: 10, idDieta: idDieta);
 
-      final irregList = await _dash.irregularesList(dataIso, limit: 30);
-      final pendList = await _dash.pendentesSyncList(dataIso, limit: 30);
+      final irregList =
+          await _dash.irregularesList(dataIso, limit: 30, idDieta: idDieta);
+      final pendList =
+          await _dash.pendentesSyncList(dataIso, limit: 30, idDieta: idDieta);
 
-      // ✅ ranking
-      final ranking = await _dash.topAcertosDoDia(dataIso, limit: 10);
+      // ? ranking
+      final ranking =
+          await _dash.topAcertosDoDia(dataIso, limit: 10, idDieta: idDieta);
 
       if (!mounted) return;
       setState(() {
-        _metaAcertoPct = meta; // ✅ aqui atualiza
+        _racoes = racoes;
+        if (_idDietaFiltro != null && _idDietaFiltro!.trim().isNotEmpty) {
+          final exists = _racoes.any(
+            (e) =>
+                (e["idDieta"] ?? "").toString().trim() ==
+                _idDietaFiltro!.trim(),
+          );
+          if (!exists) _idDietaFiltro = null;
+        }
+
+        _metaAcertoPct = meta;
         _totals = totals;
         _pendentes = pend;
         _irreg = irreg;
@@ -114,7 +133,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   double get _real => (_totals["realizado"] ?? 0).toDouble();
   int get _qtd => (_totals["qtd"] ?? 0).toInt();
 
-  // ✅ CARD BLINDADO (não estoura)
+  // CARD blindado (nao estoura)
   Widget _card({
     required String title,
     required String value,
@@ -202,51 +221,51 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   }
 
   // =========================================================
-  // ✅ FRASES ENGRAÇADAS / INCENTIVO
+  // Frases de incentivo
   // =========================================================
   String _incentivo(double acerto, double meta) {
     if (acerto >= meta) {
       const wins = [
-        "Parabéns! Você tá em outro patamar 🏆",
-        "Meta batida! Hoje o vagão tá ON 🔥",
-        "Precisão cirúrgica! Dá até gosto 😎",
-        "Tá voando baixo! 🚀",
-        "Isso aí é nível PRO 🫡",
+        "Parabens! Voce ta em outro patamar.",
+        "Meta batida! Hoje o vagao ta ON.",
+        "Precisao cirurgica! Da ate gosto.",
+        "Ta voando baixo!",
+        "Isso ai e nivel PRO.",
       ];
       return wins[Random().nextInt(wins.length)];
     }
 
     if (acerto >= meta - 2) {
       const near = [
-        "Quase lá! Só ajustar a pontinha 🤏",
-        "Tá no cheiro da meta! Bora fechar ✅",
-        "Faltou só um tiquinho! 😄",
-        "Tá muito bom… dá pra cravar! 🎯",
+        "Quase la! So ajustar a pontinha.",
+        "Ta no cheiro da meta! Bora fechar.",
+        "Faltou so um tiquinho!",
+        "Ta muito bom... da pra cravar!",
       ];
       return near[Random().nextInt(near.length)];
     }
 
     if (acerto >= meta - 6) {
       const mid = [
-        "Bom! Mas dá pra caprichar mais 😄",
-        "Tá legal… bora afinar esse trato 🔧",
-        "Hoje tá “quase perfeito” 😄",
-        "Vamos buscar o modo sniper 🎯",
+        "Bom! Mas da pra caprichar mais.",
+        "Ta legal... bora afinar esse trato.",
+        "Hoje ta quase perfeito.",
+        "Vamos buscar o modo sniper.",
       ];
       return mid[Random().nextInt(mid.length)];
     }
 
     const low = [
-      "Sem crise! Amanhã a gente amassa 💪",
-      "Hoje foi treino… amanhã é campeonato 😄",
-      "Respira… recalcula… e bora! 🔥",
-      "Ainda dá tempo de virar o jogo 😎",
+      "Sem crise! Amanha a gente amassa.",
+      "Hoje foi treino... amanha e campeonato.",
+      "Respira... recalcula... e bora!",
+      "Ainda da tempo de virar o jogo.",
     ];
     return low[Random().nextInt(low.length)];
   }
 
   Widget _metaBanner(double realizPct) {
-    // ✅ se meta for 0 (não configurado), evita comparar e mostra aviso neutro
+    // Se meta for 0 (nao configurado), evita comparar e mostra aviso neutro
     final meta = _metaAcertoPct;
     final metaOk = meta > 0;
 
@@ -287,8 +306,8 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
               metaOk
                   ? (ok
                       ? "Meta do dia batida! ${_incentivo(realizPct, meta)}"
-                      : "Ainda dá pra bater a meta 😄 ${_incentivo(realizPct, meta)}")
-                  : "Meta não configurada. Defina em Configuração → Fabricação (Tolerância %).",
+                      : "Ainda da pra bater a meta. ${_incentivo(realizPct, meta)}")
+                  : "Meta nao configurada. Defina em Configuracao > Fabricacao (Tolerancia %).",
               style: const TextStyle(fontWeight: FontWeight.w900),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -300,10 +319,10 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
   }
 
   String _medal(int pos) {
-    if (pos == 0) return "🥇";
-    if (pos == 1) return "🥈";
-    if (pos == 2) return "🥉";
-    return "🏅";
+    if (pos == 0) return "1o";
+    if (pos == 1) return "2o";
+    if (pos == 2) return "3o";
+    return "Top";
   }
 
   Widget _rankingCard() {
@@ -324,7 +343,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     final topPct = ((top1["acerto_pct"] as num?) ?? 0).toDouble();
 
     final metaTxt =
-        _metaAcertoPct > 0 ? "${_metaAcertoPct.toStringAsFixed(1)}%" : "—";
+        _metaAcertoPct > 0 ? "${_metaAcertoPct.toStringAsFixed(1)}%" : "-";
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -343,7 +362,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
             subtitle: Text(
-              "Meta: $metaTxt • ${_incentivo(topPct, _metaAcertoPct)}",
+              "Meta: $metaTxt - ${_incentivo(topPct, _metaAcertoPct)}",
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -374,12 +393,12 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                 minVerticalPadding: 6,
                 leading: Text(_medal(i), style: const TextStyle(fontSize: 18)),
                 title: Text(
-                  dieta.isEmpty ? "(Sem nome de ração)" : dieta,
+                  dieta.isEmpty ? "(Sem nome de racao)" : dieta,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  "Trato $trato • Prev ${prev.toStringAsFixed(0)} • Real ${real.toStringAsFixed(0)}",
+                  "Trato $trato - Prev ${prev.toStringAsFixed(0)} - Real ${real.toStringAsFixed(0)}",
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -412,7 +431,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
 
               if (!dentro) return tile;
 
-              // ✅ animação pulse ao renderizar
+              // animacao pulse ao renderizar
               return TweenAnimationBuilder<double>(
                 tween: Tween(begin: 0.98, end: 1.0),
                 duration: const Duration(milliseconds: 450),
@@ -436,7 +455,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     if (rows.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(14),
-        child: Text("Sem dados para o período."),
+        child: Text("Sem dados para o periodo."),
       );
     }
 
@@ -498,9 +517,114 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                   return Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
-                      txt.length > 10 ? "${txt.substring(0, 10)}…" : txt,
+                      txt.length > 7 ? "${txt.substring(0, 7)}..." : txt,
                       style: const TextStyle(
-                        fontSize: 10,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _barDiffChart(List<Map<String, Object?>> rows,
+      {required String xKey}) {
+    if (rows.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(14),
+        child: Text("Sem dados para o perï¿½odo."),
+      );
+    }
+
+    final diffs = rows
+        .map((e) =>
+            ((e["realizado"] as num?) ?? 0).toDouble() -
+            ((e["previsto"] as num?) ?? 0).toDouble())
+        .toList();
+    final maxAbs = diffs.map((v) => v.abs()).fold<double>(0, max);
+    final lim = maxAbs <= 0 ? 10.0 : maxAbs * 1.2;
+
+    String label(int i) {
+      final v = rows[i][xKey];
+      return (v ?? "").toString();
+    }
+
+    return SizedBox(
+      height: 220,
+      child: BarChart(
+        BarChartData(
+          minY: -lim,
+          maxY: lim,
+          baselineY: 0,
+          groupsSpace: 14,
+          barGroups: List.generate(rows.length, (i) {
+            final dif = diffs[i];
+            return BarChartGroupData(
+              x: i,
+              showingTooltipIndicators: const [0],
+              barRods: [
+                BarChartRodData(
+                  toY: dif,
+                  width: 9,
+                  color: dif >= 0 ? Colors.deepOrange : Colors.indigo,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ],
+            );
+          }),
+          gridData: const FlGridData(show: true),
+          borderData: FlBorderData(show: false),
+          barTouchData: BarTouchData(
+            enabled: true,
+            touchTooltipData: BarTouchTooltipData(
+              fitInsideHorizontally: true,
+              fitInsideVertically: true,
+              getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                final val = rod.toY;
+                final txt = val >= 0
+                    ? "+${val.toStringAsFixed(0)}"
+                    : val.toStringAsFixed(0);
+                return BarTooltipItem(
+                  "Dif $txt",
+                  const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12,
+                  ),
+                );
+              },
+            ),
+          ),
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            leftTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: true, reservedSize: 42),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 34,
+                getTitlesWidget: (value, meta) {
+                  final i = value.toInt();
+                  if (i < 0 || i >= rows.length) return const SizedBox.shrink();
+                  final txt = label(i);
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      txt.length > 7 ? "${txt.substring(0, 7)}..." : txt,
+                      style: const TextStyle(
+                        fontSize: 9,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -541,7 +665,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
           minVerticalPadding: 6,
           title: Text(ins, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            "Prev ${prev.toStringAsFixed(0)} • Real ${real.toStringAsFixed(0)}",
+            "Prev ${prev.toStringAsFixed(0)} - Real ${real.toStringAsFixed(0)}",
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -576,8 +700,8 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
         children: [
           ListTile(
             leading: Icon(icon),
-            title:
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+            title: Text(title,
+                style: const TextStyle(fontWeight: FontWeight.w900)),
           ),
           const Divider(height: 1),
           if (rows.isEmpty)
@@ -608,7 +732,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                   title:
                       Text(dieta, maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(
-                    "Trato $trato • Prev ${prev.toStringAsFixed(0)} • Real ${real.toStringAsFixed(0)}",
+                    "Trato $trato - Prev ${prev.toStringAsFixed(0)} - Real ${real.toStringAsFixed(0)}",
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -637,8 +761,9 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final dif = _prev - _real;
+    final dif = _real - _prev;
     final pct = _prev <= 0 ? 0.0 : (_real / _prev) * 100.0;
+    final difPct = _prev <= 0 ? 0.0 : (dif / _prev) * 100.0;
 
     final w = MediaQuery.of(context).size.width;
     final isWide = w > 520;
@@ -658,15 +783,17 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
         icon: Icons.check_circle,
       ),
       _card(
-        title: "Diferença (kg)",
+        title: "Diferenca (kg)",
         value: dif >= 0 ? "+${dif.toStringAsFixed(0)}" : dif.toStringAsFixed(0),
         subtitle: isNarrow
             ? null
-            : (_prev <= 0 ? null : "Dif % ${(100 - pct).toStringAsFixed(1)}"),
+            : (_prev <= 0
+                ? null
+                : "Dif % ${difPct >= 0 ? "+" : ""}${difPct.toStringAsFixed(1)}"),
         icon: Icons.swap_vert,
       ),
       _card(
-        title: "Fabricações",
+        title: "Fabricacoes",
         value: _qtd.toString(),
         icon: Icons.receipt_long,
       ),
@@ -685,7 +812,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: const Text("Dashboard - Fabricação"),
+        title: const Text("Dashboard - Fabricacao"),
         actions: [
           IconButton(onPressed: _pickDate, icon: const Icon(Icons.event)),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
@@ -714,17 +841,50 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                       ),
                       const Spacer(),
                       Text(
-                        "Realização: ${pct.toStringAsFixed(1)}%",
+                        "Realizacao: ${pct.toStringAsFixed(1)}%",
                         style: const TextStyle(fontWeight: FontWeight.w900),
                       ),
                     ],
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: DropdownButtonFormField<String?>(
+                    initialValue: _idDietaFiltro,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: "Racao",
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text("Todas"),
+                      ),
+                      ..._racoes.map((e) {
+                        final id = (e["idDieta"] ?? "").toString().trim();
+                        final nome = (e["dieta"] ?? "").toString().trim();
+                        return DropdownMenuItem<String?>(
+                          value: id,
+                          child: Text(
+                            nome.isEmpty ? id : nome,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _idDietaFiltro = v);
+                      _load();
+                    },
+                  ),
+                ),
 
-                // ✅ banner com incentivo (agora com meta da config)
+                // ? banner com incentivo (agora com meta da config)
                 _metaBanner(pct),
 
-                // ✅ GRID BLINDADO
+                // ? GRID BLINDADO
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                   child: GridView.builder(
@@ -741,10 +901,10 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                   ),
                 ),
 
-                // ✅ RANKING TOP ACERTOS
+                // ? RANKING TOP ACERTOS
                 _rankingCard(),
 
-                _sectionTitle("Por Ração (Prev x Real)"),
+                _sectionTitle("Por Racao (Prev x Real)"),
                 Container(
                   margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   padding: const EdgeInsets.all(12),
@@ -754,6 +914,17 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                     border: Border.all(color: Colors.grey.shade200),
                   ),
                   child: _barCompareChart(_porRacao, xKey: "dieta"),
+                ),
+                _sectionTitle("Por Racao (Diferenca: Real - Prev)"),
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: _barDiffChart(_porRacao, xKey: "dieta"),
                 ),
 
                 _sectionTitle("Por Trato (Prev x Real)"),
@@ -767,8 +938,19 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
                   ),
                   child: _barCompareChart(_porTrato, xKey: "trato"),
                 ),
+                _sectionTitle("Por Trato (Diferenca: Real - Prev)"),
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: _barDiffChart(_porTrato, xKey: "trato"),
+                ),
 
-                _sectionTitle("Top Insumos (maior diferença)"),
+                _sectionTitle("Top Insumos (maior diferenca)"),
                 Container(
                   margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   decoration: BoxDecoration(
@@ -788,7 +970,7 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
 
                 _miniList(
                   _pendList,
-                  title: "Pendentes de sincronização",
+                  title: "Pendentes de sincronizacao",
                   icon: Icons.cloud_upload,
                   onTap: (row) => _openInsumos((row["id"] ?? "").toString()),
                 ),

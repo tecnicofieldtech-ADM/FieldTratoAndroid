@@ -1,7 +1,8 @@
-import "package:flutter/material.dart";
-import "features/espelho/controller/pa_server_controller.dart";
-import "features/espelho/data/mirror_targets_repo.dart";
-import "features/espelho/ui/pa_dashboard_page.dart";
+﻿import "package:flutter/material.dart";
+import "package:rfeed_pa/features/espelho/controller/pa_server_controller.dart";
+import "package:rfeed_pa/features/espelho/data/mirror_targets_repo.dart";
+import "package:rfeed_pa/features/espelho/ui/pa_dashboard_page.dart";
+import "package:rfeed_pa/features/espelho/ui/targets_list_page.dart";
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,11 +19,33 @@ class RFeedPaApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: "RFeed Pá",
+      title: "RFeed Pa",
       theme: ThemeData(
         useMaterial3: true,
       ),
-      home: PaDashboardPage(repo: repo, server: server),
+      home: PaStartPage(repo: repo, server: server),
+    );
+  }
+}
+
+class PaStartPage extends StatelessWidget {
+  const PaStartPage({super.key, required this.repo, required this.server});
+
+  final MirrorTargetsRepo repo;
+  final PaServerController server;
+
+  @override
+  Widget build(BuildContext context) {
+    return TargetsListPage(
+      repo: repo,
+      server: server,
+      onSelected: (_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => PaDashboardPage(repo: repo, server: server),
+          ),
+        );
+      },
     );
   }
 }

@@ -5,8 +5,11 @@ import "pages/config_page.dart";
 import "pages/login_page.dart";
 import "pages/menu_page.dart";
 import "pages/sync_page.dart";
+import "pages/about_page.dart";
+import "pages/grava_tag_page.dart";
+import "features/estacionario/ui/carregamento_estacionario_page.dart";
 
-// FABRICAÇÃO
+// FABRICAÃ‡ÃƒO
 import "features/fabricacao/ui/fabricacao_prefab_page.dart";
 import "features/fabricacao/ui/fabricacao_weigh_page.dart";
 import "features/fabricacao/ui/fabricacao_list_page.dart";
@@ -18,18 +21,20 @@ import "features/fornecimento/ui/fornecimento_pre_page.dart";
 import "features/fornecimento/ui/fornecimento_weigh_page.dart";
 import "features/fornecimento/domain/fornecimento_models.dart";
 import "features/fornecimento/data/fornecimento_repo.dart";
+import "features/dashboard/ui/dashboard_unificado_page.dart";
+import "features/dashboard/data/dashboard_unificado_repo.dart";
 
-// ✅ helpers
-import "package:rfeed_flutter/helpers/scale_comm.dart";
-import "package:rfeed_flutter/helpers/rfid_comm.dart";
+// âœ… helpers
+import "helpers/scale_comm.dart";
+import "helpers/rfid_comm.dart";
 
-// ✅ sessão global
+// âœ… sessÃ£o global
 import "services/session_service.dart";
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ carrega sessão do SharedPreferences (se tiver)
+  // âœ… carrega sessÃ£o do SharedPreferences (se tiver)
   await SessionService.instance.restore();
 
   runApp(const RFeedApp());
@@ -40,6 +45,7 @@ class RFeedApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const primaryGreen = Color(0xFF1B5E20);
     final theme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
@@ -47,18 +53,34 @@ class RFeedApp extends StatelessWidget {
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF0F766E),
         brightness: Brightness.light,
+      ).copyWith(
+        primary: primaryGreen,
+        secondary: primaryGreen,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0.5,
       ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: primaryGreen,
+          foregroundColor: Colors.white,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primaryGreen,
+          foregroundColor: Colors.white,
+        ),
+      ),
     );
 
     final fabRepo = FabricacaoRepo();
     final fornRepo = FornecimentoRepo();
+    final dashRepo = DashboardUnificadoRepo();
 
-    // ✅ singletons de comunicação
+    // âœ… singletons de comunicaÃ§Ã£o
     final scale = ScaleComm(
       host: "0.0.0.0",
       port: 0,
@@ -70,9 +92,11 @@ class RFeedApp extends StatelessWidget {
       host: "0.0.0.0",
       port: 0,
       autoReconnect: true,
+      readWatchdog: Duration.zero,
     );
 
-    bool isLogged() => SessionService.instance.userId?.trim().isNotEmpty == true;
+    bool isLogged() =>
+        SessionService.instance.userId?.trim().isNotEmpty == true;
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -85,15 +109,19 @@ class RFeedApp extends StatelessWidget {
         "/login": (_) => const LoginPage(),
         "/menu": (_) => const MenuPage(),
         "/sync": (_) => const SyncPage(),
+        "/about": (_) => const AboutPage(),
+        "/grava-tag": (_) => const GravaTagPage(),
+        "/carregamento-estacionario": (_) =>
+            const CarregamentoEstacionarioPage(),
+        "/dashboard": (_) => DashboardUnificadoPage(repo: dashRepo),
 
         // FAB
         "/fabricacao": (_) => FabricacaoListPage(repo: fabRepo),
         "/fabricacao/nova": (_) => FabricacaoPreFabPage(repo: fabRepo),
         "/fabricacao/pesagem": (_) => FabricacaoWeighPage(repo: fabRepo),
       },
-
       onGenerateRoute: (settings) {
-        // ✅ protege fornecimento (e qualquer outra rota que você quiser)
+        // âœ… protege fornecimento (e qualquer outra rota que vocÃª quiser)
         bool requireLogin() {
           const protected = {
             "/fornecimento",
@@ -111,54 +139,61 @@ class RFeedApp extends StatelessWidget {
         }
 
         switch (settings.name) {
-          case "/fornecimento": {
-            final args = (settings.arguments as Map?) ?? const {};
-            final idFazenda = (args["idFazenda"] ?? "").toString();
+          case "/fornecimento":
+            {
+              final args = (settings.arguments as Map?) ?? const {};
+              final idFazenda = (args["idFazenda"] ?? "").toString();
+              final autoOpenNovoFornecimento =
+                  (args["autoOpenNovoFornecimento"] == true);
+              final tratoSugerido = (args["tratoSugerido"] as int?);
+              return MaterialPageRoute(
+                builder: (_) => FornecimentoListPage(
+                  idFazenda: idFazenda,
+                  // âœ… pega da sessÃ£o global (nÃ£o depende de tabela)
+                  idUsuario: SessionService.instance.userId ?? "",
+                  repo: fornRepo,
+                  scale: scale,
+                  rfid: rfid,
+                  autoOpenNovoFornecimento: autoOpenNovoFornecimento,
+                  tratoSugerido: tratoSugerido,
+                ),
+                settings: settings,
+              );
+            }
 
-            return MaterialPageRoute(
-              builder: (_) => FornecimentoListPage(
-                idFazenda: idFazenda,
-                // ✅ pega da sessão global (não depende de tabela)
-                idUsuario: SessionService.instance.userId ?? "",
-                repo: fornRepo,
-                scale: scale,
-                rfid: rfid,
-              ),
-              settings: settings,
-            );
-          }
+          case "/fornecimento/pre":
+            {
+              final args = settings.arguments as Map;
 
-          case "/fornecimento/pre": {
-            final args = settings.arguments as Map;
+              return MaterialPageRoute(
+                builder: (_) => FornecimentoPrePage(
+                  curral: args["curral"] as CurralPrev,
+                  idFazenda: args["idFazenda"] as String,
+                  idUsuario: SessionService.instance.userId ?? "",
+                  repo: fornRepo,
+                  scale: scale,
+                  rfid: rfid,
+                ),
+                settings: settings,
+              );
+            }
 
-            return MaterialPageRoute(
-              builder: (_) => FornecimentoPrePage(
-                curral: args["curral"] as CurralPrev,
-                idFazenda: args["idFazenda"] as String,
-                idUsuario: SessionService.instance.userId ?? "",
-                repo: fornRepo,
-                scale: scale,
-                rfid: rfid,
-              ),
-              settings: settings,
-            );
-          }
+          case "/fornecimento/pesagem":
+            {
+              final args = settings.arguments as Map;
 
-          case "/fornecimento/pesagem": {
-            final args = settings.arguments as Map;
-
-            return MaterialPageRoute(
-              builder: (_) => FornecimentoWeighPage(
-                curral: args["curral"] as CurralPrev,
-                idFazenda: args["idFazenda"] as String,
-                idUsuario: SessionService.instance.userId ?? "",
-                repo: fornRepo,
-                scale: scale,
-                rfid: rfid,
-              ),
-              settings: settings,
-            );
-          }
+              return MaterialPageRoute(
+                builder: (_) => FornecimentoWeighPage(
+                  curral: args["curral"] as CurralPrev,
+                  idFazenda: args["idFazenda"] as String,
+                  idUsuario: SessionService.instance.userId ?? "",
+                  repo: fornRepo,
+                  scale: scale,
+                  rfid: rfid,
+                ),
+                settings: settings,
+              );
+            }
         }
         return null;
       },

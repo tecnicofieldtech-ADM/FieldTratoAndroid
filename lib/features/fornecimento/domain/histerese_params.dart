@@ -26,3 +26,5 @@ class HistereseParams {
     rUpBack: 220.0,
   );
 }
+
+

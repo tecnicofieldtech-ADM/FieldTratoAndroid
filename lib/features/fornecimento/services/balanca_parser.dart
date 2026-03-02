@@ -36,9 +36,20 @@ class BalancaParser {
   /// Extrai o primeiro número com sinal opcional e decimal opcional.
   /// Aceita negativos.
   static String _extractNumber(String s) {
-    final re = RegExp(r"[-+]?\d+(?:[.,]\d+)?");
-    final m = re.firstMatch(s);
-    if (m == null) return "";
-    return m.group(0) ?? "";
+    final signed = RegExp(r"[-+]?\d+(?:[.,]\d+)?").firstMatch(s)?.group(0);
+    if (signed != null) return signed;
+
+    final trailingMinus =
+        RegExp(r"(\d+(?:[.,]\d+)?)\s*-\b").firstMatch(s)?.group(1);
+    if (trailingMinus != null) return "-$trailingMinus";
+
+    final unsigned = RegExp(r"\d+(?:[.,]\d+)?").firstMatch(s)?.group(0);
+    if (unsigned == null) return "";
+
+    final hasMinus = s.contains("-");
+    final hasPlus = s.contains("+");
+    if (hasMinus && !hasPlus) return "-$unsigned";
+    if (hasPlus && !hasMinus) return "+$unsigned";
+    return unsigned;
   }
 }

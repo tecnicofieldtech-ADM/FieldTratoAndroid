@@ -18,10 +18,28 @@ class FabricacaoController extends ChangeNotifier {
 
   bool _isDisposing = false;
   bool _isDisposed = false;
+  bool _navLockedBySaveError = false;
+  String _navLockReason = "";
 
   void _safeNotify() {
     if (_isDisposed || _isDisposing) return;
     notifyListeners();
+  }
+
+  bool get navLockedBySaveError => _navLockedBySaveError;
+  String get navLockReason => _navLockReason;
+
+  void _setNavLock(String reason) {
+    _navLockedBySaveError = true;
+    _navLockReason = reason.trim();
+    _safeNotify();
+  }
+
+  void _clearNavLock() {
+    if (!_navLockedBySaveError && _navLockReason.isEmpty) return;
+    _navLockedBySaveError = false;
+    _navLockReason = "";
+    _safeNotify();
   }
 
   // =========================
@@ -233,6 +251,7 @@ class FabricacaoController extends ChangeNotifier {
       "scale": {
         "connected": scaleConnected ? 1 : 0,
         "receiving": receivingNow ? 1 : 0,
+        "paused": _pesoPausado ? 1 : 0,
         "weight": lastWeight.round(),
         "lastAt": lastPacketAt?.toIso8601String(),
         "raw": lastRaw,
@@ -299,8 +318,12 @@ class FabricacaoController extends ChangeNotifier {
   bool _baselinePending = false;
   int _pesoInicialPrimeiro = 0;
   int _realizadoAcumBanco = 0;
+  bool _pesoPausado = false;
+  int _pesoPausadoKg = 0;
 
   int get pesoInicialIngrediente => _pesoInicialPrimeiro;
+  bool get pesoPausado => _pesoPausado;
+  int get pesoPausadoKg => _pesoPausadoKg;
 
   // =========================
   // Auto pulo
@@ -341,6 +364,13 @@ class FabricacaoController extends ChangeNotifier {
     if (index < 0 || index >= ingredientes.length) return;
     if (index == idx) return;
     if (_jumping) return;
+    if (_navLockedBySaveError) {
+      throw Exception(
+        _navLockReason.isNotEmpty
+            ? _navLockReason
+            : "Navegação travada: falha ao gravar ingrediente.",
+      );
+    }
 
     _jumping = true;
     try {
@@ -351,6 +381,7 @@ class FabricacaoController extends ChangeNotifier {
 
       idx = index;
       _resetRealizadoStateForCurrent(baselinePending: true);
+      _primeBaselineFromCurrentWeightIfPossible();
 
       _sendMirrorState(force: true);
       notifyListeners();
@@ -552,8 +583,20 @@ class FabricacaoController extends ChangeNotifier {
     _baseDefinida = false;
     _baselinePending = baselinePending;
     _pesoInicialPrimeiro = 0;
+    _pesoPausado = false;
+    _pesoPausadoKg = 0;
 
     _autoPuloDisparado = false;
+  }
+
+  void _primeBaselineFromCurrentWeightIfPossible() {
+    final ing = atual;
+    if (ing == null || ing.isPrePesado) return;
+    if (lastPacketAt == null) return;
+
+    _pesoInicialPrimeiro = _applyIncrement(lastWeight, _incPeso).round();
+    _baseDefinida = true;
+    _baselinePending = false;
   }
 
   void _ensureIngredienteState() {
@@ -571,8 +614,10 @@ class FabricacaoController extends ChangeNotifier {
     final ing = atual;
     if (ing == null) return;
     if (ing.isPrePesado) return;
+    if (_jumping) return;
 
     _ensureIngredienteState();
+    if (_pesoPausado) return;
 
     if (_baselinePending) {
       _pesoInicialPrimeiro = pesoAtualInt;
@@ -599,6 +644,55 @@ class FabricacaoController extends ChangeNotifier {
     if (realizado > _realizadoAcumBanco) {
       _applyAutoPuloIfNeeded();
     }
+  }
+
+  void pausarPesagem() {
+    final ing = atual;
+    if (ing == null || ing.isPrePesado) return;
+    if (_pesoPausado) return;
+
+    _ensureIngredienteState();
+
+    _pesoPausadoKg = _applyIncrement(lastWeight, _incPeso).round();
+    _pesoPausado = true;
+
+    // Congela o acumulado atual do ingrediente no momento da pausa.
+    _realizadoAcumBanco = ing.realizadoKg;
+    _pesoInicialPrimeiro = _pesoPausadoKg;
+    _baseDefinida = true;
+    _baselinePending = false;
+
+    _cancelAutoPulo();
+    _sendMirrorState(force: true);
+    notifyListeners();
+  }
+
+  void retomarPesagem() {
+    final ing = atual;
+    if (ing == null || ing.isPrePesado) return;
+    if (!_pesoPausado) return;
+
+    _ensureIngredienteState();
+
+    // Ao retomar, ignora totalmente o salto de peso da retomada.
+    // O primeiro pacote apos retomar vira novo baseline (sem contabilizar delta).
+    _realizadoAcumBanco = ing.realizadoKg;
+    _pesoInicialPrimeiro = 0;
+    _baseDefinida = false;
+    _baselinePending = true;
+    _autoPuloDisparado = false;
+    _pesoPausado = false;
+
+    _sendMirrorState(force: true);
+    notifyListeners();
+  }
+
+  void togglePausaPesagem() {
+    if (_pesoPausado) {
+      retomarPesagem();
+      return;
+    }
+    pausarPesagem();
   }
 
   // =========================================================
@@ -645,14 +739,27 @@ class FabricacaoController extends ChangeNotifier {
     final dentro = _dentroTolerancia(prev, newReal);
     final newFim = (dentro && oldFim.trim().isEmpty) ? agora : oldFim;
 
-    await repo.updateIngredienteFabricacao(
+    final updated = await repo.updateIngredienteFabricacaoRobusto(
       idDet: ing.idDet,
+      idFabricacao: header?.id ?? "",
+      idInsumo: ing.idInsumo,
+      ordem: ing.ordem,
       qtdRealizada: newReal.toDouble(),
       horaInicio: newIni,
       horaFim: newFim,
     );
 
+    if (updated <= 0) {
+      _setNavLock(
+        "Falha ao gravar '${ing.insumoNome}'. Tente gravar novamente.",
+      );
+      throw Exception(
+        "Falha ao persistir ingrediente '${ing.insumoNome}' (ordem ${ing.ordem}).",
+      );
+    }
+
     _realizadoAcumBanco = newReal;
+    _clearNavLock();
     _sendMirrorState();
   }
 
@@ -682,12 +789,21 @@ class FabricacaoController extends ChangeNotifier {
         "${d.hour.toString().padLeft(2, "0")}:${d.minute.toString().padLeft(2, "0")}:${d.second.toString().padLeft(2, "0")}";
     final hora = fmt(agora);
 
-    await repo.updateIngredienteFabricacao(
+    final updated = await repo.updateIngredienteFabricacaoRobusto(
       idDet: ing.idDet,
+      idFabricacao: head.id,
+      idInsumo: ing.idInsumo,
+      ordem: ing.ordem,
       qtdRealizada: realizadoKg.toDouble(),
       horaInicio: hora,
       horaFim: hora,
     );
+
+    if (updated <= 0) {
+      throw Exception(
+        "Falha ao persistir ingrediente pré-pesado '${ing.insumoNome}'.",
+      );
+    }
 
     await repo.updateFabricacaoParcial(head.id);
 
@@ -709,6 +825,7 @@ class FabricacaoController extends ChangeNotifier {
   void _applyAutoPuloIfNeeded() {
     if (_jumping) return;
     if (_autoPuloDisparado) return;
+    if (idx >= ingredientes.length - 1) return;
 
     final ing = atual;
     if (ing == null) return;
@@ -731,6 +848,10 @@ class FabricacaoController extends ChangeNotifier {
 
   Future<void> _startAutoCountdown() async {
     if (_autoTimer != null) return;
+    if (idx >= ingredientes.length - 1) {
+      _cancelAutoPulo();
+      return;
+    }
 
     final puloAuto = await _cfgRepo.getPuloAutomatico();
     final secs = await _cfgRepo.getTempoPuloSegundos();
@@ -780,7 +901,13 @@ class FabricacaoController extends ChangeNotifier {
 
         unawaited(() async {
           try {
-            await next();
+            if (idx < ingredientes.length - 1) {
+              await next();
+            } else {
+              _autoPuloDisparado = false;
+              _sendMirrorState(force: true);
+              notifyListeners();
+            }
           } catch (_) {}
         }());
       }
@@ -792,6 +919,13 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   Future<void> next() async {
     if (_jumping) return;
+    if (_navLockedBySaveError) {
+      throw Exception(
+        _navLockReason.isNotEmpty
+            ? _navLockReason
+            : "Navegação travada: falha ao gravar ingrediente.",
+      );
+    }
 
     _jumping = true;
     try {
@@ -805,6 +939,7 @@ class FabricacaoController extends ChangeNotifier {
 
         _autoPuloDisparado = false;
         _resetRealizadoStateForCurrent(baselinePending: true);
+        _primeBaselineFromCurrentWeightIfPossible();
 
         _sendMirrorState(force: true);
         notifyListeners();
@@ -816,16 +951,27 @@ class FabricacaoController extends ChangeNotifier {
 
   Future<void> prev() async {
     if (_jumping) return;
+    if (_navLockedBySaveError) {
+      throw Exception(
+        _navLockReason.isNotEmpty
+            ? _navLockReason
+            : "Navegação travada: falha ao gravar ingrediente.",
+      );
+    }
 
     _jumping = true;
     try {
       _cancelAutoPulo();
+
+      await salvarIngredienteAtual();
+      await atualizaFabricacaoParcial();
 
       if (idx > 0) {
         idx--;
 
         _autoPuloDisparado = false;
         _resetRealizadoStateForCurrent(baselinePending: true);
+        _primeBaselineFromCurrentWeightIfPossible();
 
         _sendMirrorState(force: true);
         notifyListeners();
@@ -1022,6 +1168,12 @@ class FabricacaoController extends ChangeNotifier {
     _sendMirrorState(force: true);
   }
 
+  Future<void> tentarDestravarNavegacao() async {
+    await salvarIngredienteAtual();
+    await atualizaFabricacaoParcial();
+    _clearNavLock();
+  }
+
   String _genIdUnico() {
     final r = Random.secure();
     String h(int v) => v.toRadixString(16).padLeft(2, "0");
@@ -1083,3 +1235,5 @@ class FabricacaoController extends ChangeNotifier {
     super.dispose();
   }
 }
+
+

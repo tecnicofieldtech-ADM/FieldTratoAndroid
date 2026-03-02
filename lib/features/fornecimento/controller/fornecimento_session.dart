@@ -68,7 +68,8 @@ class FornecimentoSession {
   double get realizadoParcial {
     final pi = pesoInicio;
     if (pi == null) return 0;
-    return _round3(pi - pesoAtual);
+    final v = pi - pesoAtual;
+    return _round3(v < 0 ? 0 : v);
   }
 
   bool get carregamentoOk => (idCarregamento ?? "").trim().isNotEmpty;
@@ -107,8 +108,9 @@ class FornecimentoSession {
       pesoAtual: pesoAtual ?? this.pesoAtual,
       pesoInicio: clearSessaoCurral ? null : (pesoInicio ?? this.pesoInicio),
       horaInicio: clearSessaoCurral ? null : (horaInicio ?? this.horaInicio),
-      idCadastroAberto:
-          clearSessaoCurral ? null : (idCadastroAberto ?? this.idCadastroAberto),
+      idCadastroAberto: clearSessaoCurral
+          ? null
+          : (idCadastroAberto ?? this.idCadastroAberto),
       lastEpc: lastEpc ?? this.lastEpc,
       warning: clearWarning ? null : (warning ?? this.warning),
       error: clearError ? null : (error ?? this.error),

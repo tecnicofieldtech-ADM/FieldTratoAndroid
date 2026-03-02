@@ -1,5 +1,6 @@
-package com.example.rfeed_pa
+﻿package com.rfeedmirror
 
 import io.flutter.embedding.android.FlutterActivity
 
 class MainActivity : FlutterActivity()
+

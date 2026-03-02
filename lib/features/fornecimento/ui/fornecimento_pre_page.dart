@@ -1,10 +1,10 @@
-import "dart:async";
+﻿import "dart:async";
 import "dart:math" as math;
 
 import "package:flutter/material.dart";
 
-import "package:rfeed_flutter/helpers/scale_comm.dart";
-import "package:rfeed_flutter/helpers/rfid_comm.dart";
+import "../../../helpers/scale_comm.dart";
+import "../../../helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
@@ -36,6 +36,7 @@ class FornecimentoPrePage extends StatefulWidget {
 
 class _FornecimentoPrePageState extends State<FornecimentoPrePage> {
   late final _FornecimentoPreController ctrl;
+  bool _handlingPop = false;
 
   @override
   void initState() {
@@ -60,8 +61,57 @@ class _FornecimentoPrePageState extends State<FornecimentoPrePage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, result) {},
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _handlingPop) return;
+        _handlingPop = true;
+        try {
+          final nav = Navigator.of(context);
+          final hasSessao = ctrl.hasSessaoAbertaComRealizado;
+          if (!hasSessao) {
+            if (!mounted) return;
+            nav.pop();
+            return;
+          }
+
+          if (!mounted) return;
+          final acao = await showDialog<_ExitAction>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Sessao em aberto"),
+              content: const Text(
+                "Existe fornecimento em andamento com realizado maior que zero. Deseja salvar antes de sair?",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.cancel),
+                  child: const Text("Cancelar"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.discard),
+                  child: const Text("Sair sem salvar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(_ExitAction.save),
+                  child: const Text("Salvar e sair"),
+                ),
+              ],
+            ),
+          );
+
+          if (!mounted || acao == null || acao == _ExitAction.cancel) return;
+          if (acao == _ExitAction.discard) {
+            nav.pop();
+            return;
+          }
+
+          final ok = await ctrl.salvarSessaoAbertaSeNecessario();
+          if (!mounted) return;
+          if (ok) nav.pop();
+        } finally {
+          _handlingPop = false;
+        }
+      },
       child: AnimatedBuilder(
         animation: ctrl,
         builder: (context, _) {
@@ -160,7 +210,7 @@ class _FornecimentoPreController extends ChangeNotifier {
   num pesoAtual = 0;
   num? pesoInicial;
 
-  bool invertDelta = false; // padrão: descarregando => ini - atual
+  bool invertDelta = false; // padrÃ£o: descarregando => ini - atual
   double toleranciaPct = 2; // 2%
   bool concluirAutomatico = true;
 
@@ -218,7 +268,7 @@ class _FornecimentoPreController extends ChangeNotifier {
   }
 
   // ---------------------------
-  // ID FORNECIMENTO (garante String não-nula)
+  // ID FORNECIMENTO (garante String nÃ£o-nula)
   // ---------------------------
   String get _idFornec {
     final dynamic d = curral as dynamic;
@@ -226,7 +276,7 @@ class _FornecimentoPreController extends ChangeNotifier {
     final String id = (raw?.toString().trim() ?? "");
     if (id.isEmpty) {
       throw Exception(
-          "CurralPrev.idFornecimento está vazio/null (preciso disso para salvar/atualizar).");
+          "CurralPrev.idFornecimento estÃ¡ vazio/null (preciso disso para salvar/atualizar).");
     }
     return id;
   }
@@ -390,10 +440,33 @@ class _FornecimentoPreController extends ChangeNotifier {
       busy = true;
       notifyListeners();
 
+      final tinhaSessao = hasSessaoAberta;
+      final epcAtual = _rfidFrom(curral).toUpperCase();
+      final epcLido = epc.toUpperCase();
+      final tagDiferente = epcAtual.isEmpty || epcAtual != epcLido;
       final found = await _resolveByEpc(epc);
       if (found == null) {
+        if (tinhaSessao && tagDiferente) {
+          final ok = await salvarSessaoAbertaSeNecessario(
+            silent: true,
+            allowWhenBusy: true,
+          );
+          if (!ok) return;
+        }
         _setInfo("Curral sem previsto ou fim de linha.");
         return;
+      }
+
+      final novoId = _idFornecimentoFrom(found);
+      final atualId = _idFornecimentoFrom(curral);
+      final trocouCurral =
+          novoId.isNotEmpty && atualId.isNotEmpty && novoId != atualId;
+      if (trocouCurral && tinhaSessao) {
+        final ok = await salvarSessaoAbertaSeNecessario(
+          silent: true,
+          allowWhenBusy: true,
+        );
+        if (!ok) return;
       }
 
       curral = found;
@@ -446,6 +519,9 @@ class _FornecimentoPreController extends ChangeNotifier {
   }
 
   num get realizadoFinal => curral.realizadoKg + realizadoSessao;
+  bool get hasSessaoAberta => pesoInicial != null;
+  bool get hasSessaoAbertaComRealizado =>
+      pesoInicial != null && realizadoSessao > 0;
 
   num get metaConcluirKg {
     final previsto = curral.previstoKg;
@@ -495,8 +571,28 @@ class _FornecimentoPreController extends ChangeNotifier {
   }
 
   Future<void> salvar({bool forcarConcluir = false}) async {
-    if (busy) return;
-    _clearMsgs();
+    await _salvarImpl(forcarConcluir: forcarConcluir, silent: false);
+  }
+
+  Future<bool> salvarSessaoAbertaSeNecessario({
+    bool silent = false,
+    bool allowWhenBusy = false,
+  }) async {
+    if (!hasSessaoAberta) return true;
+    return _salvarImpl(
+      forcarConcluir: false,
+      silent: silent,
+      allowWhenBusy: allowWhenBusy,
+    );
+  }
+
+  Future<bool> _salvarImpl({
+    required bool forcarConcluir,
+    required bool silent,
+    bool allowWhenBusy = false,
+  }) async {
+    if (busy && !allowWhenBusy) return false;
+    if (!silent) _clearMsgs();
 
     try {
       busy = true;
@@ -524,15 +620,33 @@ class _FornecimentoPreController extends ChangeNotifier {
 
       pesoInicial = null;
 
-      _setInfo(concluiu ? "Salvo e concluído ✅" : "Salvo ✅");
+      if (!silent) {
+        _setInfo("Salvo");
+      }
+      return true;
     } catch (e) {
-      _setError("Falha ao salvar: $e");
+      if (!silent) {
+        _setError("Falha ao salvar: $e");
+      } else {
+        error = "Falha ao salvar: $e";
+      }
+      return false;
     } finally {
       busy = false;
       notifyListeners();
     }
   }
 
+  String _idFornecimentoFrom(CurralPrev c) {
+    final dynamic d = c as dynamic;
+    final Object? raw = _try(() => d.idFornecimento);
+    return (raw?.toString().trim() ?? "");
+  }
+  String _rfidFrom(CurralPrev c) {
+    final dynamic d = c as dynamic;
+    final Object? raw = _try(() => d.rfid);
+    return (raw?.toString().trim() ?? "");
+  }
   String _s(Object? v, {String dash = "-"}) {
     if (v == null) return dash;
     final t = v.toString().trim();
@@ -557,14 +671,14 @@ class _ConnCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Conexões",
+            const Text("ConexÃµes",
                 style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
-            _kv("Balança", ctrl.scaleStatus.isEmpty ? "—" : ctrl.scaleStatus),
+            _kv("BalanÃ§a", ctrl.scaleStatus.isEmpty ? "â€”" : ctrl.scaleStatus),
             const SizedBox(height: 4),
-            _kv("RFID", ctrl.rfidStatus.isEmpty ? "—" : ctrl.rfidStatus),
+            _kv("RFID", ctrl.rfidStatus.isEmpty ? "â€”" : ctrl.rfidStatus),
             const SizedBox(height: 8),
-            _kv("Último EPC", ctrl.lastEpc.isEmpty ? "—" : ctrl.lastEpc),
+            _kv("Ãšltimo EPC", ctrl.lastEpc.isEmpty ? "â€”" : ctrl.lastEpc),
           ],
         ),
       ),
@@ -622,17 +736,17 @@ class _CurralInfoCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Chip(label: Text(curral.concluido ? "Concluído" : "Em aberto")),
+                Chip(label: Text(curral.concluido ? "ConcluÃ­do" : "Em aberto")),
               ],
             ),
             const SizedBox(height: 10),
             _kv("Linha", _s(curral.linha)),
             _kv("Trato", _s(curral.trato)),
-            _kv("Ração", racaoTxt),
+            _kv("RaÃ§Ã£o", racaoTxt),
             const Divider(height: 18),
             _kv("Previsto (kg)", previsto.toStringAsFixed(3)),
             _kv("Realizado (base)", realizadoBase.toStringAsFixed(3)),
-            _kv("Sessão (delta)", sessao.toStringAsFixed(3)),
+            _kv("SessÃ£o (delta)", sessao.toStringAsFixed(3)),
             _kv("Realizado (final)", finalKg.toStringAsFixed(3)),
             _kv("Meta concluir", ctrl.metaConcluirKg.toStringAsFixed(3)),
             const SizedBox(height: 10),
@@ -715,7 +829,7 @@ class _PesoCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               ctrl.pesoInicial == null
-                  ? "Peso inicial: —"
+                  ? "Peso inicial: â€”"
                   : "Peso inicial: ${ctrl.pesoInicial!.toStringAsFixed(3)}",
             ),
             const SizedBox(height: 10),
@@ -724,7 +838,7 @@ class _PesoCard extends StatelessWidget {
               value: ctrl.invertDelta,
               onChanged: ctrl.busy ? null : ctrl.setInvertDelta,
               title: const Text(
-                  "Inverter delta (se a balança subir ao descarregar)"),
+                  "Inverter delta (se a balanÃ§a subir ao descarregar)"),
             ),
           ],
         ),
@@ -757,7 +871,7 @@ class _AcoesCard extends StatelessWidget {
             const SizedBox(height: 10),
             Row(
               children: [
-                const SizedBox(width: 120, child: Text("Tolerância (%)")),
+                const SizedBox(width: 120, child: Text("TolerÃ¢ncia (%)")),
                 Expanded(
                   child: Slider(
                     value: sliderValue,
@@ -865,3 +979,7 @@ class _BannerError extends StatelessWidget {
     );
   }
 }
+
+enum _ExitAction { save, discard, cancel }
+
+
