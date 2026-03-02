@@ -353,9 +353,9 @@ class _ConfigPageState extends State<ConfigPage> {
     }
 
     // ✅ TOLERÂNCIA (%) >= 0
-    final tolPct =
-        double.tryParse(_toleranciaCarregCtrl.text.trim().replaceAll(",", ".")) ??
-            -1;
+    final tolPct = double.tryParse(
+            _toleranciaCarregCtrl.text.trim().replaceAll(",", ".")) ??
+        -1;
     if (tolPct < 0) {
       _toast("Tolerância (%) deve ser 0 ou maior.");
       return false;
@@ -720,510 +720,518 @@ class _ConfigPageState extends State<ConfigPage> {
         if (didPop) return;
         await _handleBack();
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Configuração"),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _handleBack,
+      child: SafeArea(
+        top: true,
+        bottom: false,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text("Configuração"),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: _handleBack,
+            ),
           ),
-        ),
-        body: AbsorbPointer(
-          absorbing: busy,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                _sectionTitle("Servidor de Dados"),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _hostCtrl,
-                        decoration: const InputDecoration(
-                          labelText: "IP Servidor Dados",
-                          border: OutlineInputBorder(),
+          body: AbsorbPointer(
+            absorbing: busy,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _sectionTitle("Servidor de Dados"),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _hostCtrl,
+                          decoration: const InputDecoration(
+                            labelText: "IP Servidor Dados",
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 160,
-                      child: TextField(
-                        controller: _portaCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Porta",
-                          border: OutlineInputBorder(),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 160,
+                        child: TextField(
+                          controller: _portaCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: "Porta",
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
 
-                _sectionTitle("Back-end / Operação"),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        // ✅ key única (evita Duplicate keys)
-                        key: ValueKey("backend:$_backend"),
-                        initialValue: _backend,
-                        items: ConfigOptions.backends.entries
-                            .map((e) => DropdownMenuItem(
-                                  value: e.key,
-                                  child: Text(e.value),
-                                ))
-                            .toList(),
-                        onChanged: (v) => setState(() => _backend = v ?? 0),
-                        decoration: const InputDecoration(
-                          labelText: "Back-end",
-                          border: OutlineInputBorder(),
+                  _sectionTitle("Back-end / Operação"),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          // ✅ key única (evita Duplicate keys)
+                          key: ValueKey("backend:$_backend"),
+                          initialValue: _backend,
+                          items: ConfigOptions.backends.entries
+                              .map((e) => DropdownMenuItem(
+                                    value: e.key,
+                                    child: Text(e.value),
+                                  ))
+                              .toList(),
+                          onChanged: (v) => setState(() => _backend = v ?? 0),
+                          decoration: const InputDecoration(
+                            labelText: "Back-end",
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        // ✅ key única (evita Duplicate keys)
-                        key: ValueKey("operacao:$_operacao"),
-                        initialValue: _operacao,
-                        items: ConfigOptions.operacoes.entries
-                            .map((e) => DropdownMenuItem(
-                                  value: e.key,
-                                  child: Text(e.value),
-                                ))
-                            .toList(),
-                        onChanged: (v) => setState(() => _operacao = v ?? 0),
-                        decoration: const InputDecoration(
-                          labelText: "Operação",
-                          border: OutlineInputBorder(),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<int>(
+                          // ✅ key única (evita Duplicate keys)
+                          key: ValueKey("operacao:$_operacao"),
+                          initialValue: _operacao,
+                          items: ConfigOptions.operacoes.entries
+                              .map((e) => DropdownMenuItem(
+                                    value: e.key,
+                                    child: Text(e.value),
+                                  ))
+                              .toList(),
+                          onChanged: (v) => setState(() => _operacao = v ?? 0),
+                          decoration: const InputDecoration(
+                            labelText: "Operação",
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
 
-                _sectionTitle("Identificação Vagão"),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 430;
-                    final field = DropdownButtonFormField<String>(
-                      key: ValueKey("vagao:$validVagaoValue"),
-                      isExpanded: true,
-                      initialValue: _vagoes.isEmpty ? null : validVagaoValue,
-                      items: _vagoes
-                          .map((e) {
-                            final id = _vagaoId(e);
-                            final nome = _vagaoNome(e);
-                            return DropdownMenuItem<String>(
-                              value: id,
-                              child: Text(
-                                nome,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
+                  _sectionTitle("Identificação Vagão"),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 430;
+                      final field = DropdownButtonFormField<String>(
+                        key: ValueKey("vagao:$validVagaoValue"),
+                        isExpanded: true,
+                        initialValue: _vagoes.isEmpty ? null : validVagaoValue,
+                        items: _vagoes
+                            .map((e) {
+                              final id = _vagaoId(e);
+                              final nome = _vagaoNome(e);
+                              return DropdownMenuItem<String>(
+                                value: id,
+                                child: Text(
+                                  nome,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              );
+                            })
+                            .where((it) => (it.value ?? "").isNotEmpty)
+                            .toList(),
+                        onChanged: (v) {
+                          setState(() {
+                            _idVagao = v;
+                            final row = _vagoes.firstWhere(
+                              (x) => _vagaoId(x) == (v ?? ""),
+                              orElse: () => {},
                             );
-                          })
-                          .where((it) => (it.value ?? "").isNotEmpty)
-                          .toList(),
-                      onChanged: (v) {
-                        setState(() {
-                          _idVagao = v;
-                          final row = _vagoes.firstWhere(
-                            (x) => _vagaoId(x) == (v ?? ""),
-                            orElse: () => {},
-                          );
-                          _nomeVagao = _vagaoNome(row);
-                          if (_nomeVagao != null && _nomeVagao!.trim().isEmpty) {
-                            _nomeVagao = null;
-                          }
-                        });
-                      },
-                      decoration: const InputDecoration(
-                        labelText: "Vagão",
-                        border: OutlineInputBorder(),
-                      ),
-                    );
+                            _nomeVagao = _vagaoNome(row);
+                            if (_nomeVagao != null &&
+                                _nomeVagao!.trim().isEmpty) {
+                              _nomeVagao = null;
+                            }
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          labelText: "Vagão",
+                          border: OutlineInputBorder(),
+                        ),
+                      );
 
-                    final button = SizedBox(
-                      height: 56,
-                      width: compact ? double.infinity : null,
-                      child: ElevatedButton.icon(
-                        onPressed: _onBaixarVagao,
-                        icon: _loadingVagao
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.download),
-                        label: const Text("Baixa Vagão"),
-                      ),
-                    );
+                      final button = SizedBox(
+                        height: 56,
+                        width: compact ? double.infinity : null,
+                        child: ElevatedButton.icon(
+                          onPressed: _onBaixarVagao,
+                          icon: _loadingVagao
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.download),
+                          label: const Text("Baixa Vagão"),
+                        ),
+                      );
 
-                    if (compact) {
-                      return Column(
+                      if (compact) {
+                        return Column(
+                          children: [
+                            field,
+                            const SizedBox(height: 12),
+                            button,
+                          ],
+                        );
+                      }
+
+                      return Row(
                         children: [
-                          field,
-                          const SizedBox(height: 12),
+                          Expanded(child: field),
+                          const SizedBox(width: 12),
                           button,
                         ],
                       );
-                    }
+                    },
+                  ),
+                  const SizedBox(height: 16),
 
-                    return Row(
-                      children: [
-                        Expanded(child: field),
-                        const SizedBox(width: 12),
-                        button,
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                _sectionTitle("Fazenda"),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 430;
-                    final field = DropdownButtonFormField<String>(
-                      key: ValueKey("fazenda:$validFazendaValue"),
-                      isExpanded: true,
-                      initialValue: _fazendas.isEmpty ? null : validFazendaValue,
-                      items: _fazendas
-                          .map(
-                            (e) => DropdownMenuItem(
-                              value: (e["ID"] ?? "").toString(),
-                              child: Text(
-                                (e["NOME"] ?? "").toString(),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
+                  _sectionTitle("Fazenda"),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 430;
+                      final field = DropdownButtonFormField<String>(
+                        key: ValueKey("fazenda:$validFazendaValue"),
+                        isExpanded: true,
+                        initialValue:
+                            _fazendas.isEmpty ? null : validFazendaValue,
+                        items: _fazendas
+                            .map(
+                              (e) => DropdownMenuItem(
+                                value: (e["ID"] ?? "").toString(),
+                                child: Text(
+                                  (e["NOME"] ?? "").toString(),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
                               ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) => setState(() => _idFazenda = v),
-                      decoration: const InputDecoration(
-                        labelText: "Fazenda",
-                        border: OutlineInputBorder(),
-                      ),
-                    );
+                            )
+                            .toList(),
+                        onChanged: (v) => setState(() => _idFazenda = v),
+                        decoration: const InputDecoration(
+                          labelText: "Fazenda",
+                          border: OutlineInputBorder(),
+                        ),
+                      );
 
-                    final button = SizedBox(
-                      height: 56,
-                      width: compact ? double.infinity : null,
-                      child: ElevatedButton.icon(
-                        onPressed: _onBaixarFazendas,
-                        icon: _loadingFazendas
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.download),
-                        label: const Text("Baixa Fazendas"),
-                      ),
-                    );
+                      final button = SizedBox(
+                        height: 56,
+                        width: compact ? double.infinity : null,
+                        child: ElevatedButton.icon(
+                          onPressed: _onBaixarFazendas,
+                          icon: _loadingFazendas
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.download),
+                          label: const Text("Baixa Fazendas"),
+                        ),
+                      );
 
-                    if (compact) {
-                      return Column(
+                      if (compact) {
+                        return Column(
+                          children: [
+                            field,
+                            const SizedBox(height: 12),
+                            button,
+                          ],
+                        );
+                      }
+
+                      return Row(
                         children: [
-                          field,
-                          const SizedBox(height: 12),
+                          Expanded(child: field),
+                          const SizedBox(width: 12),
                           button,
                         ],
                       );
-                    }
+                    },
+                  ),
+                  const SizedBox(height: 16),
 
-                    return Row(
-                      children: [
-                        Expanded(child: field),
-                        const SizedBox(width: 12),
-                        button,
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                // ========= BALANÇA =========
-                _sectionTitle("Balança"),
-                DropdownButtonFormField<int>(
-                  key: ValueKey("modeloBalanca:$_modeloBalanca"),
-                  initialValue: _modeloBalanca,
-                  items: ConfigOptions.modelosBalanca.entries
-                      .map((e) =>
-                          DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _modeloBalanca = v ?? 0),
-                  decoration: const InputDecoration(
-                    labelText: "Modelo Balança",
-                    border: OutlineInputBorder(),
+                  // ========= BALANÇA =========
+                  _sectionTitle("Balança"),
+                  DropdownButtonFormField<int>(
+                    key: ValueKey("modeloBalanca:$_modeloBalanca"),
+                    initialValue: _modeloBalanca,
+                    items: ConfigOptions.modelosBalanca.entries
+                        .map((e) => DropdownMenuItem(
+                            value: e.key, child: Text(e.value)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _modeloBalanca = v ?? 0),
+                    decoration: const InputDecoration(
+                      labelText: "Modelo Balança",
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _incrementoBalancaCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: "Incremento Balança (1 a 10)",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile.adaptive(
-                  value: _puloAutomatico,
-                  onChanged: (v) => setState(() => _puloAutomatico = v),
-                  title: const Text("Pulo automático"),
-                  subtitle: const Text(
-                    "Se ativo, o app inicia a contagem do pulo ao atingir a tolerância.",
-                  ),
-                ),
-                if (_puloAutomatico) ...[
                   const SizedBox(height: 12),
                   TextField(
-                    controller: _tempoPuloCtrl,
+                    controller: _incrementoBalancaCtrl,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: "Tempo do pulo (segundos)",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _ipBalancaCtrl,
-                        decoration: const InputDecoration(
-                          labelText: "IP Balança",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 160,
-                      child: TextField(
-                        controller: _portaBalancaCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Porta Balança",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    onPressed: _testingScale ? null : _onTestBalanca,
-                    icon: _testingScale
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.wifi_tethering),
-                    label: const Text("Testar Balança"),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("Resultado do teste",
-                          style: TextStyle(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 8),
-                      _kv("Status", _scaleTestStatus),
-                      _kv("String", _scaleTestRaw),
-                      _kv("Tratado", _scaleTestParsed),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // ========= RFID =========
-                _sectionTitle("RFID"),
-                DropdownButtonFormField<int>(
-                  key: ValueKey("modeloRfid:$_modeloRfid"),
-                  initialValue: _modeloRfid,
-                  items: ConfigOptions.modelosRfid.entries
-                      .map((e) =>
-                          DropdownMenuItem(value: e.key, child: Text(e.value)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _modeloRfid = v ?? 0),
-                  decoration: const InputDecoration(
-                    labelText: "Modelo RFID",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _ipRfidCtrl,
-                        decoration: const InputDecoration(
-                          labelText: "IP RFID",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 160,
-                      child: TextField(
-                        controller: _portaRfidCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: "Porta RFID",
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    onPressed: _testingRfid ? null : _onTestRfid,
-                    icon: _testingRfid
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.nfc),
-                    label: const Text("Testar RFID"),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("Resultado do teste RFID",
-                          style: TextStyle(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 8),
-                      _kv("Status", _rfidTestStatus),
-                      _kv("String", _rfidTestRaw),
-                      _kv("EPC", _rfidTestEpc),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // ✅ FABRICAÇÃO (AJUSTADO)
-                _sectionTitle("Fabricação"),
-                TextField(
-                  controller: _tempoMisturaCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: "Tempo de mistura (minutos)",
-                    helperText: "0 = não aplica (sem timer de mistura).",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _toleranciaCarregCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: "Tolerância da fabricação (%)",
-                    helperText: "Ex: 2,5 = 2.5% (aceita vírgula).",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                _sectionTitle("Espelhamento"),
-                TextField(
-                  controller: _ipEspelhoCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "IP Espelhamento",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 22),
-
-                if (_operacao == 2) ...[
-                  _sectionTitle("Integração Estacionário"),
-                  TextField(
-                    controller: _hostEstacionarioCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "IP do Estacionário (Bridge)",
-                      helperText: "Ex: 192.168.4.1",
+                      labelText: "Incremento Balança (1 a 10)",
                       border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const SizedBox(height: 6),
-                  Text(
-                    "Porta fixa: 8080",
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w600,
+                  SwitchListTile.adaptive(
+                    value: _puloAutomatico,
+                    onChanged: (v) => setState(() => _puloAutomatico = v),
+                    title: const Text("Pulo automático"),
+                    subtitle: const Text(
+                      "Se ativo, o app inicia a contagem do pulo ao atingir a tolerância.",
+                    ),
+                  ),
+                  if (_puloAutomatico) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _tempoPuloCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "Tempo do pulo (segundos)",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ipBalancaCtrl,
+                          decoration: const InputDecoration(
+                            labelText: "IP Balança",
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 160,
+                        child: TextField(
+                          controller: _portaBalancaCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: "Porta Balança",
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      onPressed: _testingScale ? null : _onTestBalanca,
+                      icon: _testingScale
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi_tethering),
+                      label: const Text("Testar Balança"),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Resultado do teste",
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        _kv("Status", _scaleTestStatus),
+                        _kv("String", _scaleTestRaw),
+                        _kv("Tratado", _scaleTestParsed),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ========= RFID =========
+                  _sectionTitle("RFID"),
+                  DropdownButtonFormField<int>(
+                    key: ValueKey("modeloRfid:$_modeloRfid"),
+                    initialValue: _modeloRfid,
+                    items: ConfigOptions.modelosRfid.entries
+                        .map((e) => DropdownMenuItem(
+                            value: e.key, child: Text(e.value)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _modeloRfid = v ?? 0),
+                    decoration: const InputDecoration(
+                      labelText: "Modelo RFID",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ipRfidCtrl,
+                          decoration: const InputDecoration(
+                            labelText: "IP RFID",
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 160,
+                        child: TextField(
+                          controller: _portaRfidCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: "Porta RFID",
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      onPressed: _testingRfid ? null : _onTestRfid,
+                      icon: _testingRfid
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.nfc),
+                      label: const Text("Testar RFID"),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Resultado do teste RFID",
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        _kv("Status", _rfidTestStatus),
+                        _kv("String", _rfidTestRaw),
+                        _kv("EPC", _rfidTestEpc),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ✅ FABRICAÇÃO (AJUSTADO)
+                  _sectionTitle("Fabricação"),
+                  TextField(
+                    controller: _tempoMisturaCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Tempo de mistura (minutos)",
+                      helperText: "0 = não aplica (sem timer de mistura).",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _toleranciaCarregCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: "Tolerância da fabricação (%)",
+                      helperText: "Ex: 2,5 = 2.5% (aceita vírgula).",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  _sectionTitle("Espelhamento"),
+                  TextField(
+                    controller: _ipEspelhoCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "IP Espelhamento",
+                      border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 22),
+
+                  if (_operacao == 2) ...[
+                    _sectionTitle("Integração Estacionário"),
+                    TextField(
+                      controller: _hostEstacionarioCtrl,
+                      decoration: const InputDecoration(
+                        labelText: "IP do Estacionário (Bridge)",
+                        helperText: "Ex: 192.168.4.1",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Porta fixa: 8080",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                  ],
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: _onConfirmar,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check),
+                      label: const Text("Confirmar"),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: _handleBack,
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text("Voltar"),
+                    ),
+                  ),
                 ],
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton.icon(
-                    onPressed: _onConfirmar,
-                    icon: _saving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.check),
-                    label: const Text("Confirmar"),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: _handleBack,
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text("Voltar"),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),

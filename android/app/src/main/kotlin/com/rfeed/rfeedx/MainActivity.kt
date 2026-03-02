@@ -1,4 +1,4 @@
-package com.example.rfeed_flutter
+package com.rfeed.rfeedx
 
 import io.flutter.embedding.android.FlutterActivity
 

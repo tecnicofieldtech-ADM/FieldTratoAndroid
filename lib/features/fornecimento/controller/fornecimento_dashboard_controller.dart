@@ -969,7 +969,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
         pesoFim: _pesoAtual,
         realizadoKg: fornecidoKg,
         idUsuario: idUsuario,
-        origemMapa: _origemMapa,
       );
 
       // ✅ 2) Atualiza PREVISAO (mapa) somando no realizado
