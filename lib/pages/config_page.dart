@@ -825,11 +825,18 @@ class _ConfigPageState extends State<ConfigPage> {
         await _handleBack();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Configuração"),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _handleBack,
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(kToolbarHeight),
+          child: SafeArea(
+            top: true,
+            bottom: false,
+            child: AppBar(
+              title: const Text("Configuração"),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _handleBack,
+              ),
+            ),
           ),
         ),
         body: AbsorbPointer(
