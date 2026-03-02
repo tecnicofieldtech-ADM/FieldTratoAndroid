@@ -1,5 +1,6 @@
 import "package:sqflite/sqflite.dart";
 import "../db/app_db.dart";
+import "../features/fabricacao/domain/fabricacao_flow.dart";
 
 class ConfigRepo {
   Future<Database> get _db async => AppDb.instance.db;
@@ -45,6 +46,12 @@ class ConfigRepo {
       await addIfMissing("ip_espelho", "IP_ESPELHO TEXT");
       await addIfMissing("host_estacionario", "HOST_ESTACIONARIO TEXT");
       await addIfMissing("porta_estacionario", "PORTA_ESTACIONARIO INTEGER");
+      await addIfMissing("flow_mode", "FLOW_MODE INTEGER DEFAULT 0");
+      await addIfMissing("station_wifi_ssid", "STATION_WIFI_SSID TEXT");
+      await addIfMissing(
+          "station_wifi_password", "STATION_WIFI_PASSWORD TEXT");
+      await addIfMissing("station_base_url", "STATION_BASE_URL TEXT");
+      await addIfMissing("station_base_url_legacy", "STATION_BASE_URL_LEGACY TEXT");
     } catch (_) {
       // se der erro (tabela não existe, etc.), ignora aqui.
       // seu AppDb.onCreate garante a criação.
@@ -289,6 +296,24 @@ class ConfigRepo {
     }
   }
 
+  Future<int> countGravaTagPendenteSync() async {
+    final db = await _db;
+    try {
+      final rows = await db.rawQuery(
+        "SELECT COUNT(*) AS QTD "
+        "FROM GRAVA_TAG "
+        "WHERE IFNULL(SYNC,0) = 0",
+      );
+      if (rows.isEmpty) return 0;
+      final v = rows.first["QTD"];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v?.toString() ?? "") ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   // -------------------------
   // ESPELHO (PÁ)
   // -------------------------
@@ -309,10 +334,55 @@ class ConfigRepo {
   // BRIDGE ESTACIONARIO
   // -------------------------
   Future<String> getHostEstacionario() async =>
-      _toStr(await _getField("HOST_ESTACIONARIO"));
+      _hostFromBaseUrl(
+        _toStr(await _getField("STATION_BASE_URL"), def: ""),
+        fallback: _toStr(await _getField("HOST_ESTACIONARIO"), def: ""),
+      );
 
   Future<int> getPortaEstacionario() async {
-    final v = _toInt(await _getField("PORTA_ESTACIONARIO"), def: 8080);
+    final base = _toStr(await _getField("STATION_BASE_URL"), def: "");
+    final fromBase = _portFromBaseUrl(base);
+    final v = fromBase ?? _toInt(await _getField("PORTA_ESTACIONARIO"), def: 8080);
     return v <= 0 ? 8080 : v;
+  }
+
+  Future<FabricacaoFlowMode> getFabricacaoFlowMode() async {
+    return fabricacaoFlowModeFromDb(await _getField("FLOW_MODE"));
+  }
+
+  Future<String> getStationWifiSsid() async =>
+      _toStr(await _getField("STATION_WIFI_SSID"), def: "").trim();
+
+  Future<String> getStationWifiPassword() async =>
+      _toStr(await _getField("STATION_WIFI_PASSWORD"), def: "").trim();
+
+  Future<String> getStationBaseUrl() async =>
+      _toStr(await _getField("STATION_BASE_URL"), def: "").trim();
+
+  Future<void> setOperacaoEstacionarioConfig({
+    required FabricacaoFlowMode flowMode,
+    required String stationWifiSsid,
+    required String stationWifiPassword,
+    required String stationBaseUrl,
+  }) async {
+    final cfg = await getConfig() ?? <String, Object?>{};
+    cfg["FLOW_MODE"] = fabricacaoFlowModeToDb(flowMode);
+    cfg["STATION_WIFI_SSID"] = stationWifiSsid.trim();
+    cfg["STATION_WIFI_PASSWORD"] = stationWifiPassword;
+    cfg["STATION_BASE_URL"] = stationBaseUrl.trim();
+    await saveConfig(cfg);
+  }
+
+  String _hostFromBaseUrl(String baseUrl, {required String fallback}) {
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri != null && uri.host.trim().isNotEmpty) return uri.host.trim();
+    return fallback.trim();
+  }
+
+  int? _portFromBaseUrl(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null || uri.host.trim().isEmpty) return null;
+    if (uri.hasPort) return uri.port;
+    return uri.scheme.toLowerCase() == "https" ? 443 : 80;
   }
 }
