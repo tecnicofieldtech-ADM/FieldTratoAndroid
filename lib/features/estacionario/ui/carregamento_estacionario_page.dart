@@ -1,13 +1,13 @@
 import "package:flutter/material.dart";
+import "package:flutter/foundation.dart";
 import "package:package_info_plus/package_info_plus.dart";
+import "package:dio/dio.dart";
 
 import "../../../repo/config_repo.dart";
 import "../../../services/session_service.dart";
 import "../data/carregamento_estacionario_api.dart";
 import "../data/importador_fabricacao_estacionario.dart";
-import "../data/rede_estacionario_repo.dart";
 import "../domain/carregamento_payload.dart";
-import "../domain/rede_estacionario.dart";
 import "../services/wifi_switcher.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
 
@@ -21,33 +21,24 @@ class CarregamentoEstacionarioPage extends StatefulWidget {
 
 class _CarregamentoEstacionarioPageState
     extends State<CarregamentoEstacionarioPage> {
-  final _redeRepo = RedeEstacionarioRepo();
   final _cfgRepo = ConfigRepo();
   final _wifiSwitcher = WifiSwitcher();
   final _importador = ImportadorFabricacaoEstacionario();
 
-  final _hostCtrl = TextEditingController();
-  final _portaCtrl = TextEditingController(text: "8080");
-
-  List<RedeEstacionario> _redes = const [];
-  RedeEstacionario? _selecionada;
   List<CarregamentoResumoDto> _itens = const [];
 
   bool _loading = false;
   bool _modoDistribuidor = false;
   bool _healthOk = false;
 
+  String _stationSsid = "";
+  String _stationSenha = "";
+  String _stationBaseUrl = "";
+
   @override
   void initState() {
     super.initState();
     _boot();
-  }
-
-  @override
-  void dispose() {
-    _hostCtrl.dispose();
-    _portaCtrl.dispose();
-    super.dispose();
   }
 
   void _msg(String text) {
@@ -64,59 +55,45 @@ class _CarregamentoEstacionarioPageState
       Navigator.of(context).pop();
       return;
     }
-    setState(() => _modoDistribuidor = true);
+
+    final ssid = await _cfgRepo.getStationWifiSsid();
+    final senha = await _cfgRepo.getStationWifiPassword();
     final base = await _cfgRepo.getStationBaseUrl();
-    final u = Uri.tryParse(base);
-    if (u != null && u.host.trim().isNotEmpty) {
-      _hostCtrl.text = u.host.trim();
-      _portaCtrl.text = (u.hasPort ? u.port : 8080).toString();
-    }
-    await _loadRedes();
-  }
 
-  Future<void> _loadRedes() async {
-    if (!_modoDistribuidor) return;
-    final redes = await _redeRepo.listAll();
     if (!mounted) return;
-
     setState(() {
-      _redes = redes;
-      if (redes.isNotEmpty) {
-        _selecionada = _selecionada == null
-            ? redes.first
-            : redes.where((e) => e.id == _selecionada!.id).firstOrNull;
-      } else {
-        _selecionada = null;
-      }
-
-      if (_selecionada != null) {
-        _hostCtrl.text = _selecionada!.hostEstacionario;
-        _portaCtrl.text = _selecionada!.portaEstacionario.toString();
-      }
+      _modoDistribuidor = true;
+      _stationSsid = ssid.trim();
+      _stationSenha = senha;
+      _stationBaseUrl = base.trim();
     });
   }
 
-  CarregamentoEstacionarioApi _apiFromForm() {
-    final host = _hostCtrl.text.trim();
-    final porta = int.tryParse(_portaCtrl.text.trim()) ?? 8080;
-    return CarregamentoEstacionarioApi(host: host, port: porta);
+  CarregamentoEstacionarioApi? _apiFromConfig() {
+    final uri = Uri.tryParse(_stationBaseUrl);
+    if (uri == null || uri.host.trim().isEmpty) {
+      debugPrint("[CARREG_UI] baseUrl invalida: '$_stationBaseUrl'");
+      return null;
+    }
+    final port = uri.hasPort
+        ? uri.port
+        : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
+    debugPrint(
+      "[CARREG_UI] api configurada host=${uri.host.trim()} port=$port baseUrl=$_stationBaseUrl",
+    );
+    return CarregamentoEstacionarioApi(host: uri.host.trim(), port: port);
   }
 
   Future<void> _conectarRede() async {
-    final r = _selecionada;
-    final ssidCfg = await _cfgRepo.getStationWifiSsid();
-    final senhaCfg = await _cfgRepo.getStationWifiPassword();
-
-    final ssid = (r?.ssid ?? ssidCfg).trim();
-    final senha = (r?.senha ?? senhaCfg).trim();
-    if (ssid.isEmpty) {
-      _msg("Cadastre e selecione uma rede do estacionario.");
+    if (_stationSsid.isEmpty) {
+      _msg("SSID nao configurado. Ajuste em Configuracao.");
       return;
     }
 
     setState(() => _loading = true);
     try {
-      final res = await _wifiSwitcher.connect(ssid: ssid, password: senha);
+      final res = await _wifiSwitcher.connect(
+          ssid: _stationSsid, password: _stationSenha);
       _msg(res.message);
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -124,15 +101,15 @@ class _CarregamentoEstacionarioPageState
   }
 
   Future<void> _testarConexao() async {
-    final host = _hostCtrl.text.trim();
-    if (host.isEmpty) {
-      _msg("Informe o IP do estacionario.");
+    final api = _apiFromConfig();
+    if (api == null) {
+      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
       return;
     }
 
     setState(() => _loading = true);
     try {
-      final ok = await _apiFromForm().health();
+      final ok = await api.health();
       if (mounted) setState(() => _healthOk = ok);
       _msg(ok ? "Conexao OK" : "Falha ao conectar no estacionario");
     } catch (e) {
@@ -143,12 +120,28 @@ class _CarregamentoEstacionarioPageState
   }
 
   Future<void> _buscarCarregamentos() async {
+    final api = _apiFromConfig();
+    if (api == null) {
+      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      final itens = await _apiFromForm().listCarregamentos();
+      final itens = await api.listCarregamentos();
+      debugPrint("[CARREG_UI] carregamentos recebidos qtd=${itens.length}");
       if (!mounted) return;
       setState(() => _itens = itens);
     } catch (e) {
+      if (e is DioException) {
+        debugPrint(
+          "[CARREG_UI] erro Dio type=${e.type} status=${e.response?.statusCode} "
+          "data=${e.response?.data} msg=${e.message} error=${e.error}",
+        );
+        debugPrint("[CARREG_UI] stack=${e.stackTrace}");
+      } else {
+        debugPrint("[CARREG_UI] erro buscar carregamentos=$e");
+      }
       _msg("Erro ao buscar carregamentos: $e");
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -179,9 +172,14 @@ class _CarregamentoEstacionarioPageState
 
     if (!ok) return;
 
+    final api = _apiFromConfig();
+    if (api == null) {
+      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      final api = _apiFromForm();
       final detalhe = await api.getDetalhe(item.idLocal);
 
       final idUsuario = (SessionService.instance.userId ?? "").trim();
@@ -189,7 +187,8 @@ class _CarregamentoEstacionarioPageState
 
       if (idUsuario.isEmpty || idFazenda.isEmpty) {
         throw Exception(
-            "Usuario/Fazenda nao configurados no tablet do caminhao.");
+          "Usuario/Fazenda nao configurados no tablet do caminhao.",
+        );
       }
 
       await _importador.importar(
@@ -200,7 +199,10 @@ class _CarregamentoEstacionarioPageState
 
       final info = await PackageInfo.fromPlatform();
       await api.ack(
-          id: item.idLocal, device: "CAMINHAO", appVersion: info.version);
+        id: item.idLocal,
+        device: "CAMINHAO",
+        appVersion: info.version,
+      );
 
       _msg("Carregamento recebido com sucesso.");
       if (!mounted) return;
@@ -243,104 +245,6 @@ class _CarregamentoEstacionarioPageState
     }
   }
 
-  Future<void> _openRedeDialog({RedeEstacionario? edit}) async {
-    final nome = TextEditingController(text: edit?.nome ?? "");
-    final ssid = TextEditingController(text: edit?.ssid ?? "");
-    final senha = TextEditingController(text: edit?.senha ?? "");
-    final host =
-        TextEditingController(text: edit?.hostEstacionario ?? _hostCtrl.text);
-    final porta = TextEditingController(
-      text: (edit?.portaEstacionario ?? int.tryParse(_portaCtrl.text) ?? 8080)
-          .toString(),
-    );
-
-    final save = await showDialog<bool>(
-          context: context,
-          builder: (dialogCtx) => AlertDialog(
-            title: Text(edit == null ? "Nova rede" : "Editar rede"),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                      controller: nome,
-                      decoration: const InputDecoration(labelText: "Nome")),
-                  TextField(
-                      controller: ssid,
-                      decoration: const InputDecoration(labelText: "SSID")),
-                  TextField(
-                      controller: senha,
-                      decoration: const InputDecoration(labelText: "Senha")),
-                  TextField(
-                      controller: host,
-                      decoration:
-                          const InputDecoration(labelText: "IP Estacionario")),
-                  TextField(
-                      controller: porta,
-                      decoration: const InputDecoration(labelText: "Porta"),
-                      keyboardType: TextInputType.number),
-                ],
-              ),
-            ),
-            actions: [
-              if (edit != null)
-                TextButton(
-                  onPressed: () async {
-                    try {
-                      await _redeRepo.delete(edit.id);
-                      if (dialogCtx.mounted) Navigator.pop(dialogCtx, true);
-                    } catch (e) {
-                      _msg("Erro ao excluir rede: $e");
-                    }
-                  },
-                  child: const Text("Excluir"),
-                ),
-              TextButton(
-                onPressed: () => Navigator.pop(dialogCtx, false),
-                child: const Text("Cancelar"),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  final ssidTxt = ssid.text.trim();
-                  final hostTxt = host.text.trim();
-                  final portaVal = int.tryParse(porta.text.trim()) ?? 0;
-                  if (ssidTxt.isEmpty || hostTxt.isEmpty || portaVal <= 0) {
-                    _msg("Informe SSID, IP e porta validos.");
-                    return;
-                  }
-
-                  try {
-                    await _redeRepo.upsert(
-                      id: edit?.id,
-                      nome: nome.text,
-                      ssid: ssidTxt,
-                      senha: senha.text,
-                      host: hostTxt,
-                      porta: portaVal,
-                    );
-                    if (dialogCtx.mounted) Navigator.pop(dialogCtx, true);
-                  } catch (e) {
-                    _msg("Erro ao salvar rede: $e");
-                  }
-                },
-                child: const Text("Salvar"),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-
-    nome.dispose();
-    ssid.dispose();
-    senha.dispose();
-    host.dispose();
-    porta.dispose();
-
-    if (save) {
-      await _loadRedes();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!_modoDistribuidor) {
@@ -350,16 +254,7 @@ class _CarregamentoEstacionarioPageState
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Carregamento (Estacionario)"),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : () => _openRedeDialog(),
-            icon: const Icon(Icons.wifi),
-            tooltip: "Cadastrar rede",
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text("Carregamento (Estacionario)")),
       body: Column(
         children: [
           Padding(
@@ -367,54 +262,15 @@ class _CarregamentoEstacionarioPageState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                InputDecorator(
-                  decoration:
-                      const InputDecoration(labelText: "Rede do estacionario"),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<RedeEstacionario>(
-                      isExpanded: true,
-                      value: _selecionada,
-                      items: _redes
-                          .map(
-                            (e) => DropdownMenuItem(
-                              value: e,
-                              child: Text(e.nomeExibicao),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _loading
-                          ? null
-                          : (v) {
-                              setState(() => _selecionada = v);
-                              if (v != null) {
-                                _hostCtrl.text = v.hostEstacionario;
-                                _portaCtrl.text =
-                                    v.portaEstacionario.toString();
-                              }
-                            },
-                    ),
-                  ),
+                Text(
+                  "Dados vindos da Configuracao",
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _hostCtrl,
-                        decoration: const InputDecoration(
-                            labelText: "IP do estacionario"),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 90,
-                      child: TextField(
-                        controller: _portaCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: "Porta"),
-                      ),
-                    ),
-                  ],
+                SelectableText(
+                    "SSID: ${_stationSsid.isEmpty ? "-" : _stationSsid}"),
+                SelectableText(
+                  "Base URL: ${_stationBaseUrl.isEmpty ? "-" : _stationBaseUrl}",
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -458,7 +314,8 @@ class _CarregamentoEstacionarioPageState
                 ? const Center(child: CircularProgressIndicator())
                 : _itens.isEmpty
                     ? const Center(
-                        child: Text("Nenhum carregamento disponivel."))
+                        child: Text("Nenhum carregamento disponivel."),
+                      )
                     : ListView.separated(
                         itemCount: _itens.length,
                         separatorBuilder: (_, __) => const Divider(height: 1),
@@ -473,12 +330,6 @@ class _CarregamentoEstacionarioPageState
                               onPressed: _loading ? null : () => _receber(it),
                               child: const Text("Receber"),
                             ),
-                            onLongPress: () {
-                              final r = _selecionada;
-                              if (r != null) {
-                                _openRedeDialog(edit: r);
-                              }
-                            },
                           );
                         },
                       ),
@@ -487,8 +338,4 @@ class _CarregamentoEstacionarioPageState
       ),
     );
   }
-}
-
-extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

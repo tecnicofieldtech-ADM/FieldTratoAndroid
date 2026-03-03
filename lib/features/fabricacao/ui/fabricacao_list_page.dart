@@ -543,8 +543,12 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
                           final emAberto =
                               it.status == FabricacaoStatus.emAndamento;
+                          final pendente =
+                              it.status == FabricacaoStatus.pendenteCaminhao;
                           final bloqueadaStation = _tipoTrabalho == 1 &&
                               it.status == FabricacaoStatus.pendenteCaminhao;
+                          final podeAbrir =
+                              (emAberto || pendente) && !bloqueadaStation;
 
                           return Card(
                             elevation: 0,
@@ -554,13 +558,16 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                             ),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: emAberto && !bloqueadaStation
+                              onTap: podeAbrir
                                   ? () {
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                            builder: (_) => FabricacaoWeighPage(
-                                                repo: widget.repo)),
+                                          builder: (_) => FabricacaoWeighPage(
+                                            repo: widget.repo,
+                                            initialFabricacaoId: it.id,
+                                          ),
+                                        ),
                                       ).then((_) => _load());
                                     }
                                   : bloqueadaStation

@@ -13,9 +13,14 @@ import "mistura_timer_page.dart";
 import "fabricacao_list_page.dart";
 
 class FabricacaoWeighPage extends StatefulWidget {
-  const FabricacaoWeighPage({super.key, required this.repo});
+  const FabricacaoWeighPage({
+    super.key,
+    required this.repo,
+    this.initialFabricacaoId,
+  });
 
   final FabricacaoRepo repo;
+  final String? initialFabricacaoId;
 
   @override
   State<FabricacaoWeighPage> createState() => _FabricacaoWeighPageState();
@@ -35,6 +40,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
   bool _finishing = false; // ✅ trava duplo clique no finalizar
   bool _readOnlyStation = false;
+  FabricacaoFlowMode _flowMode = FabricacaoFlowMode.fullOnStation;
+  int _tipoTrabalho = 0;
 
   final _cfgRepo = ConfigRepo(); // ✅ config pra criar carregamento
 
@@ -139,10 +146,14 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     });
 
     try {
-      final ok = await c.bootTruckSide();
+      final ok = await c.bootTruckSide(
+        initialFabricacaoId: widget.initialFabricacaoId,
+      );
       if (!ok) {
         setState(() {
-          _bootError = "Nenhuma fabricação em aberto para hoje.";
+          _bootError = (widget.initialFabricacaoId ?? "").trim().isNotEmpty
+              ? "Fabricação selecionada não encontrada."
+              : "Nenhuma fabricação em aberto para hoje.";
           _booting = false;
         });
         return;
@@ -150,13 +161,18 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
       if (!mounted) return;
       final tipo = await _cfgRepo.getTipoTrabalho();
+      final flowMode = await _cfgRepo.getFabricacaoFlowMode();
       final h = c.header;
       if (tipo == 1 && h != null && h.status == FabricacaoStatus.pendenteCaminhao) {
         setState(() {
           _readOnlyStation = true;
         });
       }
-      setState(() => _booting = false);
+      setState(() {
+        _tipoTrabalho = tipo;
+        _flowMode = flowMode;
+        _booting = false;
+      });
 
       _maybeShowPrePesado();
     } catch (e) {
@@ -1187,6 +1203,17 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               icon: const Icon(Icons.arrow_back),
               tooltip: "Anterior",
             ),
+            if (_tipoTrabalho == 1 &&
+                _flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+                !_readOnlyStation) ...[
+              IconButton(
+                tooltip: "Finalizar parcial",
+                onPressed: (_finishing || c.navLockedBySaveError)
+                    ? null
+                    : () async => _finalizarParcialEstacionario(),
+                icon: const Icon(Icons.outbox),
+              ),
+            ],
             const SizedBox(width: 6),
             Expanded(
               child: AnimatedScale(

@@ -316,6 +316,16 @@ class FabricacaoRepo {
         .toList();
   }
 
+  Future<FabricacaoHeader?> getFabricacaoById(String idFab) async {
+    final id = idFab.trim();
+    if (id.isEmpty) return null;
+    final list = await listFabricacoes();
+    for (final h in list) {
+      if (h.id == id) return h;
+    }
+    return null;
+  }
+
   // =========================================================
   // INGREDIENTES
   // =========================================================

@@ -110,6 +110,7 @@ class _ConfigPageState extends State<ConfigPage> {
   final _wifiSwitcher = WifiSwitcher();
   bool _testingStation = false;
   bool _connectingStationWifi = false;
+  bool get _isDistribuidor => _operacao == 2;
 
   @override
   void initState() {
@@ -320,12 +321,14 @@ class _ConfigPageState extends State<ConfigPage> {
     final stationBaseUrl = _stationBaseUrlCtrl.text.trim();
     String hostEst = _hostEstacionarioCtrl.text.trim();
     int portaEst = int.tryParse(_portaEstacionarioCtrl.text.trim()) ?? 8080;
-    final uri = Uri.tryParse(stationBaseUrl);
-    if (uri != null && uri.host.trim().isNotEmpty) {
-      hostEst = uri.host.trim();
-      portaEst = uri.hasPort
-          ? uri.port
-          : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
+    if (_isDistribuidor) {
+      final uri = Uri.tryParse(stationBaseUrl);
+      if (uri != null && uri.host.trim().isNotEmpty) {
+        hostEst = uri.host.trim();
+        portaEst = uri.hasPort
+            ? uri.port
+            : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
+      }
     }
 
     return {
@@ -393,15 +396,15 @@ class _ConfigPageState extends State<ConfigPage> {
     }
 
     // ✅ TOLERÂNCIA (%) >= 0
-    final tolPct =
-        double.tryParse(_toleranciaCarregCtrl.text.trim().replaceAll(",", ".")) ??
-            -1;
+    final tolPct = double.tryParse(
+            _toleranciaCarregCtrl.text.trim().replaceAll(",", ".")) ??
+        -1;
     if (tolPct < 0) {
       _toast("Tolerância (%) deve ser 0 ou maior.");
       return false;
     }
 
-    if (_flowMode == FabricacaoFlowMode.startStationFinishTruck) {
+    if (_isDistribuidor) {
       final base = _stationBaseUrlCtrl.text.trim();
       final ssid = _stationWifiSsidCtrl.text.trim();
       if (base.isEmpty) {
@@ -410,7 +413,8 @@ class _ConfigPageState extends State<ConfigPage> {
       }
       final uri = Uri.tryParse(base);
       if (uri == null || uri.host.trim().isEmpty) {
-        _toast("baseUrl do estacionario invalido. Ex.: http://192.168.1.10:8080");
+        _toast(
+            "baseUrl do estacionario invalido. Ex.: http://192.168.1.10:8080");
         return false;
       }
       if (ssid.isEmpty) {
@@ -692,7 +696,9 @@ class _ConfigPageState extends State<ConfigPage> {
     setState(() => _testingStation = true);
     try {
       final ok = await api.health();
-      _toast(ok ? "Conexao OK com estacionario." : "Falha no teste com estacionario.");
+      _toast(ok
+          ? "Conexao OK com estacionario."
+          : "Falha no teste com estacionario.");
     } catch (e) {
       _toast("Erro no teste: $e");
     } finally {
@@ -948,7 +954,8 @@ class _ConfigPageState extends State<ConfigPage> {
                             orElse: () => {},
                           );
                           _nomeVagao = _vagaoNome(row);
-                          if (_nomeVagao != null && _nomeVagao!.trim().isEmpty) {
+                          if (_nomeVagao != null &&
+                              _nomeVagao!.trim().isEmpty) {
                             _nomeVagao = null;
                           }
                         });
@@ -968,7 +975,8 @@ class _ConfigPageState extends State<ConfigPage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Vagão"),
@@ -1003,7 +1011,8 @@ class _ConfigPageState extends State<ConfigPage> {
                     final field = DropdownButtonFormField<String>(
                       key: ValueKey("fazenda:$validFazendaValue"),
                       isExpanded: true,
-                      initialValue: _fazendas.isEmpty ? null : validFazendaValue,
+                      initialValue:
+                          _fazendas.isEmpty ? null : validFazendaValue,
                       items: _fazendas
                           .map(
                             (e) => DropdownMenuItem(
@@ -1032,7 +1041,8 @@ class _ConfigPageState extends State<ConfigPage> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.download),
                         label: const Text("Baixa Fazendas"),
@@ -1285,88 +1295,94 @@ class _ConfigPageState extends State<ConfigPage> {
                 ),
                 const SizedBox(height: 22),
 
-                _sectionTitle("Operacao do Estacionario"),
-                RadioListTile<FabricacaoFlowMode>(
-                  dense: true,
-                  value: FabricacaoFlowMode.fullOnStation,
-                  groupValue: _flowMode,
-                  title: const Text("Completo no estacionario"),
-                  subtitle: const Text(
-                    "Estacionario finaliza e sincroniza normalmente.",
-                  ),
-                  onChanged: (v) => setState(
-                    () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
-                  ),
-                ),
-                RadioListTile<FabricacaoFlowMode>(
-                  dense: true,
-                  value: FabricacaoFlowMode.startStationFinishTruck,
-                  groupValue: _flowMode,
-                  title: const Text("Inicia no estacionario e finaliza no caminhao"),
-                  subtitle: const Text(
-                    "Estacionario exporta; caminhao completa e sincroniza.",
-                  ),
-                  onChanged: (v) => setState(
-                    () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _stationWifiSsidCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "SSID do estacionario",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _stationWifiPasswordCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Senha do Wi-Fi do estacionario",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _stationBaseUrlCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Base URL do estacionario",
-                    helperText: "Ex: http://192.168.1.10:8080",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _connectingStationWifi
-                          ? null
-                          : _onConectarWifiEstacionario,
-                      icon: _connectingStationWifi
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.wifi),
-                      label: const Text("Conectar na rede do Estacionario"),
+                if (_isDistribuidor) ...[
+                  _sectionTitle("Operacao do Estacionario"),
+                  RadioListTile<FabricacaoFlowMode>(
+                    dense: true,
+                    value: FabricacaoFlowMode.fullOnStation,
+                    groupValue: _flowMode,
+                    title: const Text("Completo no estacionario"),
+                    subtitle: const Text(
+                      "Estacionario finaliza e sincroniza normalmente.",
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _testingStation ? null : _onTestarEstacionario,
-                      icon: _testingStation
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.health_and_safety_outlined),
-                      label: const Text("Testar conexao"),
+                    onChanged: (v) => setState(
+                      () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 22),
+                  ),
+                  RadioListTile<FabricacaoFlowMode>(
+                    dense: true,
+                    value: FabricacaoFlowMode.startStationFinishTruck,
+                    groupValue: _flowMode,
+                    title: const Text(
+                        "Inicia no estacionario e finaliza no caminhao"),
+                    subtitle: const Text(
+                      "Estacionario exporta; caminhao completa e sincroniza.",
+                    ),
+                    onChanged: (v) => setState(
+                      () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _stationWifiSsidCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "SSID do estacionario",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _stationWifiPasswordCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "Senha do Wi-Fi do estacionario",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _stationBaseUrlCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "Base URL do estacionario",
+                      helperText: "Ex: http://192.168.1.10:8080",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _connectingStationWifi
+                            ? null
+                            : _onConectarWifiEstacionario,
+                        icon: _connectingStationWifi
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.wifi),
+                        label: const Text("Conectar na rede do Estacionario"),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _testingStation ? null : _onTestarEstacionario,
+                        icon: _testingStation
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.health_and_safety_outlined),
+                        label: const Text("Testar conexao"),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                ],
 
                 SizedBox(
                   width: double.infinity,
@@ -1402,6 +1418,3 @@ class _ConfigPageState extends State<ConfigPage> {
     );
   }
 }
-
-
-

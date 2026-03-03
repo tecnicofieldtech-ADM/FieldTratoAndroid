@@ -1,6 +1,5 @@
 import "package:app_settings/app_settings.dart";
 import "package:flutter/foundation.dart";
-import "package:wifi_iot/wifi_iot.dart";
 
 class WifiSwitchResult {
   WifiSwitchResult({
@@ -31,40 +30,15 @@ class WifiSwitcher {
       return WifiSwitchResult(ok: false, message: "SSID invalido");
     }
 
-    try {
-      final available = await WiFiForIoTPlugin.isEnabled();
-      if (!available) {
-        await WiFiForIoTPlugin.setEnabled(true, shouldOpenSettings: true);
-      }
-
-      final connected = await WiFiForIoTPlugin.connect(
-        target,
-        password: password,
-        security: NetworkSecurity.WPA,
-        joinOnce: true,
-      );
-
-      if (connected) {
-        final current = await WiFiForIoTPlugin.getSSID();
-        debugPrint("[WIFI] conectado em $current");
-        return WifiSwitchResult(ok: true, message: "Conectado em $target");
-      }
-
-      await openAndroidWifiSettings();
-      return WifiSwitchResult(
-        ok: false,
-        message: "Nao foi possivel conectar automaticamente",
-        usedSettingsFallback: true,
-      );
-    } catch (e) {
-      debugPrint("[WIFI] erro connect: $e");
-      await openAndroidWifiSettings();
-      return WifiSwitchResult(
-        ok: false,
-        message: "Erro ao trocar rede: $e",
-        usedSettingsFallback: true,
-      );
-    }
+    // Em alguns dispositivos (ex.: Xiaomi/MIUI), a troca automática pode
+    // cair em rede "fictícia"/sem rota. Forçamos conexão manual pelo Android.
+    await openAndroidWifiSettings();
+    return WifiSwitchResult(
+      ok: true,
+      message:
+          "Abra a lista de Wi-Fi e conecte manualmente na rede '$target'.",
+      usedSettingsFallback: true,
+    );
   }
 
   Future<void> openAndroidWifiSettings() async {

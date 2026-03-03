@@ -9,6 +9,7 @@ import "../../../helpers/scale_comm.dart";
 import "../../../helpers/mirror_service.dart";
 
 import "../data/fabricacao_repo.dart";
+import "../domain/fabricacao_flow.dart";
 import "../domain/models.dart";
 
 class FabricacaoController extends ChangeNotifier {
@@ -316,6 +317,7 @@ class FabricacaoController extends ChangeNotifier {
   String _lastDetId = "";
   bool _baseDefinida = false;
   bool _baselinePending = false;
+  bool _contabilizarPrimeiroPacotePositivo = false;
   int _pesoInicialPrimeiro = 0;
   int _realizadoAcumBanco = 0;
   bool _pesoPausado = false;
@@ -345,10 +347,7 @@ class FabricacaoController extends ChangeNotifier {
     header = aberto;
     ingredientes = await repo.listIngredientesDaFabricacao(aberto.id);
 
-    idx = 0;
-    for (var i = 0; i < ingredientes.length; i++) {
-      if (ingredientes[i].realizadoKg > 0) idx = i;
-    }
+    idx = _pickResumeIndex(preferFirstZero: false);
 
     _cancelAutoPulo();
     _resetRealizadoStateForCurrent(baselinePending: true);
@@ -357,6 +356,46 @@ class FabricacaoController extends ChangeNotifier {
     _sendMirrorState(force: true);
 
     return true;
+  }
+
+  Future<bool> resumeByFabricacaoId(String idFab) async {
+    final h = await repo.getFabricacaoById(idFab);
+    if (h == null) return false;
+
+    header = h;
+    ingredientes = await repo.listIngredientesDaFabricacao(h.id);
+
+    final preferFirstZero = h.status == FabricacaoStatus.pendenteCaminhao;
+    idx = _pickResumeIndex(preferFirstZero: preferFirstZero);
+
+    _cancelAutoPulo();
+    _resetRealizadoStateForCurrent(baselinePending: true);
+    if (preferFirstZero &&
+        ingredientes.isNotEmpty &&
+        idx >= 0 &&
+        idx < ingredientes.length &&
+        ingredientes[idx].realizadoKg <= 0) {
+      _contabilizarPrimeiroPacotePositivo = true;
+    }
+
+    notifyListeners();
+    _sendMirrorState(force: true);
+
+    return true;
+  }
+
+  int _pickResumeIndex({required bool preferFirstZero}) {
+    if (ingredientes.isEmpty) return 0;
+    if (preferFirstZero) {
+      final firstZero = ingredientes.indexWhere((e) => e.realizadoKg <= 0);
+      if (firstZero >= 0) return firstZero;
+    }
+
+    var lastComRealizado = 0;
+    for (var i = 0; i < ingredientes.length; i++) {
+      if (ingredientes[i].realizadoKg > 0) lastComRealizado = i;
+    }
+    return lastComRealizado;
   }
 
   Future<void> goToIndex(int index) async {
@@ -582,6 +621,7 @@ class FabricacaoController extends ChangeNotifier {
 
     _baseDefinida = false;
     _baselinePending = baselinePending;
+    _contabilizarPrimeiroPacotePositivo = false;
     _pesoInicialPrimeiro = 0;
     _pesoPausado = false;
     _pesoPausadoKg = 0;
@@ -620,10 +660,19 @@ class FabricacaoController extends ChangeNotifier {
     if (_pesoPausado) return;
 
     if (_baselinePending) {
-      _pesoInicialPrimeiro = pesoAtualInt;
-      _baseDefinida = true;
-      _baselinePending = false;
-      return;
+      if (_contabilizarPrimeiroPacotePositivo &&
+          _realizadoAcumBanco <= 0 &&
+          pesoAtualInt > 0) {
+        _pesoInicialPrimeiro = 0;
+        _baseDefinida = true;
+        _baselinePending = false;
+        _contabilizarPrimeiroPacotePositivo = false;
+      } else {
+        _pesoInicialPrimeiro = pesoAtualInt;
+        _baseDefinida = true;
+        _baselinePending = false;
+        return;
+      }
     }
 
     if (!_baseDefinida) {
@@ -1187,8 +1236,11 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   // BOOT helper
   // =========================================================
-  Future<bool> bootTruckSide() async {
-    final ok = await resumeOpenIfAny();
+  Future<bool> bootTruckSide({String? initialFabricacaoId}) async {
+    final fabId = (initialFabricacaoId ?? "").trim();
+    final ok = fabId.isEmpty
+        ? await resumeOpenIfAny()
+        : await resumeByFabricacaoId(fabId);
     if (!ok) return false;
 
     _closed = false;

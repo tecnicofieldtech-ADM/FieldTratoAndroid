@@ -19,11 +19,31 @@ class CarregamentoBridgeServer {
   final ValueNotifier<String> statusText = ValueNotifier<String>("OFF");
 
   Future<void> start({int port = 8080}) async {
-    if (_server != null) return;
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-    statusText.value = "ON :$port";
-    _server!.listen(_handle, onError: (_) {});
-    _touch("bridge on");
+    if (_server != null) {
+      debugPrint("[BRIDGE] start ignorado: servidor ja ativo.");
+      return;
+    }
+
+    debugPrint("[BRIDGE] iniciando em 0.0.0.0:$port ...");
+    try {
+      _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      statusText.value = "ON :$port";
+      debugPrint("[BRIDGE] ON em 0.0.0.0:$port");
+      _server!.listen(
+        _handle,
+        onError: (e, st) {
+          debugPrint("[BRIDGE] erro no listen: $e");
+          debugPrint("$st");
+        },
+      );
+      _touch("bridge on");
+    } catch (e, st) {
+      _server = null;
+      statusText.value = "OFF (erro em :$port)";
+      debugPrint("[BRIDGE] falha ao iniciar em :$port -> $e");
+      debugPrint("$st");
+      rethrow;
+    }
   }
 
   Future<void> stop() async {
@@ -31,6 +51,7 @@ class CarregamentoBridgeServer {
     _server = null;
     if (s != null) {
       await s.close(force: true);
+      debugPrint("[BRIDGE] OFF (stop)");
     }
     statusText.value = "OFF";
   }

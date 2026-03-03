@@ -263,10 +263,32 @@ class ConfigRepo {
   Future<int> countFabricacaoPendenteSync() async {
     final db = await _db;
     try {
+      final flowMode = await getFabricacaoFlowMode();
+      final tipoTrabalho = await getTipoTrabalho();
+
+      // Regra global:
+      // - startStationFinishTruck + estacionario => nunca sincroniza fabricacao.
+      // - startStationFinishTruck + caminhao => sincroniza somente finalizadas no caminhao.
+      if (flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+          tipoTrabalho == 1) {
+        return 0;
+      }
+
+      final where = <String>[
+        "IFNULL(FLAG_SYNC,0) = 0",
+      ];
+
+      if (flowMode == FabricacaoFlowMode.startStationFinishTruck) {
+        where.add("IFNULL(FAB_STATUS,0) = $fabricacaoStatusFinalizada");
+        where.add("UPPER(TRIM(COALESCE(ORIGIN_DEVICE,''))) = 'CAMINHAO'");
+      } else {
+        where.add("IFNULL(QTD_REALIZADA,0) > 0");
+      }
+
       final rows = await db.rawQuery(
         "SELECT COUNT(*) AS QTD "
         "FROM CADASTRO_FABRICA_RACAO "
-        "WHERE IFNULL(QTD_REALIZADA,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0",
+        "WHERE ${where.join(" AND ")}",
       );
       if (rows.isEmpty) return 0;
       final v = rows.first["QTD"];
@@ -340,10 +362,11 @@ class ConfigRepo {
       );
 
   Future<int> getPortaEstacionario() async {
-    final base = _toStr(await _getField("STATION_BASE_URL"), def: "");
-    final fromBase = _portFromBaseUrl(base);
-    final v = fromBase ?? _toInt(await _getField("PORTA_ESTACIONARIO"), def: 8080);
-    return v <= 0 ? 8080 : v;
+    final v = _toInt(await _getField("PORTA_ESTACIONARIO"), def: 8080);
+    if (v <= 0) return 8080;
+    // Android normalmente bloqueia bind em portas privilegiadas (<1024).
+    if (v < 1024) return 8080;
+    return v;
   }
 
   Future<FabricacaoFlowMode> getFabricacaoFlowMode() async {

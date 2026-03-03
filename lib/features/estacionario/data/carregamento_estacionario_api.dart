@@ -21,18 +21,32 @@ class CarregamentoEstacionarioApi {
   final String host;
   final int port;
   final Dio _dio;
+  String get _base => "http://$host:$port";
+
+  String _clip(Object? data, {int max = 300}) {
+    final s = (data ?? "").toString();
+    if (s.length <= max) return s;
+    return "${s.substring(0, max)}...";
+  }
 
   Future<bool> health() async {
     try {
+      debugPrint("[EST_API] GET $_base/health");
       final r = await _dio.get("/health");
+      debugPrint("[EST_API] /health status=${r.statusCode} body=${_clip(r.data)}");
       return r.statusCode == 200;
-    } catch (_) {
+    } catch (e) {
+      debugPrint("[EST_API] /health erro=$e");
       return false;
     }
   }
 
   Future<List<CarregamentoResumoDto>> listCarregamentos() async {
+    debugPrint("[EST_API] GET $_base/carregamentos");
     final r = await _dio.get("/carregamentos");
+    debugPrint(
+      "[EST_API] /carregamentos status=${r.statusCode} body=${_clip(r.data)}",
+    );
     final data = r.data;
     final list = (data is List)
         ? data
@@ -48,7 +62,11 @@ class CarregamentoEstacionarioApi {
   }
 
   Future<CarregamentoDetalheDto> getDetalhe(String id) async {
+    debugPrint("[EST_API] GET $_base/carregamentos/$id");
     final r = await _dio.get("/carregamentos/$id");
+    debugPrint(
+      "[EST_API] /carregamentos/$id status=${r.statusCode} body=${_clip(r.data)}",
+    );
     final data = (r.data is Map)
         ? Map<String, dynamic>.from(r.data as Map)
         : <String, dynamic>{};

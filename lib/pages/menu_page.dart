@@ -1,4 +1,5 @@
 // lib/pages/menu_page.dart
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "../repo/config_repo.dart";
 import "../services/carregamento_bridge.dart";
@@ -25,21 +26,23 @@ class _MenuPageState extends State<MenuPage> {
   Future<void> _loadTipoTrabalho() async {
     try {
       final t = await _cfgRepo.getTipoTrabalho();
+      debugPrint("[MENU] tipoTrabalho=$t");
       if (t == 1) {
         final port = await _cfgRepo.getPortaEstacionario();
-        // ignore: unawaited_futures
-        CarregamentoBridgeServer.instance.start(port: port);
+        debugPrint("[MENU] tentando ligar bridge na porta $port");
+        await CarregamentoBridgeServer.instance.start(port: port);
       } else {
-        // ignore: unawaited_futures
-        CarregamentoBridgeServer.instance.stop();
+        debugPrint("[MENU] tipo != estacionario, desligando bridge");
+        await CarregamentoBridgeServer.instance.stop();
       }
       if (!mounted) return;
       setState(() => _tipoTrabalho = t);
-    } catch (_) {
-      // deixa null para não bloquear menus se config falhar
+    } catch (e, st) {
+      debugPrint("[MENU] erro ao iniciar/parar bridge: $e");
+      debugPrint("$st");
+      // deixa null para nao bloquear menus se config falhar
     }
   }
-
   void _go(BuildContext context, String route) {
     Navigator.pushNamed(context, route);
   }
@@ -423,3 +426,4 @@ class _Tile extends StatelessWidget {
     );
   }
 }
+

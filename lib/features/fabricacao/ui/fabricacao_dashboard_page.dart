@@ -4,6 +4,7 @@ import "package:flutter/material.dart";
 
 import "../data/fabricacao_dashboard_repo.dart";
 import "../data/fabricacao_repo.dart";
+import "../domain/fabricacao_flow.dart";
 import "ingredientes_modal.dart";
 import "../../../repo/config_repo.dart";
 
@@ -81,10 +82,12 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
       // ? carrega META da configuracao (TOLERANCIA_CARREGAMENTO)
       final cfg = await _cfgRepo.getConfig();
       final meta = _asDouble(cfg?["TOLERANCIA_CARREGAMENTO"], 0.0);
+      final flowMode = await _cfgRepo.getFabricacaoFlowMode();
+      final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
 
       final racoes = await _dash.racoesDoDia(dataIso);
       final totals = await _dash.totalsDoDia(dataIso, idDieta: idDieta);
-      final pend = await _dash.pendentesSyncDoDia(dataIso, idDieta: idDieta);
+      int pend = await _dash.pendentesSyncDoDia(dataIso, idDieta: idDieta);
       final irreg = await _dash.irregularesCount(dataIso, idDieta: idDieta);
 
       final porRacao = await _dash.porRacao(dataIso, idDieta: idDieta);
@@ -94,8 +97,14 @@ class _FabricacaoDashboardPageState extends State<FabricacaoDashboardPage> {
 
       final irregList =
           await _dash.irregularesList(dataIso, limit: 30, idDieta: idDieta);
-      final pendList =
+      List<Map<String, Object?>> pendList =
           await _dash.pendentesSyncList(dataIso, limit: 30, idDieta: idDieta);
+
+      if (flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+          tipoTrabalho == 1) {
+        pend = 0;
+        pendList = const [];
+      }
 
       // ? ranking
       final ranking =
