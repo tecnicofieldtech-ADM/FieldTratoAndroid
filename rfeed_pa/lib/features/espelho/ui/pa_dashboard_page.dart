@@ -2,6 +2,8 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:package_info_plus/package_info_plus.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "../controller/pa_server_controller.dart";
 import "../data/mirror_targets_repo.dart";
 import "targets_list_page.dart";
@@ -16,12 +18,22 @@ class PaDashboardPage extends StatefulWidget {
 }
 
 class _PaDashboardPageState extends State<PaDashboardPage> {
+  static const String _styleRfeed = "rfeed";
+  static const String _styleMbTratos = "mbtratos";
+  static const String _stylePrefKey = "pa_style_mode";
+
   Timer? _ticker;
+  String _versionLabel = "--";
+  String _styleMode = _styleRfeed;
 
   @override
   void initState() {
     super.initState();
     widget.server.addListener(_on);
+    // ignore: discarded_futures
+    _loadVersion();
+    // ignore: discarded_futures
+    _loadStyleMode();
 
     // ignore: unawaited_futures
     _ensureServerStarted();
@@ -30,6 +42,28 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       if (!mounted) return;
       setState(() {});
     });
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final p = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _versionLabel = "${p.version}+${p.buildNumber}");
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _versionLabel = "--");
+    }
+  }
+
+  Future<void> _loadStyleMode() async {
+    try {
+      final pref = await SharedPreferences.getInstance();
+      final mode = (pref.getString(_stylePrefKey) ?? _styleRfeed).trim();
+      if (!mounted) return;
+      setState(() {
+        _styleMode = (mode == _styleMbTratos) ? _styleMbTratos : _styleRfeed;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -51,7 +85,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final active = widget.server.activeTarget;
     final hasTarget = active != null && active.host.trim().isNotEmpty;
     if (!hasTarget) {
-      widget.server.status = "Selecione um caminhao para iniciar";
+      widget.server.status = "Selecione um Vagao para iniciar";
       setState(() {});
       return;
     }
@@ -99,11 +133,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     return false;
   }
 
-  int _toInt(dynamic v) {
-    if (v is num) return v.toInt();
-    return int.tryParse("$v") ?? 0;
-  }
-
   Color _alpha(Color color, double opacity) {
     final o = opacity.clamp(0.0, 1.0);
     return color.withValues(alpha: o);
@@ -111,11 +140,22 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMbTratos = _styleMode == _styleMbTratos;
+    final screenBg = isMbTratos ? const Color(0xFFE6F0E8) : null;
+    final appBarBg = isMbTratos ? const Color(0xFF2F7D45) : null;
+    final appBarFg = isMbTratos ? Colors.white : null;
+    final actionButtonBg = isMbTratos ? const Color(0xFF00B5B2) : null;
+    final actionButtonFg = isMbTratos ? Colors.white : null;
+    final vehicleNameColor = isMbTratos ? const Color(0xFF205B33) : Colors.black87;
+
     final st = widget.server.lastState;
     final active = widget.server.activeTarget;
+    final activeName = active?.nome.trim().isNotEmpty == true
+        ? active!.nome.trim()
+        : "Sem Vagao selecionado";
 
     final activeLabel = active == null
-        ? "Nenhum caminhao selecionado"
+        ? "Nenhum Vagao selecionado"
         : "${active.nome} - ${active.host}";
 
     final atual = (st != null && st["atual"] is Map)
@@ -136,7 +176,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final barValue = prev > 0 ? (real / prev).clamp(0.0, 1.0) : 0.0;
     final faltando = prev > 0 ? (prev - real) : 0;
     final faltandoShow = faltando < 0 ? 0 : faltando;
-    final difText = "$faltandoShow";
+    final showPlus = prev > 0 && real > prev;
+    final difText = showPlus ? "+$difAbs" : "$faltandoShow";
 
     String status;
     if (prev <= 0) {
@@ -150,14 +191,26 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     }
 
     Color bg;
-    if (prev <= 0) {
-      bg = Colors.blueGrey.shade700;
-    } else if (real == prev) {
-      bg = Colors.green.shade700;
-    } else if (real > prev) {
-      bg = Colors.deepOrange.shade700;
+    if (isMbTratos) {
+      if (prev <= 0) {
+        bg = const Color(0xFF3D7F4B);
+      } else if (real == prev) {
+        bg = const Color(0xFF2F7D45);
+      } else if (real > prev) {
+        bg = const Color(0xFF1E6032);
+      } else {
+        bg = const Color(0xFF245F35);
+      }
     } else {
-      bg = Colors.black;
+      if (prev <= 0) {
+        bg = Colors.blueGrey.shade700;
+      } else if (real == prev) {
+        bg = Colors.green.shade700;
+      } else if (real > prev) {
+        bg = Colors.deepOrange.shade700;
+      } else {
+        bg = Colors.black;
+      }
     }
 
     final topStatus = widget.server.listening
@@ -199,16 +252,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final trato = (st?["trato"] as num?)?.toInt();
     final finalizada = _isTrue(st?["finalizada"]);
     final isPreNow = _isPre(atual);
-    final pos = _toInt(atual?["pos"]);
-    final total = (() {
-      final fromState = _toInt(st?["total"]);
-      if (fromState > 0) return fromState;
-      final fromAlt1 = _toInt(st?["totalIngredientes"]);
-      if (fromAlt1 > 0) return fromAlt1;
-      final fromAlt2 = _toInt(st?["qtdIngredientes"]);
-      if (fromAlt2 > 0) return fromAlt2;
-      return 0;
-    })();
 
     final subtitleParts = <String>[];
     if (trato != null) subtitleParts.add("Trato $trato");
@@ -216,12 +259,15 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final subtitle = subtitleParts.isEmpty ? null : subtitleParts.join(" - ");
 
     return Scaffold(
+      backgroundColor: screenBg,
       appBar: _TopAppBar(
         title: "PA - Espelhamento",
         subtitle: subtitle,
+        backgroundColor: appBarBg,
+        foregroundColor: appBarFg,
         actions: [
           IconButton(
-            tooltip: "Caminhoes",
+            tooltip: "Vagoes",
             onPressed: _openTargets,
             icon: const Icon(Icons.list_alt),
           ),
@@ -235,9 +281,28 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       body: Column(
         children: [
           Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                activeName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 34,
+                  height: 1.0,
+                  fontWeight: FontWeight.w900,
+                  color: vehicleNameColor,
+                ),
+              ),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: _cardServerTopCompact(
               activeLabel: activeLabel,
+              localIp: widget.server.listenBind,
+              versionLabel: _versionLabel,
               topStatus: topStatus,
               serverIcon: serverIcon,
               serverColor: serverColor,
@@ -259,7 +324,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
           const SizedBox(height: 10),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: _cardDiferencaPrincipalFill(
                 prev: prev,
                 real: real,
@@ -271,11 +336,10 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: _bottomListaBar(pos: pos, total: total),
+          _bottomNav(
+            actionButtonBg: actionButtonBg,
+            actionButtonFg: actionButtonFg,
           ),
-          _bottomNav(),
         ],
       ),
     );
@@ -283,6 +347,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   Widget _cardServerTopCompact({
     required String activeLabel,
+    required String localIp,
+    required String versionLabel,
     required String topStatus,
     required IconData serverIcon,
     required Color serverColor,
@@ -291,7 +357,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     required Color badgeColor,
     required String badgeText,
   }) {
-    final canRestart = true;
     final lastAtTxt = _fmtTime(lastAt);
 
     return Card(
@@ -317,7 +382,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                   ),
                 ),
                 OutlinedButton.icon(
-                  onPressed: canRestart ? _restartServerOnly : null,
+                  onPressed: _restartServerOnly,
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text("Reconectar"),
                 ),
@@ -371,6 +436,32 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "IP da Pa: $localIp",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Versao: v$versionLabel",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade700,
+                ),
+              ),
             ),
             const SizedBox(height: 8),
             Align(
@@ -682,34 +773,10 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     );
   }
 
-  Widget _bottomListaBar({required int pos, required int total}) {
-    final hasProgress = total > 0;
-    final current = hasProgress ? pos.clamp(1, total) : 0;
-    final progressLabel = hasProgress ? "Progresso $current/$total" : "Progresso --/--";
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                progressLabel,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: _openTargets,
-              icon: const Icon(Icons.list_alt, size: 18),
-              label: const Text("Ver lista"),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _bottomNav() {
+  Widget _bottomNav({
+    required Color? actionButtonBg,
+    required Color? actionButtonFg,
+  }) {
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.only(bottom: 8),
@@ -730,8 +797,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             Expanded(
               child: FilledButton.icon(
                 onPressed: _openTargets,
+                style: (actionButtonBg == null && actionButtonFg == null)
+                    ? null
+                    : FilledButton.styleFrom(
+                        backgroundColor: actionButtonBg,
+                        foregroundColor: actionButtonFg,
+                      ),
                 icon: const Icon(Icons.swap_horiz),
-                label: const Text("Trocar Vagão Carregamento"),
+                label: const Text("Trocar Vagao Carregamento"),
               ),
             ),
           ],
@@ -858,11 +931,19 @@ class _PulseChipState extends State<_PulseChip>
 }
 
 class _TopAppBar extends StatelessWidget implements PreferredSizeWidget {
-  const _TopAppBar({required this.title, this.subtitle, this.actions});
+  const _TopAppBar({
+    required this.title,
+    this.subtitle,
+    this.actions,
+    this.backgroundColor,
+    this.foregroundColor,
+  });
 
   final String title;
   final String? subtitle;
   final List<Widget>? actions;
+  final Color? backgroundColor;
+  final Color? foregroundColor;
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
@@ -872,6 +953,8 @@ class _TopAppBar extends StatelessWidget implements PreferredSizeWidget {
     return AppBar(
       titleSpacing: 12,
       actions: actions,
+      backgroundColor: backgroundColor,
+      foregroundColor: foregroundColor,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -886,6 +969,8 @@ class _TopAppBar extends StatelessWidget implements PreferredSizeWidget {
     );
   }
 }
+
+
 
 
 

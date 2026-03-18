@@ -229,7 +229,7 @@ class PaServerController extends ChangeNotifier {
     final ip = sock.remoteAddress.address;
     final key = "$ip:${sock.remotePort}";
 
-    // ✅ filtra IP do caminhão ativo (se selecionado)
+    // ✅ filtra IP do Vagão ativo (se selecionado)
     final allowedIp = activeTarget?.host.trim();
     if (allowedIp != null && allowedIp.isNotEmpty && ip != allowedIp) {
       dropped++;

@@ -2,7 +2,7 @@ name: rfeed_flutter
 description: RFeed AutomaÃ§Ã£o - Flutter
 publish_to: "none"
 
-version: 1.0.8+12
+version: 1.0.9+14
 
 environment:
   sdk: ">=3.2.0 <4.0.0"

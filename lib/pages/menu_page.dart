@@ -1,6 +1,8 @@
 // lib/pages/menu_page.dart
-import "package:flutter/foundation.dart";
+import "dart:async";
+
 import "package:flutter/material.dart";
+import "package:network_info_plus/network_info_plus.dart";
 import "../repo/config_repo.dart";
 import "../services/carregamento_bridge.dart";
 import "../widgets/app_logo.dart";
@@ -14,13 +16,38 @@ class MenuPage extends StatefulWidget {
 
 class _MenuPageState extends State<MenuPage> {
   final _cfgRepo = ConfigRepo();
+  final _netInfo = NetworkInfo();
 
   int? _tipoTrabalho;
+  String _wifiIp = "--";
+  Timer? _ipTimer;
 
   @override
   void initState() {
     super.initState();
     _loadTipoTrabalho();
+    _refreshWifiIp();
+    _ipTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _refreshWifiIp(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ipTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshWifiIp() async {
+    try {
+      final ip = (await _netInfo.getWifiIP())?.trim() ?? "";
+      if (!mounted) return;
+      setState(() => _wifiIp = ip.isEmpty ? "--" : ip);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _wifiIp = "--");
+    }
   }
 
   Future<void> _loadTipoTrabalho() async {
@@ -326,6 +353,15 @@ class _MenuPageState extends State<MenuPage> {
                             "Sobre o app",
                             style: TextStyle(fontWeight: FontWeight.w800),
                           ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        "IP da rede: $_wifiIp",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.black.withValues(alpha: 0.75),
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 10),

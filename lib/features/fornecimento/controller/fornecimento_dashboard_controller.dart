@@ -573,8 +573,26 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
       final current = _selected;
 
-      // se já está no mesmo, não faz nada
+      // Se já está no mesmo curral:
+      // - com sessão ativa: ignora leitura repetida
+      // - sem sessão ativa: reabre sessão (evita precisar sair/voltar da tela)
       if (current != null && current.idFornecimento == target.idFornecimento) {
+        if (_sessaoAtiva &&
+            _pesoInicial != null &&
+            (_idCadastroAberto ?? "").trim().isNotEmpty) {
+          _lastRfidHandled = epc;
+          _lastRfidHandledAt = now;
+          return;
+        }
+
+        await iniciarCarregamento();
+        if (_consumeBlockingErrorAsNotice(
+          title: "Falha ao iniciar sessao para a tag lida.",
+          key: "rfid_autostart_error",
+        )) {
+          return;
+        }
+
         _lastRfidHandled = epc;
         _lastRfidHandledAt = now;
         return;

@@ -163,6 +163,19 @@ class FabricacaoController extends ChangeNotifier {
         final t = (msg["t"] ?? msg["cmd"] ?? "").toString();
 
         if (t == "next") {
+          final now = DateTime.now();
+          if (_lastRemoteNavCmd == "next" &&
+              now.difference(_lastRemoteNavAt).inMilliseconds < 350) {
+            if (kDebugMode) {
+              debugPrint("[MIRROR] ignorado next repetido (<350ms)");
+            }
+            return;
+          }
+          _lastRemoteNavCmd = "next";
+          _lastRemoteNavAt = now;
+          if (kDebugMode) {
+            debugPrint("[MIRROR] comando remoto: next");
+          }
           unawaited(() async {
             try {
               await next();
@@ -172,6 +185,19 @@ class FabricacaoController extends ChangeNotifier {
         }
 
         if (t == "prev") {
+          final now = DateTime.now();
+          if (_lastRemoteNavCmd == "prev" &&
+              now.difference(_lastRemoteNavAt).inMilliseconds < 350) {
+            if (kDebugMode) {
+              debugPrint("[MIRROR] ignorado prev repetido (<350ms)");
+            }
+            return;
+          }
+          _lastRemoteNavCmd = "prev";
+          _lastRemoteNavAt = now;
+          if (kDebugMode) {
+            debugPrint("[MIRROR] comando remoto: prev");
+          }
           unawaited(() async {
             try {
               await prev();
@@ -336,6 +362,8 @@ class FabricacaoController extends ChangeNotifier {
 
   bool _jumping = false;
   bool _autoPuloDisparado = false;
+  DateTime _lastRemoteNavAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String _lastRemoteNavCmd = "";
 
   // =========================================================
   // BOOT / RESUME

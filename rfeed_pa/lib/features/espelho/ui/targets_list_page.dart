@@ -1,4 +1,6 @@
-import "package:flutter/material.dart";
+﻿import "package:flutter/material.dart";
+import "package:package_info_plus/package_info_plus.dart";
+import "package:shared_preferences/shared_preferences.dart";
 import "../controller/pa_server_controller.dart";
 import "../data/mirror_targets_repo.dart";
 import "../domain/mirror_target.dart";
@@ -12,6 +14,7 @@ class TargetsListPage extends StatefulWidget {
     this.onSelected,
     this.autoPopOnSelect = false,
   });
+
   final MirrorTargetsRepo repo;
   final PaServerController server;
   final ValueChanged<MirrorTarget>? onSelected;
@@ -22,13 +25,100 @@ class TargetsListPage extends StatefulWidget {
 }
 
 class _TargetsListPageState extends State<TargetsListPage> {
+  static const String _styleRfeed = "rfeed";
+  static const String _styleMbTratos = "mbtratos";
+  static const String _stylePrefKey = "pa_style_mode";
+
   bool _loading = true;
   List<MirrorTarget> _items = const [];
+  String _versionLabel = "--";
+  String _styleMode = _styleRfeed;
 
   @override
   void initState() {
     super.initState();
+    // ignore: discarded_futures
+    _loadVersion();
+    // ignore: discarded_futures
+    _loadStyleMode();
     _load();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final p = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _versionLabel = "${p.version}+${p.buildNumber}");
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _versionLabel = "--");
+    }
+  }
+
+  Future<void> _loadStyleMode() async {
+    try {
+      final pref = await SharedPreferences.getInstance();
+      final mode = (pref.getString(_stylePrefKey) ?? _styleRfeed).trim();
+      if (!mounted) return;
+      setState(() {
+        _styleMode = (mode == _styleMbTratos) ? _styleMbTratos : _styleRfeed;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveStyleMode(String mode) async {
+    final next = (mode == _styleMbTratos) ? _styleMbTratos : _styleRfeed;
+    setState(() => _styleMode = next);
+    try {
+      final pref = await SharedPreferences.getInstance();
+      await pref.setString(_stylePrefKey, next);
+    } catch (_) {}
+  }
+
+  Future<void> _openStylePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        final current = _styleMode;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text(
+                  "Estilo visual",
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  current == _styleRfeed
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text("RFeed"),
+                subtitle: const Text("Mantem o visual atual"),
+                onTap: () => Navigator.of(ctx).pop(_styleRfeed),
+              ),
+              ListTile(
+                leading: Icon(
+                  current == _styleMbTratos
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                ),
+                title: const Text("MBTratos"),
+                subtitle: const Text("Paleta verde + botoes turquesa"),
+                onTap: () => Navigator.of(ctx).pop(_styleMbTratos),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected == null) return;
+    await _saveStyleMode(selected);
   }
 
   Future<void> _load() async {
@@ -55,7 +145,6 @@ class _TargetsListPageState extends State<TargetsListPage> {
       ),
     );
 
-    // recarrega lista e alvo ativo
     await widget.server.loadActive();
     await _load();
   }
@@ -101,7 +190,6 @@ class _TargetsListPageState extends State<TargetsListPage> {
   Future<void> _setActive(MirrorTarget t) async {
     await widget.server.setActiveTargetById(t.id);
 
-    // atualiza estado + lista (t.ativo muda)
     await widget.server.loadActive();
     await _load();
 
@@ -115,8 +203,13 @@ class _TargetsListPageState extends State<TargetsListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Caminhões (Espelhamento)"),
+        title: Text("Vagoes (Espelhamento)  v$_versionLabel"),
         actions: [
+          IconButton(
+            onPressed: _openStylePicker,
+            tooltip: "Estilo visual",
+            icon: const Icon(Icons.palette_outlined),
+          ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
           IconButton(onPressed: _add, icon: const Icon(Icons.add)),
         ],
@@ -132,7 +225,7 @@ class _TargetsListPageState extends State<TargetsListPage> {
                       children: [
                         const Icon(Icons.directions_bus_filled_outlined, size: 48),
                         const SizedBox(height: 10),
-                        const Text("Nenhum caminhão cadastrado."),
+                        const Text("Nenhum vagao cadastrado."),
                         const SizedBox(height: 10),
                         FilledButton.icon(
                           onPressed: _add,
@@ -145,7 +238,7 @@ class _TargetsListPageState extends State<TargetsListPage> {
                 )
               : ListView.separated(
                   itemCount: _items.length,
-                  separatorBuilder: (_, separatorIndex) => const Divider(height: 1),
+                  separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final t = _items[i];
                     return ListTile(
