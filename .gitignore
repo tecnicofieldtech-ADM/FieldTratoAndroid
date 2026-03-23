@@ -31,6 +31,8 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/build_apks/
+/build_playstore/
 /coverage/
 
 # Symbolication related
