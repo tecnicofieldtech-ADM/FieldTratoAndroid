@@ -44,6 +44,10 @@ class PaServerController extends ChangeNotifier {
   Map<String, dynamic>? _lastAuto;
   DateTime? _lastAutoAt;
 
+  // ✅ latch de finalizacao para evitar piscar entre evento e state antigo
+  String _latchedFinalFabId = "";
+  String _latchedFinalMsg = "";
+
   // =========================
   // PUBLIC
   // =========================
@@ -120,6 +124,58 @@ class PaServerController extends ChangeNotifier {
 
   int get clientsCount => _clients.length;
 
+  bool get hasActiveClient =>
+      _activeClientKey != null && _clients.containsKey(_activeClientKey);
+
+  Future<bool> sendNextCommand() => sendCommand("next");
+  Future<bool> sendPrevCommand() => sendCommand("prev");
+  Future<bool> sendFinishCommand() => sendCommand("finish");
+
+  Future<bool> sendCommand(String cmd, {Map<String, dynamic>? extra}) async {
+    final command = cmd.trim().toLowerCase();
+    if (command.isEmpty) return false;
+
+    var key = _activeClientKey;
+    if (key == null && _clients.length == 1) {
+      key = _clients.keys.first;
+      _activeClientKey = key;
+    }
+    if (key == null) {
+      status = "Sem conexão ativa para enviar comando";
+      notifyListeners();
+      return false;
+    }
+
+    final sock = _clients[key];
+    if (sock == null) {
+      status = "Conexão ativa indisponível";
+      notifyListeners();
+      return false;
+    }
+
+    final payload = <String, dynamic>{
+      "t": command,
+      "cmd": command,
+      "stream": "fabricacao",
+      "from": "pa",
+      "ts": DateTime.now().toIso8601String(),
+      ...?extra,
+    };
+
+    try {
+      sock.write("${jsonEncode(payload)}\n");
+      await sock.flush();
+      status = "Comando enviado: $command";
+      notifyListeners();
+      return true;
+    } catch (_) {
+      _drop(key);
+      status = "Falha ao enviar comando: $command";
+      notifyListeners();
+      return false;
+    }
+  }
+
   // ✅ helpers “prontos” pra UI
   Map<String, dynamic>? get autoState {
     // se veio auto no state atual
@@ -164,6 +220,9 @@ class PaServerController extends ChangeNotifier {
 
     _lastAuto = null;
     _lastAutoAt = null;
+
+    _latchedFinalFabId = "";
+    _latchedFinalMsg = "";
   }
 
   Future<void> _safeCloseServer() async {
@@ -291,6 +350,55 @@ class PaServerController extends ChangeNotifier {
     return enabled && countdown > 0;
   }
 
+  bool _isFinalizacaoEvent(Map<String, dynamic> map) {
+    return (map["t"] ?? "").toString() == "event" &&
+        (map["type"] ?? "").toString() == "finalizada";
+  }
+
+  String _fabIdFrom(Map<String, dynamic> map) {
+    return (map["fabId"] ?? map["idFab"] ?? "").toString().trim();
+  }
+
+  void _applyFinalizacaoLatch(Map<String, dynamic> map) {
+    final isEvent = _isFinalizacaoEvent(map);
+    final isFinalizada = _isTrue(map["finalizada"]);
+    final fabId = _fabIdFrom(map);
+    final msg = (map["msg"] ?? "").toString().trim();
+
+    if (isEvent || isFinalizada) {
+      if (fabId.isNotEmpty) {
+        _latchedFinalFabId = fabId;
+      }
+      if (msg.isNotEmpty) {
+        _latchedFinalMsg = msg;
+      }
+      map["t"] = "event";
+      map["type"] = "finalizada";
+      map["finalizada"] = 1;
+      if (_latchedFinalMsg.isNotEmpty && msg.isEmpty) {
+        map["msg"] = _latchedFinalMsg;
+      }
+      return;
+    }
+
+    if (_latchedFinalFabId.isEmpty) return;
+
+    // Se mudou para outra fabricacao, libera o latch.
+    if (fabId.isNotEmpty && fabId != _latchedFinalFabId) {
+      _latchedFinalFabId = "";
+      _latchedFinalMsg = "";
+      return;
+    }
+
+    // Mesmo fab (ou pacote sem fabId): mantem finalizada latched.
+    map["t"] = "event";
+    map["type"] = "finalizada";
+    map["finalizada"] = 1;
+    if (_latchedFinalMsg.isNotEmpty && msg.isEmpty) {
+      map["msg"] = _latchedFinalMsg;
+    }
+  }
+
   bool _acceptForUi({required int pos, required bool isPre}) {
     // Primeiro state
     if (_uiPos == 0) {
@@ -358,6 +466,8 @@ class PaServerController extends ChangeNotifier {
         if (_activeClientKey != null && key != _activeClientKey) continue;
 
         final now = DateTime.now();
+
+        _applyFinalizacaoLatch(map);
 
         // ✅ sempre cacheia AUTO (mesmo se o anti-flicker rejeitar)
         if (map["auto"] is Map) {

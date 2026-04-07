@@ -16,6 +16,7 @@ class FabricacaoController extends ChangeNotifier {
   FabricacaoController(this.repo);
 
   final FabricacaoRepo repo;
+  Future<void> Function()? onRemoteFinishRequested;
 
   bool _isDisposing = false;
   bool _isDisposed = false;
@@ -208,6 +209,60 @@ class FabricacaoController extends ChangeNotifier {
 
         if (t == "ping") {
           MirrorService.instance.sendState({"t": "pong"}, force: true);
+          return;
+        }
+
+        if (t == "finish" || t == "finalizar" || t == "finalize") {
+          final now = DateTime.now();
+          if (_lastRemoteNavCmd == "finish" &&
+              now.difference(_lastRemoteNavAt).inMilliseconds < 600) {
+            if (kDebugMode) {
+              debugPrint("[MIRROR] ignorado finish repetido (<600ms)");
+            }
+            return;
+          }
+          _lastRemoteNavCmd = "finish";
+          _lastRemoteNavAt = now;
+          if (kDebugMode) {
+            debugPrint("[MIRROR] comando remoto: finish");
+          }
+          unawaited(() async {
+            var ok = false;
+            try {
+              final cb = onRemoteFinishRequested;
+              if (cb != null) {
+                try {
+                  await cb();
+                  ok = true;
+                } catch (e) {
+                  if (kDebugMode) {
+                    debugPrint("[MIRROR] finish via UI falhou: $e");
+                  }
+                  await finalizarFabricacaoAntesDoTimer();
+                  ok = true;
+                }
+              } else {
+                await finalizarFabricacaoAntesDoTimer();
+                ok = true;
+              }
+
+              _sendMirrorEvent("command_ack", {
+                "cmd": "finish",
+                "ok": ok ? 1 : 0,
+              });
+              _sendMirrorState(force: true);
+            } catch (e) {
+              if (kDebugMode) {
+                debugPrint("[MIRROR] finish remoto falhou: $e");
+              }
+              _sendMirrorEvent("command_ack", {
+                "cmd": "finish",
+                "ok": 0,
+                "error": "$e",
+              });
+              _sendMirrorState(force: true);
+            }
+          }());
           return;
         }
       },

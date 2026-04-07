@@ -104,62 +104,58 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
   Widget build(BuildContext context) {
     final title = widget.titulo ?? "Mistura";
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(false),
-          tooltip: "Fechar",
+    return PopScope(
+      canPop: _done,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(title),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _done ? () => Navigator.of(context).pop(false) : null,
+            tooltip: "Fechar",
+          ),
         ),
-      ),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _done ? Icons.check_circle : Icons.timer,
-                    size: 84,
-                    color: _done ? Colors.green : null,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _done ? "Concluído" : "Tempo de mistura",
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _fmt(_secs),
-                    style: const TextStyle(fontSize: 56, fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(height: 18),
-                  if (widget.fabricacaoId != null && widget.fabricacaoId!.trim().isNotEmpty)
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _done ? Icons.check_circle : Icons.timer,
+                      size: 84,
+                      color: _done ? Colors.green : null,
+                    ),
+                    const SizedBox(height: 16),
                     Text(
-                      "Fabricação: ${widget.fabricacaoId}",
-                      style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                      _done ? "Concluído" : "Tempo de mistura",
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                       textAlign: TextAlign.center,
                     ),
-                  const SizedBox(height: 22),
-                  if (!_done) ...[
-                    OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      icon: const Icon(Icons.arrow_back),
-                      label: const Text("Voltar"),
+                    const SizedBox(height: 12),
+                    Text(
+                      _fmt(_secs),
+                      style: const TextStyle(fontSize: 56, fontWeight: FontWeight.w900),
                     ),
-                  ] else ...[
-                    FilledButton.icon(
-                      onPressed: _finish,
-                      icon: const Icon(Icons.check),
-                      label: const Text("Finalizar"),
-                    ),
+                    const SizedBox(height: 18),
+                    if (widget.fabricacaoId != null && widget.fabricacaoId!.trim().isNotEmpty)
+                      Text(
+                        "Fabricação: ${widget.fabricacaoId}",
+                        style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                    const SizedBox(height: 22),
+                    if (_done)
+                      FilledButton.icon(
+                        onPressed: _finish,
+                        icon: const Icon(Icons.check),
+                        label: const Text("Finalizar"),
+                      ),
                   ],
-                ],
+                ),
               ),
             ),
           ),

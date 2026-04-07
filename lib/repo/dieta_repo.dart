@@ -8,7 +8,7 @@ class DietaRepo {
       return db.query(
         "DIETA",
         columns: ["ID", "NOME", "TIPO", "MS", "ID_FAZENDA"],
-        where: "ID_FAZENDA = ?",
+        where: "TRIM(COALESCE(ID_FAZENDA, '')) = TRIM(?)",
         whereArgs: [idFazenda.trim()],
         orderBy: "NOME COLLATE NOCASE",
       );

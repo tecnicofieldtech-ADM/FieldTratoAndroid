@@ -176,6 +176,9 @@ class ConfigRepo {
   Future<int> getTipoTrabalho() async =>
       _toInt(await _getField("TIPO_TRABALHO"), def: 0);
 
+    Future<int> getBackend() async =>
+      _toInt(await _getField("BACKEND"), def: 0);
+
   /// ✅ ID do vagão é TEXT (UUID)
   Future<String> getIdVagao() async =>
       _toStr(await _getField("ID_VAGAO"), def: "").trim();
