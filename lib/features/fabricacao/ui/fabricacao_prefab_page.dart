@@ -46,9 +46,38 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
   Future<void> _loadCombos() async {
     if (mounted) setState(() => _loading = true);
     try {
+      final backend = await _cfg.getBackend();
+      final isFieldpec = backend == 1;
       final idFazendaSel = await _cfg.getIdFazendaSelecionada();
-      final dietas = await _dietaRepo.listAll(idFazenda: idFazendaSel);
+
+      var dietas = await _dietaRepo.listAll(
+        idFazenda: isFieldpec ? null : idFazendaSel,
+      );
+      final dietasPorFazenda = dietas.length;
+
+      if (!isFieldpec && dietas.isEmpty && idFazendaSel.trim().isNotEmpty) {
+        debugPrint(
+          "[FAB_PREFAB] nenhuma dieta para fazenda='$idFazendaSel' (filtrado). Tentando sem filtro...",
+        );
+        dietas = await _dietaRepo.listAll();
+      }
+
       final users = await _userRepo.listAll();
+
+      final amostra = dietas
+          .take(5)
+          .map(
+            (d) =>
+                "${(d["ID"] ?? "").toString()}|${(d["ID_FAZENDA"] ?? "").toString()}|${(d["NOME"] ?? "").toString()}",
+          )
+          .join(" ; ");
+
+      debugPrint(
+        "[FAB_PREFAB] backend=$backend isFieldpec=$isFieldpec fazendaSel='$idFazendaSel' dietasFiltradas=$dietasPorFazenda dietasFinal=${dietas.length} users=${users.length}",
+      );
+      if (amostra.isNotEmpty) {
+        debugPrint("[FAB_PREFAB] amostra dietas: $amostra");
+      }
 
       if (!mounted) return;
 
@@ -63,6 +92,13 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
           _operadorId = (_users.first["ID"] ?? "").toString();
         }
       });
+
+      if (_dietas.isEmpty) {
+        _msg(
+          "Nenhuma dieta encontrada para a fabricação. Verifique sincronização e vínculo de fazenda.",
+        );
+      }
+
       await _loadResumo();
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -112,7 +148,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     if (previstoTotal <= 0) return;
 
     var total = previstoTotal;
-    if (previstoTotal > 5000) {
+    if (previstoTotal > 10000) {
       final ctrl = TextEditingController(text: "2");
       final n = await showDialog<int>(
         context: context,

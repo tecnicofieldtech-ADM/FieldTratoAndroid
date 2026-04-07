@@ -1,4 +1,7 @@
-﻿import "package:flutter/material.dart";
+﻿import "dart:io";
+
+import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:package_info_plus/package_info_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "../controller/pa_server_controller.dart";
@@ -25,6 +28,9 @@ class TargetsListPage extends StatefulWidget {
 }
 
 class _TargetsListPageState extends State<TargetsListPage> {
+  static const MethodChannel _androidNetworkPanelChannel =
+      MethodChannel("rfeed_pa/android_network");
+
   static const String _styleRfeed = "rfeed";
   static const String _styleMbTratos = "mbtratos";
   static const String _stylePrefKey = "pa_style_mode";
@@ -193,9 +199,56 @@ class _TargetsListPageState extends State<TargetsListPage> {
     await widget.server.loadActive();
     await _load();
 
+    await _promptWifiSelection(t);
+
     widget.onSelected?.call(t);
     if (widget.autoPopOnSelect && mounted) {
       Navigator.of(context).pop(true);
+    }
+  }
+
+  Future<void> _promptWifiSelection(MirrorTarget t) async {
+    if (!mounted || !Platform.isAndroid) return;
+
+    final openNow = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Trocar rede Wi-Fi"),
+        content: Text(
+          "Vagao '${t.nome}' selecionado.\n\n"
+          "Agora escolha a rede Wi-Fi do Android para conectar no vagao e continuar o espelhamento.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Depois"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Abrir redes Wi-Fi"),
+          ),
+        ],
+      ),
+    );
+
+    if (openNow != true || !mounted) return;
+
+    bool opened = false;
+    try {
+      opened = await _androidNetworkPanelChannel.invokeMethod<bool>(
+            "openWifiPicker",
+          ) ??
+          false;
+    } catch (_) {
+      opened = false;
+    }
+
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Nao foi possivel abrir as redes Wi-Fi do Android."),
+        ),
+      );
     }
   }
 
@@ -238,7 +291,7 @@ class _TargetsListPageState extends State<TargetsListPage> {
                 )
               : ListView.separated(
                   itemCount: _items.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, index) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final t = _items[i];
                     return ListTile(

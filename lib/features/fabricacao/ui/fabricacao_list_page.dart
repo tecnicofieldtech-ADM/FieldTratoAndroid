@@ -10,6 +10,8 @@ import "fabricacao_prefab_page.dart";
 import "fabricacao_weigh_page.dart";
 import "fabricacao_dashboard_page.dart";
 
+enum _SyncAcao { habilitar, marcarSincronizado }
+
 class FabricacaoListPage extends StatefulWidget {
   const FabricacaoListPage({super.key, required this.repo});
   final FabricacaoRepo repo;
@@ -119,6 +121,16 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
   bool _sameDate(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+
+  int get _qtdFiltradosSyncHabilitavel {
+    final ids = <String>{};
+    for (final f in _filtered) {
+      final id = f.id.trim();
+      if (id.isEmpty) continue;
+      ids.add(id);
+    }
+    return ids.length;
+  }
 
   List<FabricacaoHeader> get _filtered {
     Iterable<FabricacaoHeader> it = _items;
@@ -232,6 +244,182 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
       if (!mounted) return;
       await _load();
     }
+  }
+
+  Future<void> _habilitarSyncFiltrados() async {
+    if (_loading) return;
+    final qtd = _qtdFiltradosSyncHabilitavel;
+    if (qtd <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Nao ha itens filtrados para habilitar sincronizacao."),
+        ),
+      );
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Habilitar sincronizacao"),
+        content: Text(
+          "Habilitar sincronizacao novamente para $qtd fabricacao(oes) filtrada(s)?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Habilitar"),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    if (!mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final alterados = await widget.repo.reabilitarSyncFiltrados(
+        itens: _filtered,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Sincronizacao habilitada em $alterados fabricacao(oes).",
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Erro ao habilitar sincronizacao: $e")),
+      );
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _marcarSyncOkFiltrados() async {
+    if (_loading) return;
+    final qtd = _qtdFiltradosSyncHabilitavel;
+    if (qtd <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Nao ha itens filtrados para marcar como sincronizado."),
+        ),
+      );
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Marcar como sincronizado"),
+        content: Text(
+          "Marcar $qtd fabricacao(oes) filtrada(s) como ja sincronizadas?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Marcar"),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    if (!mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final alterados = await widget.repo.marcarSyncOkFiltrados(
+        itens: _filtered,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Marcadas como sincronizadas: $alterados fabricacao(oes).",
+          ),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Erro ao marcar sincronizacao: $e")),
+      );
+      setState(() => _loading = false);
+    }
+  }
+
+  Widget _syncFiltradosAction() {
+    final qtd = _qtdFiltradosSyncHabilitavel;
+    final txt = qtd > 99 ? "99+" : "$qtd";
+
+    return PopupMenuButton<_SyncAcao>(
+      tooltip: "Acoes de sincronizacao dos filtrados ($qtd)",
+      enabled: !_loading && qtd > 0,
+      onSelected: (acao) async {
+        switch (acao) {
+          case _SyncAcao.habilitar:
+            await _habilitarSyncFiltrados();
+            break;
+          case _SyncAcao.marcarSincronizado:
+            await _marcarSyncOkFiltrados();
+            break;
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem<_SyncAcao>(
+          value: _SyncAcao.habilitar,
+          child: Text("Habilitar para sincronizacao"),
+        ),
+        PopupMenuItem<_SyncAcao>(
+          value: _SyncAcao.marcarSincronizado,
+          child: Text("Marcar como ja sincronizado"),
+        ),
+      ],
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(Icons.sync_problem),
+          if (qtd > 0)
+            Positioned(
+              right: -8,
+              top: -6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade700,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(
+                  txt,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   // ---------- UI filtros ----------
@@ -491,6 +679,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
             onPressed: _load,
             icon: const Icon(Icons.refresh),
           ),
+          _syncFiltradosAction(),
           IconButton(
             tooltip: "Dashboard",
             onPressed: () {

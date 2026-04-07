@@ -116,6 +116,53 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     await _ensureServerStarted();
   }
 
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(msg),
+      ),
+    );
+  }
+
+  Future<void> _sendNext() async {
+    final ok = await widget.server.sendNextCommand();
+    _toast(ok ? "Comando enviado: pular ingrediente" : "Falha ao enviar comando");
+  }
+
+  Future<void> _sendPrev() async {
+    final ok = await widget.server.sendPrevCommand();
+    _toast(ok ? "Comando enviado: voltar ingrediente" : "Falha ao enviar comando");
+  }
+
+  Future<void> _sendFinish() async {
+    final confirm = await showDialog<bool>(
+          context: context,
+          builder: (dialogCtx) => AlertDialog(
+            title: const Text("Finalizar fabricação"),
+            content: const Text(
+              "Deseja enviar o comando para finalizar a fabricação no caminhão?",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogCtx).pop(false),
+                child: const Text("Não"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogCtx).pop(true),
+                child: const Text("Sim"),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirm) return;
+    final ok = await widget.server.sendFinishCommand();
+    _toast(ok ? "Comando enviado: finalizar fabricação" : "Falha ao enviar comando");
+  }
+
   String _fmtTime(DateTime? dt) {
     if (dt == null) return "--:--:--";
     final h = dt.hour.toString().padLeft(2, "0");
@@ -250,8 +297,21 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     final dieta = (st?["dieta"] ?? "").toString();
     final trato = (st?["trato"] as num?)?.toInt();
-    final finalizada = _isTrue(st?["finalizada"]);
+    final isFinalizacaoEvent =
+      (st?["t"] ?? "").toString() == "event" &&
+      (st?["type"] ?? "").toString() == "finalizada";
+    final finalizada = _isTrue(st?["finalizada"]) || isFinalizacaoEvent;
+    final finalizacaoMsgRaw = (st?["msg"] ?? "").toString().trim();
+    final finalizacaoMsg = finalizada
+      ? (finalizacaoMsgRaw.isNotEmpty
+        ? finalizacaoMsgRaw
+        : "Fabricação finalizada no caminhão")
+      : null;
     final isPreNow = _isPre(atual);
+    final atualPos = (atual?["pos"] as num?)?.toInt() ?? 0;
+    final atualTotal = (atual?["total"] as num?)?.toInt() ?? 0;
+    final isLastIngredient =
+        !finalizada && atualPos > 0 && atualTotal > 0 && atualPos >= atualTotal;
 
     final subtitleParts = <String>[];
     if (trato != null) subtitleParts.add("Trato $trato");
@@ -318,6 +378,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               nomeAtual: nomeAtual,
               isPreNow: isPreNow,
               finalizada: finalizada,
+              finalizacaoMsg: finalizacaoMsg,
               prox: prox,
             ),
           ),
@@ -325,20 +386,30 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: _cardDiferencaPrincipalFill(
-                prev: prev,
-                real: real,
-                difText: difText,
-                status: status,
-                pctLabel: pctLabel,
-                barValue: barValue,
-                bg: bg,
-              ),
+              child: finalizada
+                  ? _cardFinalizacaoPrincipalFill(
+                      mensagem: finalizacaoMsg ??
+                          "Fabricação finalizada no caminhão",
+                      bg: isMbTratos
+                          ? const Color(0xFF2F7D45)
+                          : Colors.blueGrey.shade700,
+                    )
+                  : _cardDiferencaPrincipalFill(
+                      prev: prev,
+                      real: real,
+                      difText: difText,
+                      status: status,
+                      pctLabel: pctLabel,
+                      barValue: barValue,
+                      bg: bg,
+                    ),
             ),
           ),
           _bottomNav(
             actionButtonBg: actionButtonBg,
             actionButtonFg: actionButtonFg,
+            finalizada: finalizada,
+            isLastIngredient: isLastIngredient,
           ),
         ],
       ),
@@ -486,6 +557,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     required String nomeAtual,
     required bool isPreNow,
     required bool finalizada,
+    required String? finalizacaoMsg,
     required Map<String, dynamic>? prox,
   }) {
     return Card(
@@ -500,7 +572,11 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    nomeAtual.isEmpty ? "(Aguardando dados...)" : nomeAtual,
+                    nomeAtual.isEmpty
+                        ? (finalizada
+                            ? "Fabricação finalizada"
+                            : "(Aguardando dados...)")
+                        : nomeAtual,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -520,7 +596,36 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                 ],
               ],
             ),
-            if (prox != null) ...[
+            if (finalizada && finalizacaoMsg != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.green.shade50,
+                  border: Border.all(color: Colors.green.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.campaign, size: 18, color: Colors.green.shade800),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        finalizacaoMsg,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.green.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (!finalizada && prox != null) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -553,6 +658,57 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _cardFinalizacaoPrincipalFill({
+    required String mensagem,
+    required Color bg,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26),
+        color: bg,
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 22,
+            spreadRadius: 0,
+            offset: const Offset(0, 12),
+            color: Colors.black.withValues(alpha: 0.22),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.task_alt, color: Colors.white, size: 64),
+          const SizedBox(height: 18),
+          const Text(
+            "FABRICAÇÃO FINALIZADA",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 34,
+              height: 1.05,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            mensagem,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -776,7 +932,13 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   Widget _bottomNav({
     required Color? actionButtonBg,
     required Color? actionButtonFg,
+    required bool finalizada,
+    required bool isLastIngredient,
   }) {
+    final canSend = widget.server.hasActiveClient;
+    final canNext = canSend && !finalizada && !isLastIngredient;
+    final canFinish = canSend && !finalizada && isLastIngredient;
+
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.only(bottom: 8),
@@ -788,23 +950,64 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         ),
         child: Row(
           children: [
-            IconButton(
-              onPressed: _resetEspelho,
-              icon: const Icon(Icons.restart_alt),
-              tooltip: "Resetar",
-            ),
-            const SizedBox(width: 6),
             Expanded(
-              child: FilledButton.icon(
-                onPressed: _openTargets,
-                style: (actionButtonBg == null && actionButtonFg == null)
-                    ? null
-                    : FilledButton.styleFrom(
-                        backgroundColor: actionButtonBg,
-                        foregroundColor: actionButtonFg,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: canSend ? _sendPrev : null,
+                          icon: const Icon(Icons.skip_previous),
+                          label: const Text("Voltar"),
+                        ),
                       ),
-                icon: const Icon(Icons.swap_horiz),
-                label: const Text("Trocar Vagao Carregamento"),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: canNext ? _sendNext : null,
+                          icon: const Icon(Icons.skip_next),
+                          label: const Text("Pular"),
+                        ),
+                      ),
+                      if (isLastIngredient) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: canFinish ? _sendFinish : null,
+                            icon: const Icon(Icons.task_alt),
+                            label: const Text("Finalizar"),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: _resetEspelho,
+                        icon: const Icon(Icons.restart_alt),
+                        tooltip: "Resetar",
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _openTargets,
+                          style: (actionButtonBg == null && actionButtonFg == null)
+                              ? null
+                              : FilledButton.styleFrom(
+                                  backgroundColor: actionButtonBg,
+                                  foregroundColor: actionButtonFg,
+                                ),
+                          icon: const Icon(Icons.swap_horiz),
+                          label: const Text("Trocar Vagao Carregamento"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -862,7 +1065,7 @@ class _PulseChipState extends State<_PulseChip>
 
     return AnimatedBuilder(
       animation: _ac,
-      builder: (_, __) {
+      builder: (_, child) {
         final t = _ac.value;
         final scale = 1.0 + (t * 0.06);
         final glow = 0.08 + (t * 0.14);

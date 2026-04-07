@@ -480,6 +480,73 @@ class FabricacaoRepo {
     });
   }
 
+  Future<int> reabilitarSyncFiltrados({
+    required List<FabricacaoHeader> itens,
+  }) async {
+    return _setSyncFiltrados(itens: itens, syncValue: 0);
+  }
+
+  Future<int> marcarSyncOkFiltrados({
+    required List<FabricacaoHeader> itens,
+  }) async {
+    return _setSyncFiltrados(itens: itens, syncValue: 1);
+  }
+
+  Future<int> _setSyncFiltrados({
+    required List<FabricacaoHeader> itens,
+    required int syncValue,
+  }) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    const d = "DETALHES_FABRICA_RACAO";
+    if (!await _hasTable(h)) return 0;
+
+    final ids = itens
+        .map((e) => e.id.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return 0;
+
+    final syncHeaderCol =
+        await _pickCol(h, ["FLAG_SYNC", "SYNCAWS", "SYNC_AWS", "SYNC"]);
+    if (syncHeaderCol == null) return 0;
+
+    final hasDetalhes = await _hasTable(d);
+    final syncDetCol = hasDetalhes
+        ? await _pickCol(d, ["FLAG_SYNC", "SYNCAWS", "SYNC_AWS", "SYNC"])
+        : null;
+    final idFabDetCol = hasDetalhes
+        ? await _pickCol(
+                d, ["ID_FABRICACAO", "IDFABRICACAO", "ID_CABECALHO", "ID_HEADER"]) ??
+            "ID_FABRICACAO"
+        : "ID_FABRICACAO";
+
+    final db = await _db;
+    var total = 0;
+
+    await db.transaction((txn) async {
+      for (final idFab in ids) {
+        total += await txn.update(
+          h,
+          {syncHeaderCol: syncValue},
+          where: "ID = ?",
+          whereArgs: [idFab],
+        );
+
+        if (syncDetCol != null) {
+          await txn.update(
+            d,
+            {syncDetCol: syncValue},
+            where: "$idFabDetCol = ?",
+            whereArgs: [idFab],
+          );
+        }
+      }
+    });
+
+    return total;
+  }
+
   // =========================================================
   // ✅ MÉTODOS PARA O CONTROLLER
   // =========================================================

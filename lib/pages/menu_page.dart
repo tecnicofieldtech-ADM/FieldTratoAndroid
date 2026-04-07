@@ -3,8 +3,10 @@ import "dart:async";
 
 import "package:flutter/material.dart";
 import "package:network_info_plus/network_info_plus.dart";
+import "package:permission_handler/permission_handler.dart";
 import "../repo/config_repo.dart";
 import "../services/carregamento_bridge.dart";
+import "../services/wifi_guard.dart";
 import "../widgets/app_logo.dart";
 
 class MenuPage extends StatefulWidget {
@@ -70,7 +72,178 @@ class _MenuPageState extends State<MenuPage> {
       // deixa null para nao bloquear menus se config falhar
     }
   }
-  void _go(BuildContext context, String route) {
+  Future<void> _go(BuildContext context, String route) async {
+    final syncRoute = route == "/sync";
+    final rfeedRequiredRoutes = {
+      "/fabricacao",
+      "/fornecimento",
+      "/grava-tag",
+    };
+    final needsWifiPermission = syncRoute || rfeedRequiredRoutes.contains(route);
+
+    if (needsWifiPermission) {
+      final granted = await WifiGuard.requestLocationPermissionIfNeeded();
+      if (!mounted) return;
+      if (!granted) {
+        final abrir = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("Permissao necessaria"),
+            content: const Text(
+              "Para verificar o nome da rede Wi-Fi, permita a Localizacao do app nas configuracoes.",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text("Cancelar"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text("Abrir permissoes"),
+              ),
+            ],
+          ),
+        ) ?? false;
+        if (abrir) {
+          await openAppSettings();
+        }
+        return;
+      }
+    }
+
+    if (syncRoute) {
+      final ssid = await WifiGuard.getCurrentSsid();
+      if (!mounted) return;
+      if (ssid.isEmpty) {
+        final locOn = await WifiGuard.isLocationServiceEnabled();
+        if (!mounted) return;
+        if (!locOn) {
+          final abrirLoc = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text("Ative a Localizacao"),
+                  content: const Text(
+                    "Permissao concedida, mas a Localizacao do aparelho esta desligada.\n\n"
+                    "Ative a Localizacao para o app conseguir ler o nome da rede Wi-Fi.",
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text("Cancelar"),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text("Abrir localizacao"),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+
+          if (abrirLoc) {
+            await WifiGuard.openLocationSettings();
+          }
+          return;
+        }
+      }
+      if (WifiGuard.isRFeedSsid(ssid)) {
+        final trocar = await showDialog<bool>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text("Rede para sincronizacao"),
+                content: Text(
+                  "Rede atual: ${ssid.isEmpty ? "RFeed" : ssid}.\n\n"
+                  "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao RFeed*).",
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text("Voltar"),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text("Abrir Wi-Fi"),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+
+        if (!mounted) return;
+        if (trocar) {
+          await WifiGuard.openWifiSelector();
+          return;
+        }
+      }
+    }
+
+    if (rfeedRequiredRoutes.contains(route)) {
+      final ssid = await WifiGuard.getCurrentSsid();
+      if (!mounted) return;
+      if (ssid.isEmpty) {
+        final locOn = await WifiGuard.isLocationServiceEnabled();
+        if (!mounted) return;
+        if (!locOn) {
+          final abrirLoc = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text("Ative a Localizacao"),
+                  content: const Text(
+                    "Permissao concedida, mas a Localizacao do aparelho esta desligada.\n\n"
+                    "Ative a Localizacao para o app conseguir ler o nome da rede Wi-Fi.",
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text("Cancelar"),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text("Abrir localizacao"),
+                    ),
+                  ],
+                ),
+              ) ??
+              false;
+
+          if (abrirLoc) {
+            await WifiGuard.openLocationSettings();
+          }
+          return;
+        }
+      }
+
+      if (!WifiGuard.isRFeedSsid(ssid)) {
+        final trocar = await showDialog<bool>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text("Rede para operacao"),
+                content: Text(
+                  "Para operar Fabricacao, Fornecimento e Gravar TAG, conecte em uma rede RFeed*.\n\n"
+                  "Rede atual: ${ssid.isEmpty ? "nao identificada" : ssid}",
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text("Continuar"),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: const Text("Abrir Wi-Fi"),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+
+        if (!mounted) return;
+        if (trocar) {
+          await WifiGuard.openWifiSelector();
+          return;
+        }
+      }
+    }
+
     Navigator.pushNamed(context, route);
   }
 

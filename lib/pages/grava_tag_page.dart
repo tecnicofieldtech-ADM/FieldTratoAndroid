@@ -43,18 +43,21 @@ class _GravaTagPageState extends State<GravaTagPage> {
   Future<void> _carregarTudo() async {
     setState(() => _loading = true);
     try {
+      final backend = await _cfg.getBackend();
+      final isFieldpec = backend == 1;
       final idFazenda = await _cfg.getIdFazendaSelecionada();
+      final filtroFazenda = isFieldpec ? "" : idFazenda;
 
-      final linhas = await _repo.listLinhas(idFazenda: idFazenda);
+      final linhas = await _repo.listLinhas(idFazenda: filtroFazenda);
       final currais = await _repo.listCurrais(
-        idFazenda: idFazenda,
+        idFazenda: filtroFazenda,
         linha: _linhaSel,
         nomeCurral: _nomeCtrl.text,
       );
 
       if (!mounted) return;
       setState(() {
-        _idFazenda = idFazenda;
+        _idFazenda = filtroFazenda;
         _linhas = linhas;
         _currais = currais;
       });
@@ -104,9 +107,13 @@ class _GravaTagPageState extends State<GravaTagPage> {
       final epcNorm = epc.trim();
       setState(() => _ultimoEpc = epcNorm);
 
+      final backend = await _cfg.getBackend();
+      final isFieldpec = backend == 1;
+      final filtroFazenda = isFieldpec ? "" : _idFazenda;
+
       final vinculo = await _repo.findCurralByEpc(
         epcNorm,
-        idFazenda: _idFazenda,
+        idFazenda: filtroFazenda,
       );
 
       if (!mounted) return;

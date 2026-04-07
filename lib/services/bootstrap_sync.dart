@@ -1,4 +1,5 @@
 // lib/services/bootstrap_sync.dart
+import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 
 import "../db/app_db.dart";
@@ -24,7 +25,8 @@ class BootstrapSync {
   Future<ApiService> _apiFromCfg(Map<String, Object?> cfg) async {
     final base = cfgRepo.buildBaseUrl(cfg);
     if (base.isEmpty) throw Exception("HOST/PORTA inválidos.");
-    return ApiService(baseUrl: base);
+    final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
+    return ApiService(baseUrl: base, backend: backend);
   }
 
   // =========================
@@ -150,29 +152,84 @@ class BootstrapSync {
     final api = await _apiFromCfg(cfg);
     final list = await api.getBaias(idFazenda);
 
+    if (kDebugMode) {
+      debugPrint("[BOOT_BAIAS] API retornou ${list.length} registros");
+    }
+
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("DETALHES_BAIAS");
+      var inserted = 0;
+      final samples = <String>[];
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
+
+        final idBaia = _pickStr(m, [
+          "idbaia",
+          "id_baia",
+          "id",
+          "idcurral",
+          "id_curral",
+          "idpastocurral",
+          "id_pasto_curral",
+        ]);
+        if (idBaia.isEmpty) continue;
+
+        final idLote = _pickStr(m, ["idlote", "id_lote", "loteid", "lote_id"]);
+        final nomeLocal = _pickStr(m, [
+          "nomelocal",
+          "nome_local",
+          "baia",
+          "curral",
+          "nome",
+          "descricao",
+        ]);
+        final linha = _pickStr(m, ["linha", "linha_trato", "linhatrato"]);
+        final ordemTratoRaw = _pickStr(
+          m,
+          ["ordemtrato", "ordem_trato", "ordertrato", "order_trato", "ordem"],
+        );
+        final ordemTrato = int.tryParse(ordemTratoRaw) ?? 0;
+
+        final idFaz = _pickStr(m, [
+          "idfazenda",
+          "id_fazenda",
+          "fazendaid",
+          "fazenda_id",
+        ]);
+        final idFazFinal = idFaz.isNotEmpty ? idFaz : idFazenda;
+
+        final rfid = _pickStr(m, ["rfid", "tag", "epc"]);
+
         await txn.insert(
           "DETALHES_BAIAS",
           {
-            "ID": (m["idBaia"] ?? "").toString(),
-            "ID_LOTE": (m["idLote"] ?? "").toString(),
-            "NOME_LOCAL": (m["nomeLocal"] ?? "").toString(),
+            "ID": idBaia,
+            "ID_LOTE": idLote,
+            "NOME_LOCAL": nomeLocal,
 
             // ✅ LINHA sempre TEXT
-            "LINHA": (m["linha"] ?? "").toString(),
+            "LINHA": linha,
 
             // ✅ ORDER_TRATO sempre int
-            "ORDER_TRATO": int.tryParse((m["ordemTrato"] ?? "0").toString()) ?? 0,
+            "ORDER_TRATO": ordemTrato,
 
-            "ID_FAZENDA": (m["idFazenda"] ?? "").toString(),
-            "RFID": (m["rfid"] ?? "").toString(),
+            "ID_FAZENDA": idFazFinal,
+            "RFID": rfid,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        inserted++;
+        if (samples.length < 5) {
+          samples.add("$idBaia|$idFazFinal|$nomeLocal");
+        }
+      }
+
+      if (kDebugMode) {
+        debugPrint("[BOOT_BAIAS] inseridos=$inserted");
+        if (samples.isNotEmpty) {
+          debugPrint("[BOOT_BAIAS] amostra=${samples.join(" ; ")}");
+        }
       }
     });
   }
@@ -181,22 +238,55 @@ class BootstrapSync {
     final api = await _apiFromCfg(cfg);
     final list = await api.getDietas(idFazenda);
 
+    if (kDebugMode) {
+      debugPrint("[BOOT_DIETAS] API retornou ${list.length} registros");
+    }
+
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("DIETA");
+      var inserted = 0;
+      final samples = <String>[];
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
+
+        final id = _pickStr(m, ["id", "iddieta", "id_dieta", "idracao", "id_racao"]);
+        if (id.isEmpty) continue;
+
+        final nome = _pickStr(m, ["nomedieta", "nome_dieta", "dieta", "nome", "descricao"]);
+        final tipo = _pickStr(m, ["tipodieta", "tipo_dieta", "tipo"]);
+        final ms = _toNum(m["msdieta"] ?? m["ms_dieta"] ?? m["ms"]);
+
+        final idFaz = _pickStr(m, [
+          "idfazenda",
+          "id_fazenda",
+          "fazendaid",
+          "fazenda_id",
+        ]);
+        final idFazFinal = idFaz.isNotEmpty ? idFaz : idFazenda;
+
         await txn.insert(
           "DIETA",
           {
-            "ID": (m["id"] ?? "").toString(),
-            "NOME": (m["nomeDieta"] ?? "").toString(),
-            "TIPO": (m["tipoDieta"] ?? "").toString(),
-            "MS": _toNum(m["msDieta"]),
-            "ID_FAZENDA": (m["idFazenda"] ?? "").toString(),
+            "ID": id,
+            "NOME": nome,
+            "TIPO": tipo,
+            "MS": ms,
+            "ID_FAZENDA": idFazFinal,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        inserted++;
+        if (samples.length < 5) {
+          samples.add("$id|$idFazFinal|$nome");
+        }
+      }
+
+      if (kDebugMode) {
+        debugPrint("[BOOT_DIETAS] inseridas=$inserted");
+        if (samples.isNotEmpty) {
+          debugPrint("[BOOT_DIETAS] amostra=${samples.join(" ; ")}");
+        }
       }
     });
   }
@@ -209,23 +299,58 @@ class BootstrapSync {
     await db.transaction((txn) async {
       await txn.delete("DETALHES_DIETAS");
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
 
-        final prePesagem = (m["prePesagem"] ?? "").toString().trim().toUpperCase();
+        final idDieta = _pickStr(m, ["iddieta", "id_dieta", "idracao", "id_racao"]);
+        final idInsumo = _pickStr(m, [
+          "idinsumo",
+          "id_insumo",
+          "idingrediente",
+          "id_ingrediente",
+          "insumoid",
+        ]);
+
+        final ordemRaw = _pickStr(m, ["ordem", "ordem_trato", "ordemtrato"]);
+        final ordem = int.tryParse(ordemRaw) ?? 0;
+
+        final id = _pickStr(m, ["id", "iddetalhe", "id_detalhe"]);
+        final idFinal = id.isNotEmpty
+            ? id
+            : [idDieta, idInsumo, ordem.toString()].where((e) => e.isNotEmpty).join("::");
+        if (idFinal.isEmpty || idDieta.isEmpty) continue;
+
+        final prePesagem = _pickStr(m, [
+          "prepesagem",
+          "pre_pesagem",
+          "prepesado",
+          "pre_pesado",
+        ]).toUpperCase();
         final prePesadoInt = (prePesagem == "S") ? 1 : 0;
+
+        final ingrediente = _pickStr(m, [
+          "ingrediente",
+          "insumo",
+          "nomeinsumo",
+          "nome_insumo",
+          "descricao",
+        ]);
+
+        final msInsumo = _toNum(m["msinsumo"] ?? m["ms_insumo"] ?? m["ms"]);
+        final msInclusao = _toNum(m["msinclusao"] ?? m["ms_inclusao"] ?? m["mnperc"] ?? m["mn_perc"]);
+        final mnPerc = _toNum(m["mnperc"] ?? m["mn_perc"] ?? m["percentual"] ?? m["perc"]);
 
         await txn.insert(
           "DETALHES_DIETAS",
           {
-            "ID": (m["id"] ?? "").toString(),
-            "ID_DIETA": (m["idDieta"] ?? "").toString(),
-            "ID_INSUMO": (m["idInsumo"] ?? "").toString(),
-            "INSUMO": (m["ingrediente"] ?? "").toString(),
-            "MS_INSUMO": _toNum(m["msInsumo"]),
-            "MS_INCLUSAO": _toNum(m["msInclusao"]),
-            "MN_PERCENT": _toNum(m["mnPerc"]),
-            "MN_PERC": _toNum(m["mnPerc"]),
-            "ORDEM": int.tryParse((m["ordem"] ?? "0").toString()) ?? 0,
+            "ID": idFinal,
+            "ID_DIETA": idDieta,
+            "ID_INSUMO": idInsumo,
+            "INSUMO": ingrediente,
+            "MS_INSUMO": msInsumo,
+            "MS_INCLUSAO": msInclusao,
+            "MN_PERCENT": mnPerc,
+            "MN_PERC": mnPerc,
+            "ORDEM": ordem,
             "PRE_PESADO": prePesadoInt,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,

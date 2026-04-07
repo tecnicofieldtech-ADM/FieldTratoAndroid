@@ -8,6 +8,7 @@ import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
 import "../services/bootstrap_sync.dart";
 import "../services/sync_orchestrator.dart";
+import "../services/wifi_guard.dart";
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key});
@@ -148,6 +149,37 @@ class _SyncPageState extends State<SyncPage> {
 
   Future<void> _runSync() async {
     if (_running) return;
+
+    final ssid = await WifiGuard.getCurrentSsid();
+    if (!mounted) return;
+    if (WifiGuard.isRFeedSsid(ssid)) {
+      final trocar = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text("Rede para sincronizacao"),
+              content: Text(
+                "Rede atual: ${ssid.isEmpty ? "RFeed" : ssid}.\n\n"
+                "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao RFeed*).",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text("Voltar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text("Abrir Wi-Fi"),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+
+      if (trocar) {
+        await WifiGuard.openWifiSelector();
+      }
+      return;
+    }
 
     setState(() {
       _running = true;

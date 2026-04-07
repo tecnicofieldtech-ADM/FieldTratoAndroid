@@ -67,7 +67,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
   Widget _wrapPop(Widget child) {
     return PopScope(
-      canPop: true,
+      // bloqueia back enquanto finalizacao/timer estiver em andamento
+      canPop: !_finishing,
       onPopInvokedWithResult: (didPop, result) async {
         if (_reconnecting) return;
         await c.shutdown();
@@ -80,6 +81,9 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   void initState() {
     super.initState();
     c = FabricacaoController(widget.repo)..addListener(_onChange);
+    c.onRemoteFinishRequested = () async {
+      await _finalizarFluxoCompleto(confirmar: false, navegarAposFinalizar: true);
+    };
     _boot();
 
     _uiTicker = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -92,6 +96,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   void dispose() {
     _uiTicker?.cancel();
     c.removeListener(_onChange);
+    c.onRemoteFinishRequested = null;
 
     // ignore: unawaited_futures
     unawaited(c.shutdown());
@@ -282,7 +287,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
     final ok = await showDialog<bool>(
           context: context,
-          builder: (_) => AlertDialog(
+          builder: (dialogCtx) => AlertDialog(
             title: const Text("Finalizar parcialmente"),
             content: const Text(
               "Finalizar parcialmente vai gerar um carregamento para o caminhão completar.\n"
@@ -291,11 +296,11 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
+                onPressed: () => Navigator.of(dialogCtx).pop(false),
                 child: const Text("Não"),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
+                onPressed: () => Navigator.of(dialogCtx).pop(true),
                 child: const Text("Sim"),
               ),
             ],
@@ -331,16 +336,16 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     if (!mounted) return;
     final go = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text("Fornecimento"),
         content: const Text("Deseja fornecer essa ração agora?"),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
             child: const Text("Não"),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             child: const Text("Sim"),
           ),
         ],
@@ -461,6 +466,125 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Falha ao gravar novamente: $e")),
       );
+    }
+  }
+
+  Future<void> _finalizarFluxoCompleto({
+    required bool confirmar,
+    bool navegarAposFinalizar = true,
+  }) async {
+    if (!mounted) return;
+    if (_finishing || c.navLockedBySaveError || _readOnlyStation) return;
+
+    final flowMode = await _getFlowMode();
+    final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
+
+    if (confirmar) {
+      if (flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+          tipoTrabalho == 1) {
+        final acao = await showModalBottomSheet<String>(
+          context: context,
+          builder: (sheetCtx) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.outbox),
+                  title: const Text("Finalizar Parcial (Gerar Carregamento)"),
+                  onTap: () => Navigator.of(sheetCtx).pop("PARCIAL"),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.check_circle),
+                  title: const Text("Finalizar Completa"),
+                  onTap: () => Navigator.of(sheetCtx).pop("COMPLETA"),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (acao == "PARCIAL") {
+          await _finalizarParcialEstacionario();
+          return;
+        }
+        if (acao != "COMPLETA") return;
+      } else {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (dialogCtx) => AlertDialog(
+            title: const Text("Finalizar fabricação"),
+            content: const Text("Deseja finalizar a fabricação?"),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogCtx).pop(false),
+                child: const Text("Não"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogCtx).pop(true),
+                child: const Text("Sim"),
+              ),
+            ],
+          ),
+        );
+        if (ok != true) return;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _finishing = true);
+    try {
+      final minutos = await c.finalizarFabricacaoAntesDoTimer();
+      final h = c.header;
+      if (h != null) {
+        await widget.repo.marcarFinalizadaComOrigem(
+          h.id,
+          tipoTrabalho == 2 ? "CAMINHAO" : "ESTACIONARIO",
+        );
+      }
+      if (!mounted) return;
+
+      try {
+        await _ensureCarregamentoAbertoAposFinalizar();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text("Erro ao criar carregamento: $e"),
+          ),
+        );
+      }
+
+      if (!mounted) return;
+
+      if (!navegarAposFinalizar) {
+        await _goFabricacaoList();
+        return;
+      }
+
+      if (minutos <= 0) {
+        await _perguntarIrParaFornecimento(
+          trato: c.header?.trato ?? 0,
+        );
+        return;
+      }
+
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => MisturaTimerPage(
+            minutos: minutos,
+            repo: widget.repo,
+            fabricacaoId: c.header?.id,
+            titulo: "Mistura",
+            onDonePopToRoot: false,
+          ),
+        ),
+      );
+      if (!mounted) return;
+      await _perguntarIrParaFornecimento(
+        trato: c.header?.trato ?? 0,
+      );
+    } finally {
+      if (mounted) setState(() => _finishing = false);
     }
   }
 
@@ -1274,116 +1398,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                           return;
                         }
 
-                        final flowMode = await _getFlowMode();
-                        final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
-
-                        if (flowMode ==
-                                FabricacaoFlowMode.startStationFinishTruck &&
-                            tipoTrabalho == 1) {
-                          final acao = await showModalBottomSheet<String>(
-                            context: context,
-                            builder: (_) => SafeArea(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  ListTile(
-                                    leading: const Icon(Icons.outbox),
-                                    title: const Text(
-                                        "Finalizar Parcial (Gerar Carregamento)"),
-                                    onTap: () =>
-                                        Navigator.of(context).pop("PARCIAL"),
-                                  ),
-                                  ListTile(
-                                    leading: const Icon(Icons.check_circle),
-                                    title: const Text("Finalizar Completa"),
-                                    onTap: () =>
-                                        Navigator.of(context).pop("COMPLETA"),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                          if (acao == "PARCIAL") {
-                            await _finalizarParcialEstacionario();
-                            return;
-                          }
-                          if (acao != "COMPLETA") return;
-                        } else {
-                          final ok = await showDialog<bool>(
-                            context: context,
-                            builder: (_) => AlertDialog(
-                              title: const Text("Finalizar fabricação"),
-                              content:
-                                  const Text("Deseja finalizar a fabricação?"),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(false),
-                                  child: const Text("Não"),
-                                ),
-                                FilledButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(true),
-                                  child: const Text("Sim"),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (ok != true) return;
-                        }
-
-                        setState(() => _finishing = true);
-                        try {
-                          final minutos =
-                              await c.finalizarFabricacaoAntesDoTimer();
-                          final h = c.header;
-                          if (h != null) {
-                            await widget.repo.marcarFinalizadaComOrigem(
-                              h.id,
-                              tipoTrabalho == 2 ? "CAMINHAO" : "ESTACIONARIO",
-                            );
-                          }
-                          if (!mounted) return;
-
-                          try {
-                            await _ensureCarregamentoAbertoAposFinalizar();
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                behavior: SnackBarBehavior.floating,
-                                content: Text("Erro ao criar carregamento: $e"),
-                              ),
-                            );
-                          }
-
-                          if (!mounted) return;
-
-                          if (minutos <= 0) {
-                            await _perguntarIrParaFornecimento(
-                              trato: c.header?.trato ?? 0,
-                            );
-                            return;
-                          }
-
-                          await Navigator.of(context).push<bool>(
-                            MaterialPageRoute(
-                              builder: (_) => MisturaTimerPage(
-                                minutos: minutos,
-                                repo: widget.repo,
-                                fabricacaoId: c.header?.id,
-                                titulo: "Mistura",
-                                onDonePopToRoot: false,
-                              ),
-                            ),
-                          );
-                          if (!mounted) return;
-                          await _perguntarIrParaFornecimento(
-                            trato: c.header?.trato ?? 0,
-                          );
-                        } finally {
-                          if (mounted) setState(() => _finishing = false);
-                        }
+                        await _finalizarFluxoCompleto(confirmar: true);
                       },
                     icon: Icon(isLast ? Icons.check : Icons.arrow_forward),
                     label: Text(isLast ? "Finalizar" : "Próximo"),

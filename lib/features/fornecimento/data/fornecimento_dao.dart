@@ -695,6 +695,28 @@ class FornecimentoDao {
     );
   }
 
+  Future<int> marcarSyncOkPorChave({
+    required DateTime data,
+    required int trato,
+    required String idFornecimento,
+    required String idBaia,
+  }) async {
+    final db = await _db;
+    final dataSql = toSqlDate(data);
+
+    return db.update(
+      FornTables.cadastroFornecimento,
+      {FornTables.cfFlagSync: 1},
+      where: """
+        substr(${FornTables.cfData},1,10) = ?
+        AND ${FornTables.cfTrato} = ?
+        AND TRIM(${FornTables.cfIdFornecimento}) = TRIM(?)
+        AND TRIM(${FornTables.cfIdBaia}) = TRIM(?)
+      """,
+      whereArgs: [dataSql, trato, idFornecimento, idBaia],
+    );
+  }
+
   Future<void> upsert(FornecimentoRow row) async {
     final db = await _db;
     await db.insert(

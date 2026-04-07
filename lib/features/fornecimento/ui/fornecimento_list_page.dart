@@ -9,6 +9,7 @@ import "fornecimento_dashboard_page.dart";
 import "fornecimento_bi_page.dart";
 
 enum _StatusFiltro { todos, realizados, pendentes }
+enum _SyncAcao { habilitar, marcarSincronizado }
 
 class FornecimentoListPage extends StatefulWidget {
   const FornecimentoListPage({
@@ -246,13 +247,78 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
     }
   }
 
+  Future<void> _marcarSyncOkFiltrados() async {
+    if (_loading) return;
+    final qtd = _qtdFiltradosSyncHabilitavel;
+    if (qtd <= 0) {
+      _msg("Nao ha itens filtrados para marcar como sincronizado.");
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Marcar como sincronizado"),
+        content: Text(
+          "Marcar $qtd item(ns) filtrado(s) como ja sincronizados?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Marcar"),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    if (!mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final alterados = await widget.repo.marcarSyncOkFiltrados(
+        data: _date,
+        itens: _items,
+      );
+      _msg("Marcados como sincronizados: $alterados registro(s).\n");
+      await _buscar();
+    } catch (e) {
+      _msg("Erro ao marcar sincronizacao: $e");
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Widget _syncFiltradosAction() {
     final qtd = _qtdFiltradosSyncHabilitavel;
     final txt = qtd > 99 ? "99+" : "$qtd";
 
-    return IconButton(
-      tooltip: "Habilitar sincronizacao dos filtrados ($qtd)",
-      onPressed: (_loading || qtd <= 0) ? null : _habilitarSyncFiltrados,
+    return PopupMenuButton<_SyncAcao>(
+      tooltip: "Acoes de sincronizacao dos filtrados ($qtd)",
+      enabled: !_loading && qtd > 0,
+      onSelected: (acao) async {
+        switch (acao) {
+          case _SyncAcao.habilitar:
+            await _habilitarSyncFiltrados();
+            break;
+          case _SyncAcao.marcarSincronizado:
+            await _marcarSyncOkFiltrados();
+            break;
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem<_SyncAcao>(
+          value: _SyncAcao.habilitar,
+          child: Text("Habilitar para sincronizacao"),
+        ),
+        PopupMenuItem<_SyncAcao>(
+          value: _SyncAcao.marcarSincronizado,
+          child: Text("Marcar como ja sincronizado"),
+        ),
+      ],
       icon: Stack(
         clipBehavior: Clip.none,
         children: [

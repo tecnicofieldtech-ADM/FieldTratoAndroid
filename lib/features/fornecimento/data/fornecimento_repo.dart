@@ -299,15 +299,51 @@ class FornecimentoRepo {
     final racao = (idRacao ?? idRacaoAtual)?.trim();
     final racaoFinal = (racao != null && racao.isNotEmpty) ? racao : null;
 
+    final backend = await _cfg.getBackend();
+    final isFieldpec = backend == 1;
+    final fazendaFiltro = isFieldpec ? null : idFazenda;
+
     // ✅ mantém idRacaoAtual consistente
     if (racaoFinal != null) setIdRacaoAtual(racaoFinal);
 
-    final rows = await _listPrevRaw(
+    var rows = await _listPrevRaw(
       dataYYYYMMDD: ymd,
       trato: t,
-      idFazenda: idFazenda,
+      idFazenda: fazendaFiltro,
       idRacao: racaoFinal,
     );
+
+    if (isFieldpec && rows.isEmpty && racaoFinal != null) {
+      final racaoInt = int.tryParse(racaoFinal)?.toString();
+      if (racaoInt != null && racaoInt != racaoFinal) {
+        rows = await _listPrevRaw(
+          dataYYYYMMDD: ymd,
+          trato: t,
+          idFazenda: null,
+          idRacao: racaoInt,
+        );
+      }
+    }
+
+    if (isFieldpec && rows.isEmpty && racaoFinal != null) {
+      if (kDebugMode) {
+        debugPrint(
+          "[FORN_MAPA] Fieldpec sem mapa com idRacao='$racaoFinal'. Recarregando sem filtro de ração.",
+        );
+      }
+      rows = await _listPrevRaw(
+        dataYYYYMMDD: ymd,
+        trato: t,
+        idFazenda: null,
+        idRacao: null,
+      );
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        "[FORN_MAPA] backend=$backend isFieldpec=$isFieldpec data=$ymd trato=$t fazendaFiltro='${fazendaFiltro ?? ""}' idRacao='${racaoFinal ?? ""}' rows=${rows.length}",
+      );
+    }
 
     return rows.map((m) => CurralPrev.fromMap(m)).toList();
   }
@@ -529,6 +565,32 @@ class FornecimentoRepo {
     return total;
   }
 
+  Future<int> marcarSyncOkFiltrados({
+    required DateTime data,
+    required List<CurralPrev> itens,
+  }) async {
+    final vistos = <String>{};
+    var total = 0;
+
+    for (final c in itens) {
+      final idFornecimento = (c.idFornecimento ?? "").trim();
+      final idBaia = c.idBaia.trim();
+      if (idFornecimento.isEmpty || idBaia.isEmpty) continue;
+
+      final key = "${c.trato}|$idFornecimento|$idBaia";
+      if (!vistos.add(key)) continue;
+
+      total += await _dao.marcarSyncOkPorChave(
+        data: data,
+        trato: c.trato,
+        idFornecimento: idFornecimento,
+        idBaia: idBaia,
+      );
+    }
+
+    return total;
+  }
+
   // ===========================
   // Mantidos (upsert usado por import/sync de fora)
   // ===========================
@@ -577,10 +639,13 @@ class FornecimentoRepo {
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
+    final backend = await _cfg.getBackend();
+    final isFieldpec = backend == 1;
+
     final rows = await _listPrevRaw(
       dataYYYYMMDD: dataYYYYMMDD,
       trato: trato,
-      idFazenda: idFazenda,
+      idFazenda: isFieldpec ? null : idFazenda,
       idRacao: idRacao,
       racaoNome: racaoNome,
       linha: linha,
@@ -665,7 +730,9 @@ class FornecimentoRepo {
 
     final racaoId = (idRacao ?? "").trim();
     if (racaoId.isNotEmpty) {
-      where.write(" AND TRIM(a.${FornTables.pvIdRacao}) = TRIM(?) ");
+      where.write(
+        " AND TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT)) = TRIM(CAST(? AS TEXT)) ",
+      );
       args.add(racaoId);
     }
 

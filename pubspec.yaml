@@ -1,8 +1,8 @@
-name: rfeed_flutter
-description: RFeed AutomaÃ§Ã£o - Flutter
+﻿name: rfeed_flutter
+description: RFeed AutomaÃƒÂ§ÃƒÂ£o - Flutter
 publish_to: "none"
 
-version: 1.0.9+14
+version: 1.0.9+16
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
@@ -46,3 +46,5 @@ flutter_launcher_icons:
   image_path: "assets/images/logo_rfeed_x_padded.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/images/logo_rfeed_x_padded.png"
+
+
