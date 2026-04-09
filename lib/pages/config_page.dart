@@ -45,6 +45,7 @@ class _ConfigPageState extends State<ConfigPage> {
   final _ipRfidCtrl = TextEditingController();
   final _portaRfidCtrl = TextEditingController();
   final _ipEspelhoCtrl = TextEditingController();
+  final _portaEspelhoCtrl = TextEditingController();
   final _hostEstacionarioCtrl = TextEditingController();
   final _portaEstacionarioCtrl = TextEditingController();
   final _stationWifiSsidCtrl = TextEditingController();
@@ -66,6 +67,7 @@ class _ConfigPageState extends State<ConfigPage> {
   int _operacao = 0;
   int _modeloBalanca = 0;
   int _modeloRfid = 0;
+  int _modoSaidaFab = 0; // 0 = Pá | 1 = LED
   FabricacaoFlowMode _flowMode = FabricacaoFlowMode.fullOnStation;
 
   bool _puloAutomatico = true;
@@ -127,6 +129,7 @@ class _ConfigPageState extends State<ConfigPage> {
     _ipRfidCtrl.dispose();
     _portaRfidCtrl.dispose();
     _ipEspelhoCtrl.dispose();
+    _portaEspelhoCtrl.dispose();
     _hostEstacionarioCtrl.dispose();
     _portaEstacionarioCtrl.dispose();
     _stationWifiSsidCtrl.dispose();
@@ -210,6 +213,8 @@ class _ConfigPageState extends State<ConfigPage> {
       _portaRfidCtrl.text = _asStr(cfg["PORTA_RFID"]);
 
       _ipEspelhoCtrl.text = _asStr(cfg["IP_ESPELHO"]);
+      _portaEspelhoCtrl.text = _asStr(cfg["PORTA_ESPELHO"]);
+      _modoSaidaFab = _asInt(cfg["MODO_SAIDA_FAB"], 0) == 1 ? 1 : 0;
       _hostEstacionarioCtrl.text = _asStr(cfg["HOST_ESTACIONARIO"]);
       _portaEstacionarioCtrl.text = _asStr(cfg["PORTA_ESTACIONARIO"]);
       _stationWifiSsidCtrl.text = _asStr(cfg["STATION_WIFI_SSID"]);
@@ -255,8 +260,13 @@ class _ConfigPageState extends State<ConfigPage> {
 
       _tempoMisturaCtrl.text = "0";
       _toleranciaCarregCtrl.text = "0.000";
+      _portaEspelhoCtrl.text = "9000";
       _portaEstacionarioCtrl.text = "8080";
       _flowMode = FabricacaoFlowMode.fullOnStation;
+    }
+
+    if (_portaEspelhoCtrl.text.trim().isEmpty) {
+      _portaEspelhoCtrl.text = "9000";
     }
 
     await _reloadCombos();
@@ -345,7 +355,9 @@ class _ConfigPageState extends State<ConfigPage> {
       "ID_VAGAO": _idVagao ?? "",
       "NOME_VAGAO": _nomeVagao ?? "",
       "ID_FAZENDA": _idFazenda ?? "",
+      "MODO_SAIDA_FAB": _modoSaidaFab,
       "IP_ESPELHO": _ipEspelhoCtrl.text.trim(),
+      "PORTA_ESPELHO": int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 9000,
       "HOST_ESTACIONARIO": hostEst,
       "PORTA_ESTACIONARIO": portaEst,
       "FLOW_MODE": fabricacaoFlowModeToDb(_flowMode),
@@ -421,6 +433,18 @@ class _ConfigPageState extends State<ConfigPage> {
         _toast("Informe o SSID da rede do estacionario.");
         return false;
       }
+    }
+
+    final outIp = _ipEspelhoCtrl.text.trim();
+    final outPort = int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 0;
+    if (outIp.isEmpty) {
+      _toast("Informe o IP da saída (${_modoSaidaFab == 1 ? "LED" : "pá"}).");
+      return false;
+    }
+    if (outPort <= 0) {
+      _toast(
+          "Informe a porta da saída (${_modoSaidaFab == 1 ? "LED" : "pá"}).");
+      return false;
     }
 
     return true;
@@ -1285,12 +1309,38 @@ class _ConfigPageState extends State<ConfigPage> {
 
                 const SizedBox(height: 16),
 
-                _sectionTitle("Espelhamento"),
+                _sectionTitle("Saída da fabricação"),
+                RadioListTile<int>(
+                  dense: true,
+                  value: 0,
+                  groupValue: _modoSaidaFab,
+                  title: const Text("Espelhamento da pá"),
+                  onChanged: (v) => setState(() => _modoSaidaFab = v ?? 0),
+                ),
+                RadioListTile<int>(
+                  dense: true,
+                  value: 1,
+                  groupValue: _modoSaidaFab,
+                  title: const Text("LED de rede"),
+                  onChanged: (v) => setState(() => _modoSaidaFab = v ?? 1),
+                ),
                 TextField(
                   controller: _ipEspelhoCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "IP Espelhamento",
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: _modoSaidaFab == 1 ? "IP do LED" : "IP da pá",
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _portaEspelhoCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: _modoSaidaFab == 1
+                        ? "Porta do LED"
+                        : "Porta do espelhamento",
+                    helperText: "Padrão: 9000",
+                    border: const OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 22),

@@ -96,6 +96,6 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/logo_rfeed_green.png
-  adaptive_icon_foreground: assets/logo_rfeed_green.png
+  image_path: assets/LogoField.jpeg
+  adaptive_icon_foreground: assets/LogoField.jpeg
   adaptive_icon_background: "#FFFFFF"

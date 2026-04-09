@@ -7,6 +7,7 @@ import "../../../db/app_db.dart";
 import "../../../repo/config_repo.dart";
 import "../../../helpers/scale_comm.dart";
 import "../../../helpers/mirror_service.dart";
+import "../../../helpers/led_service.dart";
 
 import "../data/fabricacao_repo.dart";
 import "../domain/fabricacao_flow.dart";
@@ -22,6 +23,9 @@ class FabricacaoController extends ChangeNotifier {
   bool _isDisposed = false;
   bool _navLockedBySaveError = false;
   String _navLockReason = "";
+
+  // 0 = espelhamento da pá | 1 = LED
+  int _modoSaidaFab = 0;
 
   void _safeNotify() {
     if (_isDisposed || _isDisposing) return;
@@ -141,12 +145,21 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   // =========================
-  // ✅ ESPELHO
+  // ✅ SAÍDA: ESPELHO ou LED
   // =========================
-  bool get mirrorEnabled => MirrorService.instance.enabled;
-  bool get mirrorConnected => MirrorService.instance.connected;
+  bool get mirrorEnabled =>
+      _modoSaidaFab == 1 ? LedService.instance.enabled : MirrorService.instance.enabled;
+  bool get mirrorConnected =>
+      _modoSaidaFab == 1 ? LedService.instance.connected : MirrorService.instance.connected;
 
   String get mirrorLabel {
+    if (_modoSaidaFab == 1) {
+      if (!LedService.instance.enabled) return "LED: desligado";
+      return LedService.instance.connected
+          ? "LED: conectado (${LedService.instance.host}:${LedService.instance.port})"
+          : "LED: tentando (${LedService.instance.host}:${LedService.instance.port})";
+    }
+
     if (!MirrorService.instance.enabled) return "Espelho: desligado";
     return MirrorService.instance.connected
         ? "Espelho: conectado (${MirrorService.instance.host}:${MirrorService.instance.port})"
@@ -154,8 +167,21 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   Future<void> startMirrorFromConfig() async {
+    _modoSaidaFab = await _cfgRepo.getModoSaidaFabricacao();
     final ip = (await _cfgRepo.getIpEspelho()).trim();
     final port = await _cfgRepo.getPortaEspelho();
+
+    if (_modoSaidaFab == 1) {
+      await MirrorService.instance.stop();
+      await LedService.instance.configure(host: ip, port: port);
+      _startLedTicker();
+      _announceIngredienteNoLed();
+      notifyListeners();
+      return;
+    }
+
+    await LedService.instance.stop();
+    _stopLedTicker();
 
     await MirrorService.instance.configure(
       host: ip,
@@ -273,6 +299,8 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   Future<void> stopMirror() async {
+    _stopLedTicker();
+    await LedService.instance.stop();
     await MirrorService.instance.stop();
     notifyListeners();
   }
@@ -420,6 +448,83 @@ class FabricacaoController extends ChangeNotifier {
   DateTime _lastRemoteNavAt = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastRemoteNavCmd = "";
 
+  Timer? _ledTimer;
+  String _ledDetId = "";
+  DateTime? _ledIngredienteAt;
+  String _lastLedMsg = "";
+  DateTime _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _startLedTicker() {
+    if (_modoSaidaFab != 1) return;
+    _ledTimer?.cancel();
+    _ledTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _tickLed();
+    });
+  }
+
+  void _stopLedTicker() {
+    _ledTimer?.cancel();
+    _ledTimer = null;
+    _ledDetId = "";
+    _ledIngredienteAt = null;
+    _lastLedMsg = "";
+    _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  void _enqueueLed(String msg) {
+    if (_modoSaidaFab != 1) return;
+
+    final m = msg.trim();
+    if (m.isEmpty) return;
+
+    final now = DateTime.now();
+    if (_lastLedMsg == m && now.difference(_lastLedMsgAt).inMilliseconds < 700) {
+      return;
+    }
+
+    _lastLedMsg = m;
+    _lastLedMsgAt = now;
+    LedService.instance.enqueueText(m);
+  }
+
+  void _announceIngredienteNoLed() {
+    if (_modoSaidaFab != 1) return;
+    final ing = atual;
+    if (ing == null) return;
+
+    _ledDetId = ing.idDet;
+    _ledIngredienteAt = DateTime.now();
+    _enqueueLed(ing.insumoNome);
+  }
+
+  void _tickLed() {
+    if (_modoSaidaFab != 1) return;
+    if (_closed) return;
+    final ing = atual;
+    if (ing == null) return;
+
+    if (_ledDetId != ing.idDet) {
+      _announceIngredienteNoLed();
+      return;
+    }
+
+    if (_pesoPausado) {
+      _enqueueLed("PAUSE");
+      return;
+    }
+
+    final t0 = _ledIngredienteAt;
+    if (t0 == null) {
+      _announceIngredienteNoLed();
+      return;
+    }
+
+    if (DateTime.now().difference(t0).inSeconds < 10) return;
+
+    final falta = max(ing.previstoKg - ing.realizadoKg, 0);
+    _enqueueLed(falta.toString());
+  }
+
   // =========================================================
   // BOOT / RESUME
   // =========================================================
@@ -434,6 +539,7 @@ class FabricacaoController extends ChangeNotifier {
 
     _cancelAutoPulo();
     _resetRealizadoStateForCurrent(baselinePending: true);
+    _announceIngredienteNoLed();
 
     notifyListeners();
     _sendMirrorState(force: true);
@@ -460,6 +566,8 @@ class FabricacaoController extends ChangeNotifier {
         ingredientes[idx].realizadoKg <= 0) {
       _contabilizarPrimeiroPacotePositivo = true;
     }
+
+    _announceIngredienteNoLed();
 
     notifyListeners();
     _sendMirrorState(force: true);
@@ -504,6 +612,7 @@ class FabricacaoController extends ChangeNotifier {
       idx = index;
       _resetRealizadoStateForCurrent(baselinePending: true);
       _primeBaselineFromCurrentWeightIfPossible();
+      _announceIngredienteNoLed();
 
       _sendMirrorState(force: true);
       notifyListeners();
@@ -795,6 +904,7 @@ class FabricacaoController extends ChangeNotifier {
     _baselinePending = false;
 
     _cancelAutoPulo();
+    _enqueueLed("PAUSE");
     _sendMirrorState(force: true);
     notifyListeners();
   }
@@ -815,6 +925,7 @@ class FabricacaoController extends ChangeNotifier {
     _autoPuloDisparado = false;
     _pesoPausado = false;
 
+    _announceIngredienteNoLed();
     _sendMirrorState(force: true);
     notifyListeners();
   }
@@ -1072,6 +1183,7 @@ class FabricacaoController extends ChangeNotifier {
         _autoPuloDisparado = false;
         _resetRealizadoStateForCurrent(baselinePending: true);
         _primeBaselineFromCurrentWeightIfPossible();
+        _announceIngredienteNoLed();
 
         _sendMirrorState(force: true);
         notifyListeners();
@@ -1104,6 +1216,7 @@ class FabricacaoController extends ChangeNotifier {
         _autoPuloDisparado = false;
         _resetRealizadoStateForCurrent(baselinePending: true);
         _primeBaselineFromCurrentWeightIfPossible();
+        _announceIngredienteNoLed();
 
         _sendMirrorState(force: true);
         notifyListeners();
@@ -1140,6 +1253,7 @@ class FabricacaoController extends ChangeNotifier {
 
     notifyListeners();
 
+    _enqueueLed("FIM");
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
 
@@ -1296,6 +1410,7 @@ class FabricacaoController extends ChangeNotifier {
       ],
     );
 
+    _enqueueLed("FIM");
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
   }
@@ -1365,6 +1480,11 @@ class FabricacaoController extends ChangeNotifier {
     // ✅ mata mirror sem await
     try {
       MirrorService.instance.stop();
+    } catch (_) {}
+
+    try {
+      _stopLedTicker();
+      LedService.instance.stop();
     } catch (_) {}
 
     super.dispose();

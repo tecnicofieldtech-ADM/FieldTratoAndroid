@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "rfeed_flutter" "\0"
+            VALUE "FileDescription", "Field Trato" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "rfeed_flutter" "\0"
+            VALUE "InternalName", "field_trato" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "rfeed_flutter.exe" "\0"
-            VALUE "ProductName", "rfeed_flutter" "\0"
+            VALUE "OriginalFilename", "field_trato.exe" "\0"
+            VALUE "ProductName", "Field Trato" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

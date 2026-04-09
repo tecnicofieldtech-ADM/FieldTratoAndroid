@@ -244,8 +244,7 @@ class _LoginPageState extends State<LoginPage> {
                                   child: FilledButton(
                                     onPressed: _logging ? null : _doLogin,
                                     style: FilledButton.styleFrom(
-                                      backgroundColor:
-                                          const Color.fromARGB(255, 1, 1, 1),
+                                      backgroundColor: const Color(0xFF25A7CF),
                                       foregroundColor: Colors.white,
                                       textStyle: const TextStyle(
                                         fontSize: 16,

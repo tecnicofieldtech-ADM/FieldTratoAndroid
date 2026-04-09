@@ -370,7 +370,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.settings,
                                       title: "Configuração",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       onTap: () =>
                                           Navigator.pushReplacementNamed(
@@ -384,7 +384,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.sync,
                                       title: "Sincronização",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       onTap: () => _go(context, "/sync"),
                                     ),
@@ -403,7 +403,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.precision_manufacturing,
                                       title: "Fabricação",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       enabled: podeFabricar,
                                       onTap: () => _go(context, "/fabricacao"),
@@ -420,7 +420,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.local_shipping,
                                       title: "Fornecimento",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       enabled: podeFornecer,
                                       onTap: () =>
@@ -445,7 +445,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.download_for_offline_outlined,
                                       title: "Carregamento",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       enabled: podeCarregamento,
                                       onTap: () => _go(
@@ -465,7 +465,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.dashboard_outlined,
                                       title: "Dashboard",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       onTap: () => _go(context, "/dashboard"),
                                     ),
@@ -484,7 +484,7 @@ class _MenuPageState extends State<MenuPage> {
                                     child: _Tile(
                                       icon: Icons.nfc,
                                       title: "Gravar TAG",
-                                      bg: Colors.black.withValues(alpha: 0.80),
+                                      bg: const Color(0xCC25A7CF),
                                       fg: Colors.white,
                                       onTap: () => _go(context, "/grava-tag"),
                                     ),
@@ -514,9 +514,9 @@ class _MenuPageState extends State<MenuPage> {
                               borderRadius: BorderRadius.circular(14),
                             ),
                             side: BorderSide(
-                              color: Colors.black.withValues(alpha: 0.35),
+                              color: const Color(0xFF25A7CF),
                             ),
-                            foregroundColor: Colors.black87,
+                            foregroundColor: const Color(0xFF25A7CF),
                             backgroundColor:
                                 Colors.white.withValues(alpha: 0.9),
                           ),
@@ -543,7 +543,7 @@ class _MenuPageState extends State<MenuPage> {
                         height: 52,
                         child: FilledButton.icon(
                           style: FilledButton.styleFrom(
-                            backgroundColor: Colors.red.shade700,
+                            backgroundColor: const Color(0xFF25A7CF),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14)),
                           ),

@@ -20,6 +20,11 @@ class ConfigOptions {
   static const modelosRfid = <int, String>{
     0: "Via Onda",
   };
+
+  static const saidaFabricacao = <int, String>{
+    0: "Espelhamento da pá",
+    1: "LED de rede",
+  };
 }
 
 

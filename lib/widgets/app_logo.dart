@@ -8,7 +8,7 @@ class AppLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Image.asset(
-      "assets/images/logo_rfeed.png",
+      "assets/images/logo_Filed_Transparente.png",
       height: height,
       fit: BoxFit.contain,
     );

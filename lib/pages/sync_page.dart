@@ -377,7 +377,7 @@ class _SyncPageState extends State<SyncPage> {
                           : const Icon(Icons.sync),
                       label: Text(_running ? "Sincronizando..." : "Sincronizar Agora"),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
+                        backgroundColor: const Color(0xFF25A7CF),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),

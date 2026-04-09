@@ -44,6 +44,10 @@ class ConfigRepo {
       await addIfMissing("id_vagao", "ID_VAGAO TEXT");
       await addIfMissing("nome_vagao", "NOME_VAGAO TEXT");
       await addIfMissing("ip_espelho", "IP_ESPELHO TEXT");
+        await addIfMissing(
+          "porta_espelho", "PORTA_ESPELHO INTEGER DEFAULT 9000");
+        await addIfMissing(
+          "modo_saida_fab", "MODO_SAIDA_FAB INTEGER DEFAULT 0");
       await addIfMissing("host_estacionario", "HOST_ESTACIONARIO TEXT");
       await addIfMissing("porta_estacionario", "PORTA_ESTACIONARIO INTEGER");
       await addIfMissing("flow_mode", "FLOW_MODE INTEGER DEFAULT 0");
@@ -353,6 +357,12 @@ class ConfigRepo {
     final v1 = await _getField("PORTA_ESPELHO");
     final v = _toInt(v1, def: 9000);
     return v <= 0 ? 9000 : v;
+  }
+
+  /// 0 = Pá (espelhamento), 1 = LED
+  Future<int> getModoSaidaFabricacao() async {
+    final v = _toInt(await _getField("MODO_SAIDA_FAB"), def: 0);
+    return (v == 1) ? 1 : 0;
   }
 
   // -------------------------

@@ -1002,7 +1002,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage> {
             width: double.infinity,
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
-                backgroundColor: Colors.black,
+                backgroundColor: const Color(0xFF25A7CF),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
               ),

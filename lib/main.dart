@@ -45,17 +45,17 @@ class RFeedApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primaryGreen = Color(0xFF1B5E20);
+    const primaryBlue = Color(0xFF25A7CF);
     final theme = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: Colors.white,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF0F766E),
+        seedColor: primaryBlue,
         brightness: Brightness.light,
       ).copyWith(
-        primary: primaryGreen,
-        secondary: primaryGreen,
+        primary: primaryBlue,
+        secondary: primaryBlue,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
@@ -64,13 +64,13 @@ class RFeedApp extends StatelessWidget {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: primaryGreen,
+          backgroundColor: primaryBlue,
           foregroundColor: Colors.white,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: primaryGreen,
+          backgroundColor: primaryBlue,
           foregroundColor: Colors.white,
         ),
       ),
