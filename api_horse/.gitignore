@@ -1,0 +1,19 @@
+# Artefatos Delphi / build local
+**/*.dcu
+**/*.o
+**/*.local
+**/*.identcache
+**/__history/
+**/__recovery/
+**/Win32/Debug/
+**/Win64/Debug/
+
+# Bases e pacotes pesados (manter só local)
+Deploy/db/
+**/*.FDB
+**/*.fdb
+**/*.rar
+**/*.7z
+
+# Instalador gerado (payload versionado separadamente se necessário)
+installer/output/
