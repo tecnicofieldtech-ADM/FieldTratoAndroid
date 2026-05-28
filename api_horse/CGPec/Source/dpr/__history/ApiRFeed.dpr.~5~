@@ -1,0 +1,24 @@
+program ApiRFeed;
+
+uses
+  System.StartUpCopy,
+  FMX.Forms,
+  UPrincipal in '..\Principal\UPrincipal.pas' {frmPrincipal},
+  DataSet.Serialize.Config in '..\DatasetSerialize\DataSet.Serialize.Config.pas',
+  DataSet.Serialize.Consts in '..\DatasetSerialize\DataSet.Serialize.Consts.pas',
+  DataSet.Serialize.Export in '..\DatasetSerialize\DataSet.Serialize.Export.pas',
+  DataSet.Serialize.Import in '..\DatasetSerialize\DataSet.Serialize.Import.pas',
+  DataSet.Serialize.Language in '..\DatasetSerialize\DataSet.Serialize.Language.pas',
+  DataSet.Serialize in '..\DatasetSerialize\DataSet.Serialize.pas',
+  DataSet.Serialize.UpdatedStatus in '..\DatasetSerialize\DataSet.Serialize.UpdatedStatus.pas',
+  DataSet.Serialize.Utils in '..\DatasetSerialize\DataSet.Serialize.Utils.pas',
+  Udm in '..\dm\Udm.pas' {dmdb: TDataModule};
+
+{$R *.res}
+
+begin
+  Application.Initialize;
+  Application.CreateForm(TfrmPrincipal, frmPrincipal);
+  Application.CreateForm(Tdmdb, dmdb);
+  Application.Run;
+end.

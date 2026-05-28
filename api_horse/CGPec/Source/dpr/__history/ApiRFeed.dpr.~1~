@@ -1,0 +1,14 @@
+program ApiRFeed;
+
+uses
+  System.StartUpCopy,
+  FMX.Forms,
+  UPrincipal in '..\Principal\UPrincipal.pas' {Form34};
+
+{$R *.res}
+
+begin
+  Application.Initialize;
+  Application.CreateForm(TForm34, Form34);
+  Application.Run;
+end.

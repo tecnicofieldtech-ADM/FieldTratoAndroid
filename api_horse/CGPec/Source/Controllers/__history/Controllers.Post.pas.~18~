@@ -1,0 +1,250 @@
+﻿unit Controllers.Post;
+
+interface
+uses
+  Horse,
+  Horse.Jhonson,
+  Horse.CORS,
+  System.JSON,
+  System.SysUtils;
+
+  procedure RegistraRotas;
+  procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
+implementation
+
+uses Udm;
+
+procedure RegistraRotas;
+begin
+  THorse.Post('/Post/Fornecimento',PostFornecimento);
+  THorse.Post('/Post/Fabricacao',PostFabricacao);
+  THorse.Post('/Post/Fabricacao_Insumo',PostFabricacaoInsumos);
+end;
+
+function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
+begin
+  Result := JSON.TryGetValue<string>(NomeCampo, Valor) and (Valor.Trim <> '');
+end;
+
+procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Body: TJSONObject;
+  vMaxId, vTempStr: string;
+begin
+  dmGlobal := TdmDB.Create(nil);
+  Body := nil;
+  try
+    try
+      Body := Req.Body<TJSONObject>;
+
+      // Validação de campos obrigatórios
+      if not Body.TryGetValue<string>('id', vMaxId) or (vMaxId.Trim = '') then
+      begin
+        Res.Send(TJSONObject.Create.AddPair('erro', 'Campo obrigatório "id" não informado')).Status(400);
+        Exit;
+      end;
+      if not Body.TryGetValue<string>('id_fabricacao', vTempStr) or (vTempStr.Trim = '') then
+      begin
+        Res.Send(TJSONObject.Create.AddPair('erro', 'Campo obrigatório "id_fabricacao" não informado')).Status(400);
+        Exit;
+      end;
+
+      // Busca o fornecimento pelo ID
+      with dmGlobal.Fornecimento do
+      begin
+        Close;
+        SQL.Text := 'SELECT * FROM CADASTRO_FORNECIMENTO WHERE ID = :ID'; // <-- aqui faz o filtro
+        ParamByName('ID').AsString := vMaxId;
+        Open;
+
+        if IsEmpty then
+        begin
+          Res.Send(TJSONObject.Create.AddPair('erro', 'Fornecimento não encontrado')).Status(404);
+          Exit;
+        end;
+
+        Edit;
+
+        FieldByName('ID_FABRICACAO').AsString         := Body.GetValue<string>('id_fabricacao', '');
+        FieldByName('ID_USUARIO_LANCAMENTO').AsString := Body.GetValue<string>('id_usuario_lancamento', '0');
+        FieldByName('ID_TRATADOR').AsString            := Body.GetValue<string>('id_tratador', '0');
+        FieldByName('ID_DIETA_REALIZADA').AsString     := Body.GetValue<string>('id_dieta_realizada', '0');
+        FieldByName('REALIZADO').AsString              := Body.GetValue<string>('realizado', '0');
+        FieldByName('MS_DIETA_REALIZADA').AsString     := Body.GetValue<string>('ms_dieta_realizada', '0');
+        FieldByName('ORIGEM_DADOS').AsString           := 'A';
+
+        Post;
+        ApplyUpdates;
+      end;
+
+      // Sucesso
+      Res.Send(TJSONObject.Create.AddPair('id', vMaxId)).Status(200);
+
+    except
+      on E: Exception do
+        Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+    end;
+  finally
+    FreeAndNil(Body);
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Body: TJSONObject;
+  ItensArray: TJSONArray;
+  Item: TJSONObject;
+  i: Integer;
+  vValorkg: string;
+  vValorkgFloat: Double;
+  vMaxId, vTempStr: string;
+begin
+  dmGlobal := TdmDB.Create(nil);
+  Body := Req.Body<TJSONObject>;
+
+  try
+    if not Assigned(Body) then
+      raise Exception.Create('JSON inválido ou vazio');
+
+    // Pega o array "itens"
+    ItensArray := Body.GetValue('itens') as TJSONArray;
+    if not Assigned(ItensArray) then
+      raise Exception.Create('Campo "itens" não encontrado no JSON');
+
+    if ItensArray.Count = 0 then
+      raise Exception.Create('Nenhum item encontrado no JSON');
+
+    // Itera sobre os itens
+    for i := 0 to ItensArray.Count - 1 do
+    begin
+      Item := ItensArray.Items[i] as TJSONObject;
+
+      if not Item.TryGetValue<string>('id', vMaxId) or (vMaxId.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id" não informado');
+
+      if not Item.TryGetValue<string>('id_fabricacao', vTempStr) or (vTempStr.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id_fabricacao" não informado');
+
+      if not Item.TryGetValue<string>('id_insumo', vTempStr) or (vTempStr.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id_insumo" não informado');
+
+      // Gravação no banco
+      with dmGlobal.Fabricacao_Insumos do
+      begin
+        Close;
+        Open;
+        Insert;
+
+        FieldByName('ID').AsString := Item.GetValue<string>('id', '');
+        FieldByName('ID_CADASTRO_FABRICA_RACAO').AsString := Item.GetValue<string>('id_fabricacao', '');
+        FieldByName('ID_INSUMO').AsString := Item.GetValue<string>('id_insumo', '');
+
+        FieldByName('QTDE_PREVISTA').AsString := Item.GetValue<string>('qtd_prevista', '0');
+        FieldByName('QTDE_REALIZADA').AsString := Item.GetValue<string>('qtd_realizada', '0');
+        FieldByName('ID_OPERADOR').AsString := Item.GetValue<string>('id_operador', '0');
+        FieldByName('MS_INSUMO').AsString := Item.GetValue<string>('ms_insumo', '0');
+
+        // Se precisar custo_kg mesmo, deve vir corretamente no JSON
+        if Item.TryGetValue<string>('custo_kg', vValorkg) then
+        begin
+          vValorkg := StringReplace(vValorkg, '.', ',', [rfReplaceAll]);
+          TryStrToFloat(vValorkg, vValorkgFloat);
+          FieldByName('CUSTO_KG').AsFloat := vValorkgFloat;
+        end
+        else
+          FieldByName('CUSTO_KG').Clear;
+
+        Post;
+        ApplyUpdates;
+      end;
+    end;
+
+    // Sucesso
+    Res.Send(TJSONObject.Create.AddPair('result', 'Itens inseridos com sucesso')).Status(200);
+
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+
+  FreeAndNil(Body);
+  FreeAndNil(dmGlobal);
+end;
+
+
+procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Body: TJSONObject;
+  JSONRetorno: TJSONObject;
+  custo_kg_dietaS: string;
+  custo_kg_dieta : Double;
+  vMaxId, vTempStr: string;
+begin
+  dmGlobal := TdmDB.Create(nil);
+  Body := Req.Body<TJSONObject>;  // Body já pego
+
+  try
+    // Validação de campos obrigatórios
+    if not Body.TryGetValue<string>('id', vMaxId) or (vMaxId.Trim = '') then
+      raise Exception.Create('Campo obrigatório "id" não informado');
+
+    if not Body.TryGetValue<string>('id_fazenda', vTempStr) or (vTempStr.Trim = '') then
+      raise Exception.Create('Campo obrigatório "id_fazenda" não informado');
+
+    if not Body.TryGetValue<string>('id_dieta', vTempStr) or (vTempStr.Trim = '') then
+      raise Exception.Create('Campo obrigatório "id_dieta" não informado');
+
+    custo_kg_dietaS := StringReplace(Body.GetValue<string>('custo_kg_dieta', '0'), '.', ',', [rfReplaceAll]);
+    TryStrToFloat(custo_kg_dietaS, custo_kg_dieta);
+
+    with dmGlobal.Fabricacao do
+    begin
+      Close;
+      Open;
+      Insert;
+      FieldByName('ID').AsString := vMaxId;
+      FieldByName('ID_FAZENDA').AsString := Body.GetValue<string>('id_fazenda', '');
+      FieldByName('ID_DIETA').AsString := Body.GetValue<string>('id_dieta', '');
+
+      if Body.TryGetValue<string>('data', vTempStr) and (vTempStr.Trim <> '') then
+        FieldByName('DATA').AsString := vTempStr
+      else
+        FieldByName('DATA').Clear;
+
+      FieldByName('ID_USUARIO').AsString     := Body.GetValue<string>('id_usuario', '');
+      FieldByName('ID_OPERADOR').AsString    := Body.GetValue<string>('id_operador', '');
+      FieldByName('ID_VAGAO').AsString       := Body.GetValue<string>('id_vagao', '');
+      FieldByName('QTDE_PREVISTA').AsString  := Body.GetValue<string>('qtd_prevista', '');
+      FieldByName('MS_PREVISTA').AsString    := Body.GetValue<string>('ms_prevista', '');
+      FieldByName('QTDE_REALIZADA').AsString := Body.GetValue<string>('qtd_realizada', '');
+
+      ApplyUpdates;
+    end;
+
+    // CRIA e ENVIA o JSON DEPOIS de tudo
+    JSONRetorno := TJSONObject.Create;
+    JSONRetorno.AddPair('id', vMaxId);
+
+    Res.Send(JSONRetorno).Status(200);  // 🚨 depois do SEND não pode mais acontecer NADA
+
+  except
+    on E: Exception do
+    begin
+      JSONRetorno := TJSONObject.Create;
+      JSONRetorno.AddPair('erro', E.Message);
+      Res.Send(JSONRetorno).Status(500);
+    end;
+  end;
+
+  // NÃO FAZ MAIS FREE depois do SEND
+end;
+
+
+end.

@@ -1,0 +1,44 @@
+unit Controllers.Usuario;
+
+interface
+uses
+  Horse,
+  Horse.Jhonson,
+  Horse.CORS,
+  System.JSON,
+  System.SysUtils;
+
+procedure RegistraRotas;
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+
+implementation
+
+uses Udm;
+
+procedure RegistraRotas;
+begin
+ THorse.Get('/usuarios/get',GetUsuarios);
+end;
+
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+   dmGlobal : TdmDB;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    dmGlobal.Usuario.Close;
+    dmGlobal.Usuario.Open;
+    Res.Send<TJSONArray>(dmGlobal.Usuario.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+end.

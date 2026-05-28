@@ -1,0 +1,306 @@
+﻿unit Udm;
+
+interface
+
+uses
+  System.SysUtils, System.Classes, FireDAC.Stan.Intf, FireDAC.Stan.Option,
+  FireDAC.Stan.Error, FireDAC.UI.Intf, FireDAC.Phys.Intf, FireDAC.Stan.Def,
+  FireDAC.Stan.Pool, FireDAC.Stan.Async, FireDAC.Phys, FireDAC.Phys.FB,
+  FireDAC.Phys.FBDef, FireDAC.FMXUI.Wait, FireDAC.Phys.IBBase, Data.DB,
+  FireDAC.Comp.Client,System.IniFiles,FMX.Dialogs, FireDAC.Stan.Param,
+  FireDAC.DatS, FireDAC.DApt.Intf, FireDAC.DApt, FireDAC.Comp.DataSet;
+
+type
+  Tdmdb = class(TDataModule)
+    FBCon: TFDConnection;
+    FBDriver: TFDPhysFBDriverLink;
+    CADASTRO_USUARIO: TFDQuery;
+    CADASTRO_USUARIOID: TStringField;
+    CADASTRO_USUARIONOME: TStringField;
+    CADASTRO_USUARIOUSUARIO: TStringField;
+    CADASTRO_USUARIOSENHA: TStringField;
+    CADASTRO_USUARIOCARGO: TStringField;
+    CADASTRO_FAZENDA: TFDQuery;
+    CADASTRO_FAZENDAIDFAZENDA: TStringField;
+    CADASTRO_FAZENDACLIENTE: TStringField;
+    CADASTRO_FAZENDAFAZENDA: TStringField;
+    CADASTRO_FAZENDAIDCIDADE: TIntegerField;
+    CADASTRO_FAZENDALOGOMARCA: TBlobField;
+    CADASTRO_FAZENDAROTEIRO: TStringField;
+    CADASTRO_FAZENDALATITUDE: TStringField;
+    CADASTRO_FAZENDALONGITUDE: TStringField;
+    CADASTRO_FAZENDARASTREADA: TStringField;
+    CADASTRO_FAZENDATIPOPESSOA: TStringField;
+    CADASTRO_FAZENDACNPJ: TStringField;
+    CADASTRO_FAZENDACPF: TStringField;
+    CADASTRO_FAZENDAIE: TStringField;
+    CADASTRO_FAZENDAIM: TStringField;
+    CADASTRO_FAZENDARAZAO_SOCIAL: TStringField;
+    CADASTRO_FAZENDACEP: TStringField;
+    CADASTRO_FAZENDABAIRRO: TStringField;
+    CADASTRO_FAZENDALOGRADOURO: TStringField;
+    CADASTRO_FAZENDANUMERO: TStringField;
+    CADASTRO_FAZENDASALA: TStringField;
+    CADASTRO_FAZENDABLOCO: TStringField;
+    CADASTRO_FAZENDACOMPLEMENTO: TStringField;
+    CADASTRO_FAZENDATELEFONE_1: TStringField;
+    CADASTRO_FAZENDADESCR1: TStringField;
+    CADASTRO_FAZENDAEMAIL1: TStringField;
+    CADASTRO_FAZENDATELEFONE_2: TStringField;
+    CADASTRO_FAZENDADESCR2: TStringField;
+    CADASTRO_FAZENDAEMAIL2: TStringField;
+    CADASTRO_FAZENDATELEFONE_3: TStringField;
+    CADASTRO_FAZENDADESCR3: TStringField;
+    CADASTRO_FAZENDAEMAIL3: TStringField;
+    CADASTRO_FAZENDATIPO_CUSTO_COMPRA: TStringField;
+    CADASTRO_FAZENDASALDO_FINANCEIRO_INICIAL: TFMTBCDField;
+    CADASTRO_FAZENDAPROP_LOGOMARCA_PARCEIRO: TBlobField;
+    CADASTRO_FAZENDACUSTO_CAPITAL: TFloatField;
+    CADASTRO_FAZENDAINCRA: TStringField;
+    CADASTRO_FAZENDACOD_ERAS: TStringField;
+    CADASTRO_FAZENDADATA_INICIO_CUSTO: TDateField;
+    CADASTRO_FAZENDAIDUNICO: TStringField;
+    CADASTRO_FAZENDAMS_FORNECIMENTO_DIETA: TStringField;
+    CADASTRO_FAZENDACONSULTOR_POS_VENDA: TStringField;
+    CADASTRO_FAZENDAID_CLIENTE_SERVIDOR: TStringField;
+    CADASTRO_FAZENDARATEIO_CONSUMO: TStringField;
+    CADASTRO_DIETAS: TFDQuery;
+    CADASTRO_DIETASID: TStringField;
+    CADASTRO_DIETASID_FAZENDA: TStringField;
+    CADASTRO_DIETASNOME_DIETA: TStringField;
+    CADASTRO_DIETASTIPO_DIETA: TStringField;
+    CADASTRO_DIETASSTATUS: TStringField;
+    CADASTRO_DIETASLIBERADO: TStringField;
+    CADASTRO_DIETASID_USUARIO: TStringField;
+    CADASTRO_DIETASMN_TOTAL: TFloatField;
+    CADASTRO_DIETASDATA_REGISTRO: TDateField;
+    CADASTRO_DIETASMS_DIETA: TFMTBCDField;
+    DETALHES_DIETAS: TFDQuery;
+    DETALHES_DIETASID_DIETA: TStringField;
+    DETALHES_DIETASNOME_DIETA: TStringField;
+    DETALHES_DIETASTIPO_DIETA: TStringField;
+    DETALHES_DIETASINGREDIENTE: TStringField;
+    DETALHES_DIETASMS_INSUMO: TFloatField;
+    DETALHES_DIETASMS_INCLUSAO: TFloatField;
+    DETALHES_DIETASMN_PERC: TFloatField;
+    DETALHES_DIETASORDEM: TIntegerField;
+    PREVISAO: TFDQuery;
+    BAIAS: TFDQuery;
+    BAIASID_BAIA: TStringField;
+    BAIASID_LOTE: TStringField;
+    BAIASNOME_LOCAL: TStringField;
+    BAIASLINHA: TStringField;
+    BAIASORDEM_TRATO: TIntegerField;
+    BAIASID_FAZENDA: TStringField;
+    BAIASRFID: TStringField;
+    DETALHES_DIETASID: TStringField;
+    DETALHES_DIETASID_INSUMO: TStringField;
+    PREVISAOID_FORNECIMENTO: TStringField;
+    PREVISAODATA: TDateField;
+    PREVISAOID: TStringField;
+    PREVISAOTRATO: TIntegerField;
+    PREVISAOID_DIETA: TStringField;
+    PREVISAOPREVISTO: TLargeintField;
+    PREVISAOREALIZADO: TLargeintField;
+    Fabricacao: TFDQuery;
+    Fabricacao_Insumos: TFDQuery;
+    Fornecimento: TFDQuery;
+    FornecimentoID: TStringField;
+    FornecimentoDATA: TDateField;
+    FornecimentoDATA_REGISTRO: TSQLTimeStampField;
+    FornecimentoID_USUARIO: TStringField;
+    FornecimentoID_LOTE: TStringField;
+    FornecimentoTRATO: TIntegerField;
+    FornecimentoID_DIETA: TStringField;
+    FornecimentoQTDE_CAB: TIntegerField;
+    FornecimentoPESO_MEDIO: TFMTBCDField;
+    FornecimentoMS_DIETA_PREVISTA: TFMTBCDField;
+    FornecimentoMS_DIETA_REALIZADA: TFMTBCDField;
+    FornecimentoPREVISTO_LEITURA: TFMTBCDField;
+    FornecimentoPREVISTO: TFMTBCDField;
+    FornecimentoREALIZADO: TFMTBCDField;
+    FornecimentoSTATUS: TStringField;
+    FornecimentoMOTORISTA: TStringField;
+    FornecimentoID_FABRICACAO: TStringField;
+    FornecimentoID_BAIA: TStringField;
+    FornecimentoDIF_KG: TFMTBCDField;
+    FornecimentoDIF_PERC: TFMTBCDField;
+    FornecimentoPREV_MS_CONSUMIDA: TFMTBCDField;
+    FornecimentoREAL_MS_CONSUMIDA: TFMTBCDField;
+    FornecimentoDIF_MS_CONSUMIDA: TFMTBCDField;
+    FornecimentoDIF_PERC_MS: TFMTBCDField;
+    FornecimentoDATA_LANCAMENTO: TSQLTimeStampField;
+    FornecimentoID_USUARIO_LANCAMENTO: TStringField;
+    FornecimentoID_LEITURA: TStringField;
+    FornecimentoFLAG_GRAVADO: TStringField;
+    FornecimentoID_TRATADOR: TStringField;
+    FornecimentoID_DIETA_REALIZADA: TStringField;
+    FornecimentoFORN_RATEIO: TFMTBCDField;
+    FornecimentoFORN_TOTAL: TBCDField;
+    FornecimentoTOTAL_MS_CONSUMIDA: TBCDField;
+    FornecimentoPREVISTO_CAB: TBCDField;
+    FornecimentoREALIZADO_CAB: TBCDField;
+    FornecimentoMS_PREVISTA: TFloatField;
+    FornecimentoFLAG_SYNC_SERVER: TStringField;
+    Vagao: TFDQuery;
+    VagaoNOME: TStringField;
+    VagaoID: TStringField;
+    FabricacaoID: TStringField;
+    FabricacaoID_FAZENDA: TStringField;
+    FabricacaoID_DIETA: TStringField;
+    FabricacaoDATA: TDateField;
+    FabricacaoDATA_REGISTO: TSQLTimeStampField;
+    FabricacaoID_USUARIO: TStringField;
+    FabricacaoID_OPERADOR: TStringField;
+    FabricacaoID_VAGAO: TStringField;
+    FabricacaoQTDE_PREVISTA: TFMTBCDField;
+    FabricacaoGRAVADO: TStringField;
+    FabricacaoMS_PREVISTA: TFMTBCDField;
+    FabricacaoSTATUS_ATUAL: TStringField;
+    FabricacaoFLAG_SYNC_SERVER: TStringField;
+    FabricacaoCUSTO_KG_DIETA: TFloatField;
+    FabricacaoMS_BATIDA: TFloatField;
+    FabricacaoQTDE_REALIZADA: TFloatField;
+    Fabricacao_InsumosID: TStringField;
+    Fabricacao_InsumosID_CADASTRO_FABRICA_RACAO: TStringField;
+    Fabricacao_InsumosID_INSUMO: TStringField;
+    Fabricacao_InsumosQTDE_PREVISTA: TFMTBCDField;
+    Fabricacao_InsumosQTDE_REALIZADA: TFMTBCDField;
+    Fabricacao_InsumosDATA_REGISTRO: TSQLTimeStampField;
+    Fabricacao_InsumosID_OPERADOR: TStringField;
+    Fabricacao_InsumosGRAVADO: TStringField;
+    Fabricacao_InsumosMS_INSUMO: TFMTBCDField;
+    Fabricacao_InsumosDIF_KG: TFMTBCDField;
+    Fabricacao_InsumosDIF_PER: TFloatField;
+    Fabricacao_InsumosCUSTO_KG: TFloatField;
+    qryAux: TFDQuery;
+  private
+    { Private declarations }
+  public
+    function  LerIni(Diretorio,Chave1, Chave2, ValorPadrao: String): String;
+    procedure ConectaDBCGPec;
+    procedure AtualizaResumoFabricacao(const IDFabricacao: string);
+    function GetCustoMedioKgInsumo(const IdProduto, IdFazenda, DataBase: string): Double;
+  end;
+
+var
+  dmdb: Tdmdb;
+
+implementation
+
+{%CLASSGROUP 'FMX.Controls.TControl'}
+
+{$R *.dfm}
+
+{ TDataModule1 }
+
+procedure Tdmdb.AtualizaResumoFabricacao(const IDFabricacao: string);
+begin
+  qryAux.Close;
+  qryAux.SQL.Clear;
+  qryAux.SQL.Add('UPDATE CADASTRO_FABRICA_RACAO SET');
+  qryAux.SQL.Add('  GRAVADO = ''S'',');
+  qryAux.SQL.Add('  CUSTO_KG_DIETA = (');
+  qryAux.SQL.Add('    SELECT COALESCE(SUM(QTDE_REALIZADA * CUSTO_KG) / NULLIF(SUM(QTDE_REALIZADA), 0), 0)');
+  qryAux.SQL.Add('    FROM DETALHES_FABRICA_RACAO');
+  qryAux.SQL.Add('    WHERE ID_INSUMO IS NOT NULL AND ID_CADASTRO_FABRICA_RACAO = :ID');
+  qryAux.SQL.Add('  ),');
+  qryAux.SQL.Add('  MS_BATIDA = (');
+  qryAux.SQL.Add('    SELECT COALESCE((');
+  qryAux.SQL.Add('      SUM(CAST(QTDE_REALIZADA AS DECIMAL(18,2)) * (CAST(MS_INSUMO AS DOUBLE PRECISION) / 100)) /');
+  qryAux.SQL.Add('      NULLIF(SUM(CAST(QTDE_REALIZADA AS DOUBLE PRECISION)), 0) * 100');
+  qryAux.SQL.Add('    ), 0)');
+  qryAux.SQL.Add('    FROM DETALHES_FABRICA_RACAO');
+  qryAux.SQL.Add('    WHERE ID_INSUMO IS NOT NULL AND ID_CADASTRO_FABRICA_RACAO = :ID');
+  qryAux.SQL.Add('  ),');
+  qryAux.SQL.Add('  QTDE_REALIZADA = (');
+  qryAux.SQL.Add('    SELECT COALESCE(SUM(QTDE_REALIZADA), 0)');
+  qryAux.SQL.Add('    FROM DETALHES_FABRICA_RACAO');
+  qryAux.SQL.Add('    WHERE ID_INSUMO IS NOT NULL AND ID_CADASTRO_FABRICA_RACAO = :ID');
+  qryAux.SQL.Add('  )');
+  qryAux.SQL.Add('WHERE ID = :ID');
+  qryAux.ParamByName('ID').AsString := IDFabricacao;
+  qryAux.ExecSQL;
+end;
+
+procedure Tdmdb.ConectaDBCGPec;
+var
+  Arquivo: String;
+  vVendorLib:string;
+begin
+  FBCon.Connected := false;
+  Arquivo := ExtractFilePath(ParamStr(0))+'ApiConfig.ini';
+  if not FileExists(Arquivo) then
+  begin
+//    ShowMessage('Arquivo ApiConfig.ini não Localizado no seguinte diretorio:'+#13+
+    Arquivo);
+    Exit;
+  end
+  else
+  begin
+    vVendorLib :=ExtractFilePath(ParamStr(0))+'fbclient.dll';
+    FBDriver.VendorLib := vVendorLib;
+    try
+      with FBCon do
+      begin
+       Params.Values['User_name'] :=LerIni(Arquivo,'CGPEC','User','');
+       Params.Values['Password']  :=LerIni(Arquivo,'CGPEC','Password','');
+       Params.Values['Port']      :=LerIni(Arquivo,'CGPEC','Port','');
+       Params.Values['Server']    :=LerIni(Arquivo,'CGPEC','Server','');
+       Params.Values['Database']  :=LerIni(Arquivo,'CGPEC','DB','');
+       Connected := True;
+      end;
+    except
+//      ShowMessage('Ocorreu uma Falha na configuração no Banco Firebird!');
+    end;
+  end;
+end;
+
+function Tdmdb.GetCustoMedioKgInsumo(const IdProduto, IdFazenda,
+  DataBase: string): Double;
+begin
+  Result := 0;
+  with qryAux do
+  begin
+    Close;
+    SQL.Clear;
+    SQL.Add('SELECT');
+    SQL.Add('  IIF(SUM(IIF(TIPO_MOV = ''ENTRADA'', QTDE, QTDE * -1)) <= 0.1, 0,');
+    SQL.Add('    COALESCE(SUM(IIF(TIPO_MOV = ''ENTRADA'', QTDE * VALOR_UNIT, QTDE * -1 * VALOR_UNIT)) /');
+    SQL.Add('    NULLIF(SUM(IIF(TIPO_MOV = ''ENTRADA'', QTDE, QTDE * -1)), 0), 0)) AS CUSTO_MEDIO');
+    SQL.Add('FROM ESTOQUE_MOVIMENTACAO S');
+    SQL.Add('JOIN CADASTRO_INSCRICAO_ESTADUAL IE ON IE.IDINSCRICAO = S.ID_PROPRIETARIO');
+    SQL.Add('JOIN CADASTRO_INSUMOS I ON I.ID = S.ID_PRODUTO');
+    SQL.Add('JOIN CADASTRO_LOCAL_ARMAZEM L ON L.IDLOCALIDADE = S.ID_LOCALESTOQUE');
+    SQL.Add('WHERE S.FLAG_STATUS = ''A''');
+    SQL.Add('  AND L.LOCAL_FISICO = ''P''');
+    SQL.Add('  AND S.ID_PRODUTO = :ID_PRODUTO');
+    SQL.Add('  AND IE.IDFAZENDA = :IDFAZENDA');
+    SQL.Add('  AND S.DATA <= :DATA_BASE');
+
+    ParamByName('ID_PRODUTO').AsString := IdProduto;
+    ParamByName('IDFAZENDA').AsString := IdFazenda;
+    ParamByName('DATA_BASE').AsDate := StrToDateDef(DataBase, Date);
+
+    Open;
+    if not FieldByName('CUSTO_MEDIO').IsNull then
+      Result := FieldByName('CUSTO_MEDIO').AsFloat;
+  end;
+end;
+
+function Tdmdb.LerIni(Diretorio, Chave1, Chave2,
+  ValorPadrao: String): String;
+var
+ FileIni: TIniFile;
+begin
+  result := ValorPadrao;
+  try
+    FileIni := TIniFile.Create(Diretorio);
+    if FileExists(Diretorio) then
+      result := FileIni.ReadString(Chave1, Chave2, ValorPadrao);
+  finally
+    FreeAndNil(FileIni)
+  end;
+end;
+
+end.

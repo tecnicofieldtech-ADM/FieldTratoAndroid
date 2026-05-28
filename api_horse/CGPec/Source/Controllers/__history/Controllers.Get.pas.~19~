@@ -1,0 +1,239 @@
+unit Controllers.Get;
+
+interface
+uses
+  Horse,
+  Horse.Jhonson,
+  Horse.CORS,
+  System.JSON,
+  System.SysUtils;
+
+function RetornaDataFormadata(vData: string): string;
+procedure RegistraRotas;
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetFazendas(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetDietas(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetDietasDetalhes(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetPrevisaoTrato(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetBaias(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetTeste(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+implementation
+
+uses Udm,DataSet.Serialize;
+
+function RetornaDataFormadata(vData: string): string;
+var
+  VAno, vMes, vDia: string;
+begin
+  if vData.Length = 10 then
+  begin
+    VAno := Copy(vData, 0, 4);
+    vMes := Copy(vData, 6, 2);
+    vDia := Copy(vData, 9, 2);
+    Result := vDia + '/' + vMes + '/' + VAno;
+  end
+  else
+    Result := 'Sem Data';
+end;
+
+procedure RegistraRotas;
+begin
+ THorse.Get('/GetTeste',GetTeste);
+ THorse.Get('/usuarios/get/:idfazenda',GetUsuarios);
+ THorse.Get('/dietas/get/:idfazenda',GetDietas);
+ THorse.Get('/dietas_detalhes/get/:idfazenda',GetDietasDetalhes);
+ THorse.Get('/fazenda/get',GetFazendas);
+ THorse.Get('/baias/get/:idfazenda',GetBaias);
+ THorse.Get('/previsao_trato/get/:idfazenda/:dataPrev',GetPrevisaoTrato);
+end;
+
+procedure GetTeste(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+begin
+  try
+   Res.Send(tjsonobject.Create.AddPair('OK ','Sevidor Online')).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+end;
+
+
+
+
+procedure GetBaias(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.BAIAS.Close;
+    dmGlobal.BAIAS.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.BAIAS.Open;
+    Res.Send<TJSONArray>(dmGlobal.BAIAS.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+
+procedure GetPrevisaoTrato(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda,dataPrevStr :string;
+ dataPrev :TDateTime;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dataPrevStr  := RetornaDataFormadata(Req.Params.Items['dataPrev']);
+    idFazenda    := Req.Params.Items['idfazenda'];
+
+    TryStrToDate(dataPrevStr,dataPrev);
+
+    dmGlobal.PREVISAO.Close;
+    dmGlobal.PREVISAO.ParamByName('DATA').AsDate := dataPrev;
+    dmGlobal.PREVISAO.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.PREVISAO.Open;
+    Res.Send<TJSONArray>(dmGlobal.PREVISAO.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+
+procedure GetDietasDetalhes(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.DETALHES_DIETAS.Close;
+    dmGlobal.DETALHES_DIETAS.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.DETALHES_DIETAS.Open;
+    Res.Send<TJSONArray>(dmGlobal.DETALHES_DIETAS.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+procedure GetDietas(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.CADASTRO_DIETAS.Close;
+    dmGlobal.CADASTRO_DIETAS.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.CADASTRO_DIETAS.Open;
+    Res.Send<TJSONArray>(dmGlobal.CADASTRO_DIETAS.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.CADASTRO_USUARIO.Close;
+    dmGlobal.CADASTRO_USUARIO.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.CADASTRO_USUARIO.Open;
+    Res.Send<TJSONArray>(dmGlobal.CADASTRO_USUARIO.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+procedure GetVagao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.CADASTRO_USUARIO.Close;
+    dmGlobal.CADASTRO_USUARIO.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.CADASTRO_USUARIO.Open;
+    Res.Send<TJSONArray>(dmGlobal.CADASTRO_USUARIO.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+procedure GetFazendas(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    dmGlobal.CADASTRO_FAZENDA.Close;
+    dmGlobal.CADASTRO_FAZENDA.Open;
+    Res.Send<TJSONArray>(dmGlobal.CADASTRO_FAZENDA.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+end.

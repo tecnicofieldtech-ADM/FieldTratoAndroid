@@ -1,0 +1,47 @@
+unit Controllers.Usuario;
+
+interface
+uses
+  Horse,
+  Horse.Jhonson,
+  Horse.CORS,
+  System.JSON,
+  System.SysUtils;
+
+procedure RegistraRotas;
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+
+implementation
+
+uses Udm,DataSet.Serialize;
+
+procedure RegistraRotas;
+begin
+ THorse.Get('/usuarios/get/:idfazenda',GetUsuarios);
+end;
+
+procedure GetUsuarios(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+ dmGlobal : TdmDB;
+ idFazenda :string;
+begin
+   try
+   dmGlobal := TdmDB.Create(nil);
+   try
+    idFazenda := Req.Params.Items['idfazenda'];
+    dmGlobal.CADASTRO_USUARIO.Close;
+    dmGlobal.CADASTRO_USUARIO.ParamByName('ID').AsString := idFazenda;
+    dmGlobal.CADASTRO_USUARIO.Open;
+    Res.Send<TJSONArray>(dmGlobal.CADASTRO_USUARIO.ToJSONArray).Status(200);
+   except on ex:exception do
+    begin
+     Res.Send(tjsonobject.Create.AddPair('Erro '+
+     StringReplace(GetCurrentDir,'\\','\',[rfReplaceAll]),ex.Message)).Status(500);
+    end;
+   end;
+  finally
+    FreeAndNil(dmGlobal);
+  end;
+end;
+
+end.

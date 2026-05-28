@@ -1,0 +1,918 @@
+object dmdb: Tdmdb
+  Height = 333
+  Width = 983
+  object FBCon: TFDConnection
+    Params.Strings = (
+      'Password=masterkey'
+      'Database=E:\Projetos\CGPec\db\CGP_4_CPN.FDB'
+      'Port=3055'
+      'DriverID=FB')
+    LoginPrompt = False
+    Left = 32
+    Top = 8
+  end
+  object FBDriver: TFDPhysFBDriverLink
+    Left = 32
+    Top = 64
+  end
+  object CADASTRO_USUARIO: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      
+        'SELECT cu.ID,NOME,USUARIO,SENHA,CC.CARGO  FROM CADASTRO_USUARIO ' +
+        'cu '
+      'JOIN CADASTRO_CARGOS cc ON cu.IDCARGO =cc.ID '
+      'WHERE cu.STATUS ='#39'A'#39' AND cu.ID_FAZENDA =trim(:ID)')
+    Left = 152
+    Top = 8
+    ParamData = <
+      item
+        Name = 'ID'
+        DataType = ftFixedChar
+        ParamType = ptInput
+        Size = 36
+        Value = ''
+      end>
+  end
+  object CADASTRO_FAZENDA: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM CADASTRO_FAZENDAS')
+    Left = 152
+    Top = 64
+    object CADASTRO_FAZENDAIDFAZENDA: TStringField
+      FieldName = 'IDFAZENDA'
+      Origin = 'IDFAZENDA'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object CADASTRO_FAZENDACLIENTE: TStringField
+      FieldName = 'CLIENTE'
+      Origin = 'CLIENTE'
+      Size = 100
+    end
+    object CADASTRO_FAZENDAFAZENDA: TStringField
+      FieldName = 'FAZENDA'
+      Origin = 'FAZENDA'
+      Size = 150
+    end
+    object CADASTRO_FAZENDAIDCIDADE: TIntegerField
+      FieldName = 'IDCIDADE'
+      Origin = 'IDCIDADE'
+    end
+    object CADASTRO_FAZENDALOGOMARCA: TBlobField
+      FieldName = 'LOGOMARCA'
+      Origin = 'LOGOMARCA'
+    end
+    object CADASTRO_FAZENDAROTEIRO: TStringField
+      FieldName = 'ROTEIRO'
+      Origin = 'ROTEIRO'
+      Size = 250
+    end
+    object CADASTRO_FAZENDALATITUDE: TStringField
+      FieldName = 'LATITUDE'
+      Origin = 'LATITUDE'
+      Size = 25
+    end
+    object CADASTRO_FAZENDALONGITUDE: TStringField
+      FieldName = 'LONGITUDE'
+      Origin = 'LONGITUDE'
+      Size = 25
+    end
+    object CADASTRO_FAZENDARASTREADA: TStringField
+      FieldName = 'RASTREADA'
+      Origin = 'RASTREADA'
+      FixedChar = True
+      Size = 1
+    end
+    object CADASTRO_FAZENDATIPOPESSOA: TStringField
+      FieldName = 'TIPOPESSOA'
+      Origin = 'TIPOPESSOA'
+      Size = 10
+    end
+    object CADASTRO_FAZENDACNPJ: TStringField
+      FieldName = 'CNPJ'
+      Origin = 'CNPJ'
+      Size = 25
+    end
+    object CADASTRO_FAZENDACPF: TStringField
+      FieldName = 'CPF'
+      Origin = 'CPF'
+      Size = 25
+    end
+    object CADASTRO_FAZENDAIE: TStringField
+      FieldName = 'IE'
+      Origin = 'IE'
+      Size = 25
+    end
+    object CADASTRO_FAZENDAIM: TStringField
+      FieldName = 'IM'
+      Origin = 'IM'
+      Size = 25
+    end
+    object CADASTRO_FAZENDARAZAO_SOCIAL: TStringField
+      FieldName = 'RAZAO_SOCIAL'
+      Origin = 'RAZAO_SOCIAL'
+      Size = 100
+    end
+    object CADASTRO_FAZENDACEP: TStringField
+      FieldName = 'CEP'
+      Origin = 'CEP'
+      Size = 25
+    end
+    object CADASTRO_FAZENDABAIRRO: TStringField
+      FieldName = 'BAIRRO'
+      Origin = 'BAIRRO'
+      Size = 50
+    end
+    object CADASTRO_FAZENDALOGRADOURO: TStringField
+      FieldName = 'LOGRADOURO'
+      Origin = 'LOGRADOURO'
+      Size = 100
+    end
+    object CADASTRO_FAZENDANUMERO: TStringField
+      FieldName = 'NUMERO'
+      Origin = 'NUMERO'
+      Size = 25
+    end
+    object CADASTRO_FAZENDASALA: TStringField
+      FieldName = 'SALA'
+      Origin = 'SALA'
+      Size = 25
+    end
+    object CADASTRO_FAZENDABLOCO: TStringField
+      FieldName = 'BLOCO'
+      Origin = 'BLOCO'
+      Size = 25
+    end
+    object CADASTRO_FAZENDACOMPLEMENTO: TStringField
+      FieldName = 'COMPLEMENTO'
+      Origin = 'COMPLEMENTO'
+      Size = 100
+    end
+    object CADASTRO_FAZENDATELEFONE_1: TStringField
+      FieldName = 'TELEFONE_1'
+      Origin = 'TELEFONE_1'
+      Size = 25
+    end
+    object CADASTRO_FAZENDADESCR1: TStringField
+      FieldName = 'DESCR1'
+      Origin = 'DESCR1'
+      Size = 50
+    end
+    object CADASTRO_FAZENDAEMAIL1: TStringField
+      FieldName = 'EMAIL1'
+      Origin = 'EMAIL1'
+      Size = 70
+    end
+    object CADASTRO_FAZENDATELEFONE_2: TStringField
+      FieldName = 'TELEFONE_2'
+      Origin = 'TELEFONE_2'
+      Size = 25
+    end
+    object CADASTRO_FAZENDADESCR2: TStringField
+      FieldName = 'DESCR2'
+      Origin = 'DESCR2'
+      Size = 50
+    end
+    object CADASTRO_FAZENDAEMAIL2: TStringField
+      FieldName = 'EMAIL2'
+      Origin = 'EMAIL2'
+      Size = 70
+    end
+    object CADASTRO_FAZENDATELEFONE_3: TStringField
+      FieldName = 'TELEFONE_3'
+      Origin = 'TELEFONE_3'
+      Size = 25
+    end
+    object CADASTRO_FAZENDADESCR3: TStringField
+      FieldName = 'DESCR3'
+      Origin = 'DESCR3'
+      Size = 50
+    end
+    object CADASTRO_FAZENDAEMAIL3: TStringField
+      FieldName = 'EMAIL3'
+      Origin = 'EMAIL3'
+      Size = 70
+    end
+    object CADASTRO_FAZENDATIPO_CUSTO_COMPRA: TStringField
+      FieldName = 'TIPO_CUSTO_COMPRA'
+      Origin = 'TIPO_CUSTO_COMPRA'
+      FixedChar = True
+      Size = 1
+    end
+    object CADASTRO_FAZENDASALDO_FINANCEIRO_INICIAL: TFMTBCDField
+      FieldName = 'SALDO_FINANCEIRO_INICIAL'
+      Origin = 'SALDO_FINANCEIRO_INICIAL'
+      Precision = 18
+      Size = 2
+    end
+    object CADASTRO_FAZENDAPROP_LOGOMARCA_PARCEIRO: TBlobField
+      FieldName = 'PROP_LOGOMARCA_PARCEIRO'
+      Origin = 'PROP_LOGOMARCA_PARCEIRO'
+    end
+    object CADASTRO_FAZENDACUSTO_CAPITAL: TFloatField
+      FieldName = 'CUSTO_CAPITAL'
+      Origin = 'CUSTO_CAPITAL'
+    end
+    object CADASTRO_FAZENDAINCRA: TStringField
+      FieldName = 'INCRA'
+      Origin = 'INCRA'
+      Size = 35
+    end
+    object CADASTRO_FAZENDACOD_ERAS: TStringField
+      FieldName = 'COD_ERAS'
+      Origin = 'COD_ERAS'
+    end
+    object CADASTRO_FAZENDADATA_INICIO_CUSTO: TDateField
+      FieldName = 'DATA_INICIO_CUSTO'
+      Origin = 'DATA_INICIO_CUSTO'
+    end
+    object CADASTRO_FAZENDAIDUNICO: TStringField
+      FieldName = 'IDUNICO'
+      Origin = 'IDUNICO'
+      Size = 50
+    end
+    object CADASTRO_FAZENDAMS_FORNECIMENTO_DIETA: TStringField
+      FieldName = 'MS_FORNECIMENTO_DIETA'
+      Origin = 'MS_FORNECIMENTO_DIETA'
+      FixedChar = True
+      Size = 1
+    end
+    object CADASTRO_FAZENDACONSULTOR_POS_VENDA: TStringField
+      FieldName = 'CONSULTOR_POS_VENDA'
+      Origin = 'CONSULTOR_POS_VENDA'
+      Size = 100
+    end
+    object CADASTRO_FAZENDAID_CLIENTE_SERVIDOR: TStringField
+      FieldName = 'ID_CLIENTE_SERVIDOR'
+      Origin = 'ID_CLIENTE_SERVIDOR'
+      Size = 100
+    end
+    object CADASTRO_FAZENDARATEIO_CONSUMO: TStringField
+      FieldName = 'RATEIO_CONSUMO'
+      Origin = 'RATEIO_CONSUMO'
+      Size = 10
+    end
+  end
+  object CADASTRO_DIETAS: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM CADASTRO_DIETAS cd '
+      'WHERE STATUS = '#39'A'#39
+      'AND ID_FAZENDA =:ID'
+      '')
+    Left = 328
+    Top = 16
+    ParamData = <
+      item
+        Name = 'ID'
+        ParamType = ptInput
+      end>
+    object CADASTRO_DIETASID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object CADASTRO_DIETASID_FAZENDA: TStringField
+      FieldName = 'ID_FAZENDA'
+      Origin = 'ID_FAZENDA'
+      FixedChar = True
+      Size = 36
+    end
+    object CADASTRO_DIETASNOME_DIETA: TStringField
+      FieldName = 'NOME_DIETA'
+      Origin = 'NOME_DIETA'
+      Size = 50
+    end
+    object CADASTRO_DIETASTIPO_DIETA: TStringField
+      FieldName = 'TIPO_DIETA'
+      Origin = 'TIPO_DIETA'
+      Size = 15
+    end
+    object CADASTRO_DIETASSTATUS: TStringField
+      FieldName = 'STATUS'
+      Origin = 'STATUS'
+      FixedChar = True
+      Size = 1
+    end
+    object CADASTRO_DIETASLIBERADO: TStringField
+      FieldName = 'LIBERADO'
+      Origin = 'LIBERADO'
+      FixedChar = True
+      Size = 1
+    end
+    object CADASTRO_DIETASID_USUARIO: TStringField
+      FieldName = 'ID_USUARIO'
+      Origin = 'ID_USUARIO'
+      FixedChar = True
+      Size = 36
+    end
+    object CADASTRO_DIETASMN_TOTAL: TFloatField
+      FieldName = 'MN_TOTAL'
+      Origin = 'MN_TOTAL'
+    end
+    object CADASTRO_DIETASDATA_REGISTRO: TDateField
+      FieldName = 'DATA_REGISTRO'
+      Origin = 'DATA_REGISTRO'
+    end
+    object CADASTRO_DIETASMS_DIETA: TFMTBCDField
+      FieldName = 'MS_DIETA'
+      Origin = 'MS_DIETA'
+      Precision = 18
+      Size = 2
+    end
+  end
+  object DETALHES_DIETAS: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      
+        'SELECT dd.ID, D.ID AS ID_DIETA,D.NOME_DIETA,D.TIPO_DIETA,I.ID ID' +
+        '_INSUMO,I.NOME AS INGREDIENTE,DD.MS_INSUMO,DD.MS_INCLUSAO,DD.MN_' +
+        'PERC, I.ORDEM  '
+      'FROM CADASTRO_DIETAS D'
+      'JOIN DETALHES_DIETAS DD ON DD.ID_DIETA = D.ID'
+      'JOIN CADASTRO_INSUMOS I ON I.ID = DD.ID_INSUMO'
+      'WHERE D.STATUS = '#39'A'#39
+      'AND D.ID_FAZENDA = :ID'
+      'ORDER BY D.ID,I.ORDEM ')
+    Left = 328
+    Top = 88
+    ParamData = <
+      item
+        Name = 'ID'
+        DataType = ftFixedChar
+        ParamType = ptInput
+        Size = 36
+        Value = Null
+      end>
+    object DETALHES_DIETASID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object DETALHES_DIETASID_DIETA: TStringField
+      FieldName = 'ID_DIETA'
+      Origin = 'ID'
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object DETALHES_DIETASID_INSUMO: TStringField
+      FieldName = 'ID_INSUMO'
+      Origin = 'ID_INSUMO'
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object DETALHES_DIETASNOME_DIETA: TStringField
+      FieldName = 'NOME_DIETA'
+      Origin = 'NOME_DIETA'
+      Size = 50
+    end
+    object DETALHES_DIETASTIPO_DIETA: TStringField
+      FieldName = 'TIPO_DIETA'
+      Origin = 'TIPO_DIETA'
+      Size = 15
+    end
+    object DETALHES_DIETASINGREDIENTE: TStringField
+      AutoGenerateValue = arDefault
+      FieldName = 'INGREDIENTE'
+      Origin = 'NOME'
+      ProviderFlags = []
+      ReadOnly = True
+      Size = 80
+    end
+    object DETALHES_DIETASMS_INSUMO: TFloatField
+      AutoGenerateValue = arDefault
+      FieldName = 'MS_INSUMO'
+      Origin = 'MS_INSUMO'
+      ProviderFlags = []
+      ReadOnly = True
+    end
+    object DETALHES_DIETASMS_INCLUSAO: TFloatField
+      AutoGenerateValue = arDefault
+      FieldName = 'MS_INCLUSAO'
+      Origin = 'MS_INCLUSAO'
+      ProviderFlags = []
+      ReadOnly = True
+    end
+    object DETALHES_DIETASMN_PERC: TFloatField
+      AutoGenerateValue = arDefault
+      FieldName = 'MN_PERC'
+      Origin = 'MN_PERC'
+      ProviderFlags = []
+      ReadOnly = True
+    end
+    object DETALHES_DIETASORDEM: TIntegerField
+      AutoGenerateValue = arDefault
+      FieldName = 'ORDEM'
+      Origin = 'ORDEM'
+      ProviderFlags = []
+      ReadOnly = True
+    end
+  end
+  object PREVISAO: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM VW_FORNECIMENTO_RESUMO ')
+    Left = 328
+    Top = 152
+  end
+  object BAIAS: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT '
+      ' DB.ID ID_BAIA, '
+      ' l.ID ID_LOTE,'
+      ' db.NOME_LOCAL,'
+      ' db.LINHA,'
+      ' db.ORDEM_TRATO,'
+      ' DB.RFID,'
+      ' l.ID_FAZENDA  '
+      'FROM CADASTRO_LOTE_ENGORDA L '
+      'JOIN DETALHES_BAIAS DB ON L.ID_LOCALIDADE  = DB.ID'
+      'WHERE L.STATUS = '#39'A'#39' AND L.ID_FAZENDA =:ID'
+      'ORDER BY db.LINHA ,db.ORDEM_TRATO '
+      ''
+      '')
+    Left = 328
+    Top = 216
+    ParamData = <
+      item
+        Name = 'ID'
+        DataType = ftFixedChar
+        ParamType = ptInput
+        Size = 36
+        Value = Null
+      end>
+    object BAIASID_BAIA: TStringField
+      FieldName = 'ID_BAIA'
+      Origin = 'ID_BAIA'
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object BAIASID_LOTE: TStringField
+      FieldName = 'ID_LOTE'
+      Origin = 'ID_LOTE'
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object BAIASNOME_LOCAL: TStringField
+      FieldName = 'NOME_LOCAL'
+      Origin = 'NOME_LOCAL'
+      Size = 30
+    end
+    object BAIASLINHA: TStringField
+      FieldName = 'LINHA'
+      Origin = 'LINHA'
+      Size = 5
+    end
+    object BAIASORDEM_TRATO: TIntegerField
+      FieldName = 'ORDEM_TRATO'
+      Origin = 'ORDEM_TRATO'
+    end
+    object BAIASID_FAZENDA: TStringField
+      FieldName = 'ID_FAZENDA'
+      Origin = 'ID_FAZENDA'
+      FixedChar = True
+      Size = 36
+    end
+    object BAIASRFID: TStringField
+      FieldName = 'RFID'
+      Origin = 'RFID'
+      Size = 100
+    end
+  end
+  object Fabricacao: TFDQuery
+    CachedUpdates = True
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM CADASTRO_FABRICA_RACAO'
+      'WHERE 1=2')
+    Left = 568
+    Top = 32
+    object FabricacaoID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoID_FAZENDA: TStringField
+      FieldName = 'ID_FAZENDA'
+      Origin = 'ID_FAZENDA'
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoID_DIETA: TStringField
+      FieldName = 'ID_DIETA'
+      Origin = 'ID_DIETA'
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoDATA: TDateField
+      FieldName = 'DATA'
+      Origin = '"DATA"'
+    end
+    object FabricacaoDATA_REGISTO: TSQLTimeStampField
+      FieldName = 'DATA_REGISTO'
+      Origin = 'DATA_REGISTO'
+    end
+    object FabricacaoID_USUARIO: TStringField
+      FieldName = 'ID_USUARIO'
+      Origin = 'ID_USUARIO'
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoID_OPERADOR: TStringField
+      FieldName = 'ID_OPERADOR'
+      Origin = 'ID_OPERADOR'
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoID_VAGAO: TStringField
+      FieldName = 'ID_VAGAO'
+      Origin = 'ID_VAGAO'
+      FixedChar = True
+      Size = 36
+    end
+    object FabricacaoQTDE_PREVISTA: TFMTBCDField
+      FieldName = 'QTDE_PREVISTA'
+      Origin = 'QTDE_PREVISTA'
+      Precision = 18
+      Size = 2
+    end
+    object FabricacaoGRAVADO: TStringField
+      FieldName = 'GRAVADO'
+      Origin = 'GRAVADO'
+      FixedChar = True
+      Size = 1
+    end
+    object FabricacaoMS_PREVISTA: TFMTBCDField
+      FieldName = 'MS_PREVISTA'
+      Origin = 'MS_PREVISTA'
+      Precision = 18
+      Size = 2
+    end
+    object FabricacaoSTATUS_ATUAL: TStringField
+      FieldName = 'STATUS_ATUAL'
+      Origin = 'STATUS_ATUAL'
+      Size = 10
+    end
+    object FabricacaoFLAG_SYNC_SERVER: TStringField
+      FieldName = 'FLAG_SYNC_SERVER'
+      Origin = 'FLAG_SYNC_SERVER'
+      FixedChar = True
+      Size = 1
+    end
+    object FabricacaoCUSTO_KG_DIETA: TFloatField
+      FieldName = 'CUSTO_KG_DIETA'
+      Origin = 'CUSTO_KG_DIETA'
+    end
+    object FabricacaoMS_BATIDA: TFloatField
+      FieldName = 'MS_BATIDA'
+      Origin = 'MS_BATIDA'
+    end
+    object FabricacaoQTDE_REALIZADA: TFloatField
+      FieldName = 'QTDE_REALIZADA'
+      Origin = 'QTDE_REALIZADA'
+    end
+  end
+  object Fabricacao_Insumos: TFDQuery
+    CachedUpdates = True
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM  DETALHES_FABRICA_RACAO '
+      'WHERE 1=2')
+    Left = 568
+    Top = 96
+    object Fabricacao_InsumosID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+    object Fabricacao_InsumosID_CADASTRO_FABRICA_RACAO: TStringField
+      FieldName = 'ID_CADASTRO_FABRICA_RACAO'
+      Origin = 'ID_CADASTRO_FABRICA_RACAO'
+      FixedChar = True
+      Size = 36
+    end
+    object Fabricacao_InsumosID_INSUMO: TStringField
+      FieldName = 'ID_INSUMO'
+      Origin = 'ID_INSUMO'
+      FixedChar = True
+      Size = 36
+    end
+    object Fabricacao_InsumosQTDE_PREVISTA: TFMTBCDField
+      FieldName = 'QTDE_PREVISTA'
+      Origin = 'QTDE_PREVISTA'
+      Precision = 18
+      Size = 2
+    end
+    object Fabricacao_InsumosQTDE_REALIZADA: TFMTBCDField
+      FieldName = 'QTDE_REALIZADA'
+      Origin = 'QTDE_REALIZADA'
+      Precision = 18
+      Size = 2
+    end
+    object Fabricacao_InsumosDATA_REGISTRO: TSQLTimeStampField
+      FieldName = 'DATA_REGISTRO'
+      Origin = 'DATA_REGISTRO'
+    end
+    object Fabricacao_InsumosID_OPERADOR: TStringField
+      FieldName = 'ID_OPERADOR'
+      Origin = 'ID_OPERADOR'
+      FixedChar = True
+      Size = 36
+    end
+    object Fabricacao_InsumosGRAVADO: TStringField
+      FieldName = 'GRAVADO'
+      Origin = 'GRAVADO'
+      FixedChar = True
+      Size = 1
+    end
+    object Fabricacao_InsumosMS_INSUMO: TFMTBCDField
+      FieldName = 'MS_INSUMO'
+      Origin = 'MS_INSUMO'
+      Precision = 18
+      Size = 2
+    end
+    object Fabricacao_InsumosDIF_KG: TFMTBCDField
+      FieldName = 'DIF_KG'
+      Origin = 'DIF_KG'
+      Precision = 18
+      Size = 2
+    end
+    object Fabricacao_InsumosDIF_PER: TFloatField
+      FieldName = 'DIF_PER'
+      Origin = 'DIF_PER'
+    end
+    object Fabricacao_InsumosCUSTO_KG: TFloatField
+      FieldName = 'CUSTO_KG'
+      Origin = 'CUSTO_KG'
+    end
+  end
+  object Fornecimento: TFDQuery
+    CachedUpdates = True
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT * FROM  CADASTRO_FORNECIMENTO  '
+      'WHERE ID=:ID')
+    Left = 576
+    Top = 160
+    ParamData = <
+      item
+        Name = 'ID'
+        DataType = ftString
+        ParamType = ptInput
+        Value = Null
+      end>
+    object FornecimentoID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoDATA: TDateField
+      FieldName = 'DATA'
+      Origin = '"DATA"'
+    end
+    object FornecimentoDATA_REGISTRO: TSQLTimeStampField
+      FieldName = 'DATA_REGISTRO'
+      Origin = 'DATA_REGISTRO'
+    end
+    object FornecimentoID_USUARIO: TStringField
+      FieldName = 'ID_USUARIO'
+      Origin = 'ID_USUARIO'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoID_LOTE: TStringField
+      FieldName = 'ID_LOTE'
+      Origin = 'ID_LOTE'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoTRATO: TIntegerField
+      FieldName = 'TRATO'
+      Origin = 'TRATO'
+    end
+    object FornecimentoID_DIETA: TStringField
+      FieldName = 'ID_DIETA'
+      Origin = 'ID_DIETA'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoQTDE_CAB: TIntegerField
+      FieldName = 'QTDE_CAB'
+      Origin = 'QTDE_CAB'
+    end
+    object FornecimentoPESO_MEDIO: TFMTBCDField
+      FieldName = 'PESO_MEDIO'
+      Origin = 'PESO_MEDIO'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoMS_DIETA_PREVISTA: TFMTBCDField
+      FieldName = 'MS_DIETA_PREVISTA'
+      Origin = 'MS_DIETA_PREVISTA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoMS_DIETA_REALIZADA: TFMTBCDField
+      FieldName = 'MS_DIETA_REALIZADA'
+      Origin = 'MS_DIETA_REALIZADA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoPREVISTO_LEITURA: TFMTBCDField
+      FieldName = 'PREVISTO_LEITURA'
+      Origin = 'PREVISTO_LEITURA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoPREVISTO: TFMTBCDField
+      FieldName = 'PREVISTO'
+      Origin = 'PREVISTO'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoREALIZADO: TFMTBCDField
+      FieldName = 'REALIZADO'
+      Origin = 'REALIZADO'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoSTATUS: TStringField
+      FieldName = 'STATUS'
+      Origin = 'STATUS'
+      FixedChar = True
+      Size = 1
+    end
+    object FornecimentoMOTORISTA: TStringField
+      FieldName = 'MOTORISTA'
+      Origin = 'MOTORISTA'
+      Size = 80
+    end
+    object FornecimentoID_FABRICACAO: TStringField
+      FieldName = 'ID_FABRICACAO'
+      Origin = 'ID_FABRICACAO'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoID_BAIA: TStringField
+      FieldName = 'ID_BAIA'
+      Origin = 'ID_BAIA'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoDIF_KG: TFMTBCDField
+      FieldName = 'DIF_KG'
+      Origin = 'DIF_KG'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoDIF_PERC: TFMTBCDField
+      FieldName = 'DIF_PERC'
+      Origin = 'DIF_PERC'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoPREV_MS_CONSUMIDA: TFMTBCDField
+      FieldName = 'PREV_MS_CONSUMIDA'
+      Origin = 'PREV_MS_CONSUMIDA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoREAL_MS_CONSUMIDA: TFMTBCDField
+      FieldName = 'REAL_MS_CONSUMIDA'
+      Origin = 'REAL_MS_CONSUMIDA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoDIF_MS_CONSUMIDA: TFMTBCDField
+      FieldName = 'DIF_MS_CONSUMIDA'
+      Origin = 'DIF_MS_CONSUMIDA'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoDIF_PERC_MS: TFMTBCDField
+      FieldName = 'DIF_PERC_MS'
+      Origin = 'DIF_PERC_MS'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoDATA_LANCAMENTO: TSQLTimeStampField
+      FieldName = 'DATA_LANCAMENTO'
+      Origin = 'DATA_LANCAMENTO'
+    end
+    object FornecimentoID_USUARIO_LANCAMENTO: TStringField
+      FieldName = 'ID_USUARIO_LANCAMENTO'
+      Origin = 'ID_USUARIO_LANCAMENTO'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoID_LEITURA: TStringField
+      FieldName = 'ID_LEITURA'
+      Origin = 'ID_LEITURA'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoFLAG_GRAVADO: TStringField
+      FieldName = 'FLAG_GRAVADO'
+      Origin = 'FLAG_GRAVADO'
+      FixedChar = True
+      Size = 1
+    end
+    object FornecimentoID_TRATADOR: TStringField
+      FieldName = 'ID_TRATADOR'
+      Origin = 'ID_TRATADOR'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoID_DIETA_REALIZADA: TStringField
+      FieldName = 'ID_DIETA_REALIZADA'
+      Origin = 'ID_DIETA_REALIZADA'
+      FixedChar = True
+      Size = 36
+    end
+    object FornecimentoFORN_RATEIO: TFMTBCDField
+      FieldName = 'FORN_RATEIO'
+      Origin = 'FORN_RATEIO'
+      Precision = 18
+      Size = 2
+    end
+    object FornecimentoFORN_TOTAL: TBCDField
+      FieldName = 'FORN_TOTAL'
+      Origin = 'FORN_TOTAL'
+      Precision = 18
+    end
+    object FornecimentoTOTAL_MS_CONSUMIDA: TBCDField
+      FieldName = 'TOTAL_MS_CONSUMIDA'
+      Origin = 'TOTAL_MS_CONSUMIDA'
+      Precision = 18
+    end
+    object FornecimentoPREVISTO_CAB: TBCDField
+      FieldName = 'PREVISTO_CAB'
+      Origin = 'PREVISTO_CAB'
+      Precision = 18
+    end
+    object FornecimentoREALIZADO_CAB: TBCDField
+      FieldName = 'REALIZADO_CAB'
+      Origin = 'REALIZADO_CAB'
+      Precision = 18
+    end
+    object FornecimentoMS_PREVISTA: TFloatField
+      FieldName = 'MS_PREVISTA'
+      Origin = 'MS_PREVISTA'
+    end
+    object FornecimentoFLAG_SYNC_SERVER: TStringField
+      FieldName = 'FLAG_SYNC_SERVER'
+      Origin = 'FLAG_SYNC_SERVER'
+      FixedChar = True
+      Size = 1
+    end
+  end
+  object Vagao: TFDQuery
+    Connection = FBCon
+    SQL.Strings = (
+      'SELECT  NOME ,ID FROM CADASTRO_INSUMOS ci '
+      'WHERE STATUS ='#39'A'#39' AND GRUPO LIKE '#39'%MAQUIN%'#39)
+    Left = 744
+    Top = 144
+    object VagaoNOME: TStringField
+      FieldName = 'NOME'
+      Origin = 'NOME'
+      Size = 80
+    end
+    object VagaoID: TStringField
+      FieldName = 'ID'
+      Origin = 'ID'
+      ProviderFlags = [pfInUpdate, pfInWhere, pfInKey]
+      Required = True
+      FixedChar = True
+      Size = 36
+    end
+  end
+  object qryAux: TFDQuery
+    Connection = FBCon
+    Left = 120
+    Top = 208
+  end
+end

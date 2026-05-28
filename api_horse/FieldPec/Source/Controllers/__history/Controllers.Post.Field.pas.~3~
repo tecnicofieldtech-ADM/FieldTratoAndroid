@@ -1,0 +1,776 @@
+﻿unit Controllers.Post.Field;
+
+interface
+uses
+  Horse,
+  Horse.Jhonson,
+  Horse.CORS,
+  System.JSON,
+  System.SysUtils,
+  System.Classes, System.IOUtils, System.DateUtils, System.Hash,
+  System.AnsiStrings,FireDAC.Comp.Client;
+
+  procedure LimpaJSONObject(JSON: TJSONObject);
+  procedure RegistraRotas;
+  procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostGravaTag(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
+  procedure UploadLog(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+implementation
+
+uses Udm;
+
+procedure LimpaJSONObject(JSON: TJSONObject);
+begin
+  while JSON.Count > 0 do
+    JSON.RemovePair(JSON.Pairs[0].JsonString.Value);
+end;
+
+procedure UploadLog(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+var
+  DeviceId, DateYMD, CT: string;
+  SaveBase, SaveDir, SaveName, SavePath: string;
+  SizeHdr: Int64;
+  InS: TStream;
+  BodyStr: string;
+  BytesUtf8, EOL: TBytes;
+  AppendedBytes: Int64;
+  J: TJSONObject;
+
+  function GetLogBaseDir: string;
+  var
+    Env: string;
+  begin
+    // 1) Override por variável de ambiente (configure no serviço): RFEED_LOG_DIR
+    Env := GetEnvironmentVariable('RFEED_LOG_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    // 2) Padrão: %PROGRAMDATA%\RFeed\logs
+    // Obs: PROGRAMDATA normalmente é C:\ProgramData (gravação permitida)
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'logs');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+    begin
+      try
+        ForceDirectories(P);
+      except
+        on E: Exception do
+        begin
+          raise Exception.CreateFmt('Não foi possível criar a pasta "%s". Erro: %s', [P, E.Message]);
+        end;
+      end;
+    end;
+  end;
+
+  procedure AppendBytesToFileUtf8(const FileName: string; const Data: TBytes);
+  var
+    FS: TFileStream;
+    NeedEOL: Boolean;
+  begin
+    // Abre para append; permite leitura por outros processos
+    if TFile.Exists(FileName) then
+      FS := TFileStream.Create(FileName, fmOpenReadWrite or fmShareDenyNone)
+    else
+      FS := TFileStream.Create(FileName, fmCreate or fmShareDenyNone);
+    try
+      FS.Seek(0, soEnd);
+
+      // Se já existe conteúdo e o novo bloco não começa com EOL, escreva EOL antes (em UTF-8)
+      NeedEOL := (FS.Size > 0) and (Length(Data) > 0);
+      if NeedEOL then
+      begin
+        // Escreve CRLF em UTF-8
+        EOL := TEncoding.UTF8.GetBytes(sLineBreak);
+        FS.WriteBuffer(EOL[0], Length(EOL));
+      end;
+
+      if Length(Data) > 0 then
+        FS.WriteBuffer(Data[0], Length(Data));
+    finally
+      FS.Free;
+    end;
+  end;
+
+begin
+  try
+    // Identificação
+    DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'unknown';
+
+    DateYMD := Req.Query.Items['date'];
+    if DateYMD = '' then
+      DateYMD := FormatDateTime('yyyymmdd', Date);
+
+    // Limite por Content-Length (se presente)
+    SizeHdr := StrToInt64Def(Req.Headers['content-length'], -1);
+    if (MAX_SIZE_BYTES > 0) and (SizeHdr > MAX_SIZE_BYTES) then
+    begin
+      Res.Status(413).Send<TJSONObject>(TJSONObject.Create.AddPair('erro', 'arquivo muito grande'));
+      Exit;
+    end;
+
+    // Content-Type: recusa binário/zip; queremos texto simples
+    CT := LowerCase(Req.ContentType);
+    if (Pos('zip', CT) > 0) or (Pos('octet-stream', CT) > 0) then
+    begin
+      Res.Status(415).Send<TJSONObject>(TJSONObject.Create.AddPair('erro', 'content-type binário não suportado'));
+      Exit;
+    end;
+
+    // Base segura para serviço
+    SaveBase := GetLogBaseDir;                        // %PROGRAMDATA%\RFeed\logs\  (ou override)
+    SaveDir  := TPath.Combine(SaveBase, DateYMD);
+    SaveDir  := TPath.Combine(SaveDir, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fornecimento_' + DateYMD + '.txt';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    AppendedBytes := 0;
+
+    // 1) Tenta corpo como stream (quando disponível)
+    InS := Req.Body<TStream>;
+    if (InS <> nil) and (InS.Size > 0) then
+    begin
+      InS.Position := 0;
+      SetLength(BytesUtf8, InS.Size);
+      InS.ReadBuffer(BytesUtf8[0], InS.Size);
+      AppendBytesToFileUtf8(SavePath, BytesUtf8);
+      AppendedBytes := Length(BytesUtf8);
+    end
+    else
+    begin
+      // 2) Fallback: corpo como texto (jsonl/linhas)
+      BodyStr := Req.Body;
+      if BodyStr = '' then
+      begin
+        Res.Status(400).Send<TJSONObject>(TJSONObject.Create.AddPair('erro', 'corpo vazio'));
+        Exit;
+      end;
+
+      // Normaliza quebras de linha e garante UTF-8
+      BodyStr := StringReplace(BodyStr, #13#10, #10, [rfReplaceAll]);
+      BodyStr := StringReplace(BodyStr, #13,    #10, [rfReplaceAll]);
+      BodyStr := StringReplace(BodyStr, #10, sLineBreak, [rfReplaceAll]);
+
+      BytesUtf8 := TEncoding.UTF8.GetBytes(BodyStr);
+      if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      begin
+        Res.Status(413).Send<TJSONObject>(TJSONObject.Create.AddPair('erro', 'arquivo muito grande'));
+        Exit;
+      end;
+
+      AppendBytesToFileUtf8(SavePath, BytesUtf8);
+      AppendedBytes := Length(BytesUtf8);
+    end;
+
+    // Resposta OK
+    J := TJSONObject.Create;
+    J.AddPair('ok', TJSONBool.Create(True));
+    J.AddPair('device_id', DeviceId);
+    J.AddPair('date', DateYMD);
+    J.AddPair('filename', SaveName);
+    J.AddPair('saved_path', SavePath);
+    J.AddPair('appended_bytes', TJSONNumber.Create(AppendedBytes));
+    Res.Status(200).Send<TJSONObject>(J);
+
+  except
+    on E: Exception do
+      Res.Status(500).Send<TJSONObject>(
+        TJSONObject.Create.AddPair('erro',
+          Format('%s: %s (base=%s)',
+                 [E.ClassName, E.Message, GetLogBaseDir]))
+      );
+  end;
+end;
+
+
+procedure RegistraRotas;
+begin
+  THorse.Post('/Post/Fornecimento',PostFornecimento);
+  THorse.Post('/Post/Fabricacao',PostFabricacao);
+  THorse.Post('/Post/Fabricacao_Insumo',PostFabricacaoInsumos);
+  THorse.Put('/logs/upload/:device', UploadLog);
+  THorse.Post('/Post/GravaTag', PostGravaTag);
+end;
+
+function NormalizeEPC(const S: string): string;
+var
+  R: string;
+begin
+  R := Trim(S);
+  if (R <> '') and (R[1] = ';') then
+    Delete(R, 1, 1);
+  if SameText(Copy(R, 1, 4), 'EPC:') then
+    Delete(R, 1, 4);
+  R := StringReplace(R, ' ', '', [rfReplaceAll]);
+  Result := UpperCase(R);
+end;
+
+function ExtractStr(const Obj: TJSONObject; const A: array of string): string;
+var
+  k: string;
+begin
+  Result := '';
+  for k in A do
+    if not Obj.TryGetValue<string>(k, Result) then
+      Result := '';
+    if Result <> '' then Exit;
+end;
+
+procedure UpdateRFID(dm: Tdmdb; const IdBaia, EPC: string; var Rows: Integer);
+var
+  Q: TFDQuery;
+  vErro:string;
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := dm.FBCon;
+    Q.SQL.Text := 'UPDATE DETALHES_BAIAS SET RFID = '''' WHERE RFID = :RFID';
+    Q.ParamByName('RFID').AsString := EPC;
+    Q.ExecSQL;
+
+    Q.Connection := dm.FBCon;
+    Q.SQL.Text := 'UPDATE DETALHES_BAIAS SET RFID = :RFID WHERE ID = :ID';
+    Q.ParamByName('RFID').AsString := EPC;
+    Q.ParamByName('ID').AsString   := IdBaia;
+    Q.ExecSQL;
+    Rows := Q.RowsAffected;
+    Q.Free;
+  except
+    on E: Exception do
+     vErro := e.Message;
+  end;
+end;
+
+function ExtractStrCI(const Obj: TJSONObject; const Keys: array of string): string;
+var
+  Pair: TJSONPair;
+  k: string;
+begin
+  Result := '';
+  for k in Keys do
+    for Pair in Obj do
+      if SameText(Pair.JsonString.Value, k) then
+      begin
+        // pega o valor como string (funciona para string/number/bool)
+        Result := Pair.JsonValue.Value;
+        Exit;
+      end;
+end;
+
+procedure ProcessOne(dm: Tdmdb; const Obj: TJSONObject; ArrResult: TJSONArray);
+var
+  vId, vEpc, err: string;
+  rows: Integer;
+  o: TJSONObject;
+begin
+  // pega id (id_baia ou id)
+  vId  := ExtractStrCI(Obj, ['ID_PASTO_CURRAL', 'id_baia', 'id']);
+  // pega tag (rfid, tag, epc)
+  vEpc := ExtractStrCI(Obj, ['TAG', 'rfid', 'epc', 'tag']);
+
+  o := TJSONObject.Create;
+  try
+    if vId = '' then
+      err := 'Campo id/id_baia ausente'
+    else if vEpc = '' then
+      err := 'Campo rfid/tag/epc ausente'
+    else
+      vEpc := NormalizeEPC(vEpc);
+
+    if err = '' then
+    begin
+      rows := 0;
+      UpdateRFID(dm, vId, vEpc, rows);
+      o.AddPair('id', vId);
+      o.AddPair('rfid', vEpc);
+      o.AddPair('updated', TJSONNumber.Create(rows));
+      if rows = 0 then
+        o.AddPair('warn', 'ID não encontrado ou sem alteração');
+    end
+    else
+    begin
+      o.AddPair('error', err);
+      if vId <> '' then o.AddPair('id', vId);
+    end;
+
+    ArrResult.AddElement(o); // transfere propriedade
+  except
+    o.Free;
+    raise;
+  end;
+end;
+
+procedure PostGravaTag(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: Tdmdb;
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Q: TFDQuery;
+  vIdBaia, vTag: string;
+
+  function NormalizeEPC(const S: string): string;
+  var
+    R: string;
+  begin
+    R := Trim(S);
+    if (R <> '') and (R[1] = ';') then
+      Delete(R, 1, 1);
+    if SameText(Copy(R, 1, 4), 'EPC:') then
+      Delete(R, 1, 4);
+    R := StringReplace(R, ' ', '', [rfReplaceAll]);
+    Result := UpperCase(R);
+  end;
+
+begin
+  dmGlobal := nil;
+  Body := nil;
+  JSONResult := nil;
+  Q := nil;
+
+  try
+    dmGlobal := Tdmdb.Create(nil);
+    dmGlobal.ConectaDBCGPec;
+
+    JSONResult := TJSONObject.Create;
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON inválido ou corpo vazio');
+
+    // lê campos do JSON no padrão solicitado
+    Body.TryGetValue<string>('ID_PASTO_CURRAL', vIdBaia);
+    Body.TryGetValue<string>('TAG', vTag);
+
+    if (vIdBaia.Trim = '') then
+      raise Exception.Create('ID_PASTO_CURRAL ausente');
+    if (vTag.Trim = '') then
+      raise Exception.Create('TAG ausente');
+
+    vTag := NormalizeEPC(vTag);
+
+    // UPDATE simples na tabela
+    Q := TFDQuery.Create(nil);
+    Q.Connection := dmGlobal.FBCon;
+
+    Q.SQL.Text := 'UPDATE DETALHES_BAIAS SET RFID = NULL WHERE RFID = :RFID';
+    Q.ParamByName('RFID').AsString := vTag;
+    Q.ExecSQL;
+
+
+    Q.SQL.Text := 'UPDATE DETALHES_BAIAS SET RFID = :RFID WHERE ID = :ID';
+    Q.ParamByName('RFID').AsString := vTag;
+    Q.ParamByName('ID').AsString   := vIdBaia;
+    Q.ExecSQL;
+
+    // resposta no mesmo padrão dos outros métodos
+    JSONResult.AddPair('id', vIdBaia);
+    JSONResult.AddPair('tag', vTag);
+    JSONResult.AddPair('updated', TJSONNumber.Create(Q.RowsAffected));
+    Res.Send(JSONResult).Status(200);
+
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+
+      JSONResult.AddPair('erro', 'Erro: ' + E.ClassName + ' - ' + E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+
+  Q.Free;
+  // Body é gerenciado pelo Horse
+  dmGlobal.Free;
+end;
+
+
+function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
+begin
+  Result := JSON.TryGetValue<string>(NomeCampo, Valor) and (Valor.Trim <> '');
+end;
+
+//procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+//var
+//  dmGlobal: Tdmdb;
+//  Body: TJSONObject;
+//  JSONResult: TJSONObject;
+//  vMaxId, vIdFabricacao, vIdUsuario, vIdTratador, vIdDieta, vRealizado, vMS: string;
+//begin
+//  dmGlobal := nil;
+//  Body := nil;
+//  JSONResult := nil;
+//
+//  try
+//    dmGlobal := Tdmdb.Create(nil);
+//    dmGlobal.ConectaDBCGPec;
+//
+//    JSONResult := TJSONObject.Create;
+//    Body := Req.Body<TJSONObject>;
+//    if not Assigned(Body) then
+//      raise Exception.Create('JSON inválido ou corpo vazio');
+//
+//    if  Body.TryGetValue<string>('id', vMaxId) or (vMaxId.Trim = '') then
+//    begin
+//      Body.TryGetValue<string>('id_fabricacao', vIdFabricacao);
+//      Body.TryGetValue<string>('id_usuario_lancamento', vIdUsuario);
+//      Body.TryGetValue<string>('id_tratador', vIdTratador);
+//      Body.TryGetValue<string>('id_dieta_realizada', vIdDieta);
+//      Body.TryGetValue<string>('realizado', vRealizado);
+//      Body.TryGetValue<string>('ms_dieta_realizada', vMS);
+//
+//      // Defaults
+//      if vIdFabricacao = '' then vIdFabricacao := '0';
+//      if vIdUsuario = '' then vIdUsuario := '0';
+//      if vIdTratador = '' then vIdTratador := '0';
+//      if vIdDieta = '' then vIdDieta := '0';
+//      if vRealizado = '' then vRealizado := '0';
+//      if vMS = '' then vMS := '0';
+//
+//      dmGlobal.ConectaDBCGPec;
+//      dmGlobal.Fornecimento.Connection := dmGlobal.FBCon;
+//
+//      with dmGlobal.Fornecimento do
+//      begin
+//        Close;
+//        SQL.Text := 'SELECT * FROM CADASTRO_FORNECIMENTO WHERE ID = :ID';
+//        ParamByName('ID').AsString := vMaxId;
+//        Open;
+//
+//        if NOT IsEmpty then
+//        BEGIN
+//          Edit;
+//          FieldByName('ID_FABRICACAO').AsString         := vIdFabricacao;
+//          FieldByName('ID_USUARIO_LANCAMENTO').AsString := vIdUsuario;
+//          FieldByName('ID_TRATADOR').AsString           := vIdTratador;
+//          FieldByName('ID_DIETA_REALIZADA').AsString    := vIdDieta;
+//          FieldByName('REALIZADO').AsFloat              := StrToFloatDef(vRealizado, 0);
+//          FieldByName('MS_DIETA_REALIZADA').AsFloat     := StrToFloatDef(vMS, 0);
+//          FieldByName('STATUS').AsString                := 'R';
+//          Post;
+//          ApplyUpdates;
+//        END;
+//      end;
+//    end;
+//    JSONResult.AddPair('id', vMaxId);
+//    Res.Send(JSONResult).Status(200);
+//
+//  except
+//    on E: Exception do
+//    begin
+//      if not Assigned(JSONResult) then
+//        JSONResult := TJSONObject.Create;
+//
+//      JSONResult.AddPair('erro', 'Erro: ' + E.ClassName + ' - ' + E.Message);
+//      Res.Send(JSONResult).Status(500);
+//    end;
+//  end;
+//end;
+
+procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: Tdmdb;
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+
+  vId: string;
+  vIdFabricacao, vIdUsuario, vIdTratador, vIdDietaRealizada, vRealizado, vMS: string;
+
+  // chave natural
+  vIdBaia, vIdRacaoPrev, vTratoStr, vDataISO: string;
+  vTrato: Integer;
+  vData: TDateTime;
+
+  function GetStr(const K: string; const Def: string = ''): string;
+  begin
+    if not Body.TryGetValue<string>(K, Result) then
+      Result := Def;
+    Result := Result.Trim;
+    if Result = '' then Result := Def;
+  end;
+
+begin
+  dmGlobal := nil;
+  Body := nil;
+  JSONResult := nil;
+
+  try
+    dmGlobal := Tdmdb.Create(nil);
+    dmGlobal.ConectaDBCGPec;
+
+    JSONResult := TJSONObject.Create;
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON inválido ou corpo vazio');
+
+    // ======== campos de update ========
+    vId              := GetStr('id', '');
+    vIdFabricacao    := GetStr('id_fabricacao', '0');
+    vIdUsuario       := GetStr('id_usuario_lancamento', '0');
+    vIdTratador      := GetStr('id_tratador', '0');
+    vIdDietaRealizada:= GetStr('id_dieta_realizada', '0');
+    vRealizado       := GetStr('realizado', '0');
+    vMS              := GetStr('ms_dieta_realizada', '0');
+
+    // ======== chave natural (fallback) ========
+    // o app deve mandar esses quando estiver offline/replicado
+    vIdBaia     := GetStr('id_baia', '');
+    vIdRacaoPrev:= GetStr('id_racao', '');  // ou id_dieta_prevista (recomendo mandar com esse nome claro)
+    vTratoStr   := GetStr('trato', '0');
+    vDataISO    := GetStr('data', '');      // "yyyy-mm-dd"
+
+    vTrato := StrToIntDef(vTratoStr, 0);
+
+    // parse da data ISO
+    if vDataISO <> '' then
+    begin
+      try
+        vData := ISO8601ToDate(vDataISO, True); // aceita sem hora
+      except
+        vData := 0;
+      end;
+    end
+    else
+      vData := 0;
+
+    dmGlobal.Fornecimento.Connection := dmGlobal.FBCon;
+
+    // 1) tenta atualizar por ID (quando vier id real)
+    if vId <> '' then
+    begin
+      with dmGlobal.Fornecimento do
+      begin
+        Close;
+        SQL.Text := 'SELECT * FROM CADASTRO_FORNECIMENTO WHERE ID = :ID';
+        ParamByName('ID').AsString := vId;
+        Open;
+
+        if IsEmpty then
+          raise Exception.Create('Registro não encontrado pelo ID informado: ' + vId);
+
+        Edit;
+        FieldByName('ID_FABRICACAO').AsString         := vIdFabricacao;
+        FieldByName('ID_USUARIO_LANCAMENTO').AsString := vIdUsuario;
+        FieldByName('ID_TRATADOR').AsString           := vIdTratador;
+        FieldByName('ID_DIETA_REALIZADA').AsString    := vIdDietaRealizada;
+        FieldByName('REALIZADO').AsFloat              := StrToFloatDef(vRealizado, 0);
+        FieldByName('MS_DIETA_REALIZADA').AsFloat     := StrToFloatDef(vMS, 0);
+        FieldByName('STATUS').AsString                := 'R';
+        Post;
+        ApplyUpdates;
+      end;
+
+      JSONResult.AddPair('id', vId);
+      JSONResult.AddPair('modo', 'update_por_id');
+      Res.Send(JSONResult).Status(200);
+      Exit;
+    end;
+
+    // 2) fallback: atualizar por chave natural (offline/replicado)
+    if (vIdBaia = '') or (vIdRacaoPrev = '') or (vTrato <= 0) or (vData = 0) then
+      raise Exception.Create('Sem ID e chave natural incompleta. Envie: id_baia, id_racao, trato, data.');
+
+    // Aqui eu recomendo atualizar via SQL direto e retornar o ID real encontrado
+    // ⚠️ Ajuste o campo ID_DIETA_PREVISTA para o nome correto do seu banco se for diferente
+    with dmGlobal.qryAux do
+    begin
+      Close;
+      SQL.Clear;
+      SQL.Add('UPDATE CADASTRO_FORNECIMENTO');
+      SQL.Add('SET');
+      SQL.Add('  ID_FABRICACAO = :ID_FAB,');
+      SQL.Add('  ID_USUARIO_LANCAMENTO = :ID_USU,');
+      SQL.Add('  ID_TRATADOR = :ID_TRAT,');
+      SQL.Add('  ID_DIETA_REALIZADA = :ID_DIETA_R,');
+      SQL.Add('  REALIZADO = :REAL,');
+      SQL.Add('  MS_DIETA_REALIZADA = :MS,');
+      SQL.Add('  STATUS = ''R''');
+      SQL.Add('WHERE');
+      SQL.Add('  ID_BAIA = :ID_BAIA');
+      SQL.Add('  AND TRATO = :TRATO');
+      SQL.Add('  AND DATA = :DATA');
+      SQL.Add('  AND ID_DIETA_PREVISTA = :ID_RACAO'); // <-- ajuste se necessário
+      SQL.Add('RETURNING ID');
+
+      ParamByName('ID_FAB').AsString     := vIdFabricacao;
+      ParamByName('ID_USU').AsString     := vIdUsuario;
+      ParamByName('ID_TRAT').AsString    := vIdTratador;
+      ParamByName('ID_DIETA_R').AsString := vIdDietaRealizada;
+      ParamByName('REAL').AsFloat        := StrToFloatDef(vRealizado, 0);
+      ParamByName('MS').AsFloat          := StrToFloatDef(vMS, 0);
+
+      ParamByName('ID_BAIA').AsString := vIdBaia;
+      ParamByName('TRATO').AsInteger := vTrato;
+      ParamByName('DATA').AsDate     := vData;
+      ParamByName('ID_RACAO').AsString := vIdRacaoPrev;
+
+      Open; // por causa do RETURNING
+
+      if IsEmpty then
+        raise Exception.Create('Nenhum registro encontrado para (baia+racao+trato+data).');
+
+      vId := FieldByName('ID').AsString;
+      Close;
+    end;
+
+    JSONResult.AddPair('id', vId);
+    JSONResult.AddPair('modo', 'update_por_chave_natural');
+    Res.Send(JSONResult).Status(200);
+
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+
+      JSONResult.AddPair('erro', 'Erro: ' + E.ClassName + ' - ' + E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
+
+
+procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Body: TJSONObject;
+  ItensArray: TJSONArray;
+  Item: TJSONObject;
+  i: Integer;
+  vValorkg: string;
+  vValorkgFloat,vDifPercent,vDif,vKGPrevista,vKGRealizado: Double;
+  vMaxId, vTempStr,vIdInsumo,vIdFazenda: string;
+begin
+  Body := Req.Body<TJSONObject>;
+  dmGlobal := TdmDB.Create(nil);
+
+  try
+    if not Assigned(Body) then
+      raise Exception.Create('JSON inválido ou vazio');
+
+    ItensArray := Body.GetValue('itens') as TJSONArray;
+    if not Assigned(ItensArray) or (ItensArray.Count = 0) then
+      raise Exception.Create('Campo "itens" inválido ou vazio');
+
+    for i := 0 to ItensArray.Count - 1 do
+    begin
+      Item := ItensArray.Items[i] as TJSONObject;
+
+      if not Item.TryGetValue<string>('id', vMaxId) or (vMaxId.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id" não informado');
+
+      if not Item.TryGetValue<string>('id_fabricacao', vTempStr) or (vTempStr.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id_fabricacao" não informado');
+
+      if not Item.TryGetValue<string>('id_insumo', vTempStr) or (vTempStr.Trim = '') then
+        raise Exception.Create('Campo obrigatório "id_insumo" não informado');
+
+      vKGPrevista  := StrToFloatDef(Item.GetValue<string>('qtde_prevista', '0'), 0);
+      vKGRealizado := StrToFloatDef(Item.GetValue<string>('qtd_realizada', '0'), 0);
+
+      vDif := vKGPrevista-vKGRealizado;
+
+      vDifPercent := (vDif*100)/vKGPrevista;
+
+      vIdInsumo   := Item.GetValue<string>('id_insumo', '');
+      vIdFazenda  := Item.GetValue<string>('id_fazenda', '');
+
+      vValorkgFloat := dmGlobal.GetCustoMedioKgInsumo(
+        vIdInsumo,
+        vIdFazenda, // Certifique-se de que este campo vem no JSON
+        FormatDateTime('yyyy-mm-dd', Now) // ou outro campo que represente a data base
+      );
+
+      // Insere direto via SQL
+      with dmGlobal.qryAux, dmGlobal.qryAux.SQL do
+      begin
+        Clear;
+        Add('INSERT INTO DETALHES_FABRICA_RACAO (');
+        Add('  ID, ID_CADASTRO_FABRICA_RACAO, ID_INSUMO,');
+        Add('  QTDE_PREVISTA, QTDE_REALIZADA, ID_OPERADOR, MS_INSUMO, CUSTO_KG');
+        Add(') VALUES (');
+        Add('  :ID, :ID_CADASTRO_FABRICA_RACAO, :ID_INSUMO,');
+        Add('  :QTDE_PREVISTA, :QTDE_REALIZADA, :ID_OPERADOR, :MS_INSUMO, :CUSTO_KG');
+        Add(')');
+
+        ParamByName('ID').AsString := Item.GetValue<string>('id', '');
+        ParamByName('ID_CADASTRO_FABRICA_RACAO').AsString := Item.GetValue<string>('id_fabricacao', '');
+        ParamByName('ID_INSUMO').AsString     := Item.GetValue<string>('id_insumo', '');
+        ParamByName('QTDE_PREVISTA').AsFloat  := StrToFloatDef(Item.GetValue<string>('qtde_prevista', '0'), 0);
+        ParamByName('QTDE_REALIZADA').AsFloat := StrToFloatDef(Item.GetValue<string>('qtd_realizada', '0'), 0);
+        ParamByName('ID_OPERADOR').AsString   := Item.GetValue<string>('id_operador', '');
+        ParamByName('MS_INSUMO').AsFloat      := StrToFloatDef(Item.GetValue<string>('ms_insumo', '0'), 0);
+        ParamByName('CUSTO_KG').AsFloat       := vValorkgFloat;
+//        ParamByName('DIF_KG').AsFloat         := vDif;
+//        ParamByName('DIF_PER').AsFloat        := vDifPercent;
+
+        try
+         ExecSQL;
+        except
+          on e: Exception do
+           Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+        end;
+      end;
+    end;
+    dmGlobal.AtualizaResumoFabricacao(Item.GetValue<string>('id_fabricacao', ''));
+    Res.Send(TJSONObject.Create.AddPair('result', 'Itens inseridos com sucesso')).Status(200);
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+end;
+
+procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Body: TJSONObject;
+  JSONRetorno: TJSONObject;
+  custo_kg_dietaS: string;
+  custo_kg_dieta : Double;
+  vMaxId, vTempStr: string;
+  msRealizadaStr,KGRealizadaStr: string;
+  msRealizada,KGRealizada: Double;
+  FS: TFormatSettings;
+begin
+  FS := TFormatSettings.Create;
+  FS.DecimalSeparator := ',';
+
+  dmGlobal := TdmDB.Create(nil);
+  Body := Req.Body<TJSONObject>;  // Body já pego
+
+  try
+    
+
+    // CRIA e ENVIA o JSON DEPOIS de tudo
+    JSONRetorno := TJSONObject.Create;
+    JSONRetorno.AddPair('id', vMaxId);
+
+    Res.Send(JSONRetorno).Status(200);  // 🚨 depois do SEND não pode mais acontecer NADA
+
+  except
+    on E: Exception do
+    begin
+      JSONRetorno := TJSONObject.Create;
+      JSONRetorno.AddPair('erro', E.Message);
+      Res.Send(JSONRetorno).Status(500);
+    end;
+  end;
+
+  // NÃO FAZ MAIS FREE depois do SEND
+end;
+
+
+end.

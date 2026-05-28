@@ -1,0 +1,25 @@
+unit UdmFieldPec;
+
+interface
+
+uses
+  System.SysUtils, System.Classes;
+
+type
+  TdmFieldPec = class(TDataModule)
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  dmFieldPec: TdmFieldPec;
+
+implementation
+
+{%CLASSGROUP 'Vcl.Controls.TControl'}
+
+{$R *.dfm}
+
+end.
