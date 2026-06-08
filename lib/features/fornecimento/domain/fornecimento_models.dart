@@ -81,6 +81,7 @@ class CurralPrev {
     this.racao,
     this.idFornecimento,
     this.idDieta,
+    this.qtdSessoes = 0,
   });
 
   final String idBaia;
@@ -114,6 +115,9 @@ class CurralPrev {
 
   final String? idDieta;
 
+  /// Quantidade de linhas em CADASTRO_FORNECIMENTO (realizado > 0) na chave.
+  final int qtdSessoes;
+
   CurralPrev copyWith({
     double? realizadoKg,
     double? faltaKg,
@@ -125,6 +129,7 @@ class CurralPrev {
     String? linha,
     int? ordemFornecimento,
     String? numero,
+    int? qtdSessoes,
   }) {
     return CurralPrev(
       idBaia: idBaia,
@@ -144,6 +149,7 @@ class CurralPrev {
       racao: racao ?? this.racao,
       idFornecimento: idFornecimento ?? this.idFornecimento,
       idDieta: idDieta,
+      qtdSessoes: qtdSessoes ?? this.qtdSessoes,
     );
   }
 
@@ -227,6 +233,7 @@ class CurralPrev {
       idFornecimento:
           snAny(["idFornecimento", "id_fornecimento", "ID_FORNECIMENTO"]),
       idDieta: snAny(["idDieta", "id_dieta", "ID_DIETA"]),
+      qtdSessoes: iAny(["qtdSessoes", "qtd_sessoes", "QTD_SESSOES"], def: 0),
     );
   }
 }
@@ -374,6 +381,88 @@ class FornecimentoRow {
         FornTables.cfPrevisto: previstoKg,
         FornTables.cfRealizado: realizadoKg,
       };
+}
+
+// =========================================================
+// LINHA LOCAL (CADASTRO_FORNECIMENTO no tablet)
+// =========================================================
+class FornecimentoLocalRow {
+  FornecimentoLocalRow({
+    required this.id,
+    required this.dataIso,
+    required this.horaInicio,
+    required this.horaFim,
+    required this.idBaia,
+    this.nomeBaia,
+    this.linha,
+    required this.trato,
+    required this.idDieta,
+    this.racaoNome,
+    required this.previstoKg,
+    required this.realizadoKg,
+    required this.syncOk,
+  });
+
+  final String id;
+  final String dataIso;
+  final String horaInicio;
+  final String horaFim;
+  final String idBaia;
+  final String? nomeBaia;
+  final String? linha;
+  final int trato;
+  final String idDieta;
+  final String? racaoNome;
+  final double previstoKg;
+  final double realizadoKg;
+  final bool syncOk;
+
+  String get racaoDisplay {
+    final nome = (racaoNome ?? "").trim();
+    if (nome.isNotEmpty) return nome;
+    final id = idDieta.trim();
+    return id.isEmpty ? "-" : id;
+  }
+
+  String get baiaDisplay {
+    final nome = (nomeBaia ?? "").trim();
+    if (nome.isNotEmpty) return nome;
+    final id = idBaia.trim();
+    return id.isEmpty ? "-" : id;
+  }
+
+  static FornecimentoLocalRow fromMap(Map<String, Object?> m) {
+    Object? pick(List<String> keys) {
+      for (final k in keys) {
+        if (m.containsKey(k)) return m[k];
+      }
+      return null;
+    }
+
+    String sKeys(List<String> keys) => _s(pick(keys));
+    int iKeys(List<String> keys) => _toInt(pick(keys));
+    double dKeys(List<String> keys) => _toDouble(pick(keys));
+
+    final flagSync = iKeys(["flag_sync", "FLAG_SYNC", "flagSync"]);
+    final dataRaw = sKeys(["dataIso", "data_iso", "DATA", "data"]);
+    final dataIso = dataRaw.length >= 10 ? dataRaw.substring(0, 10) : dataRaw;
+
+    return FornecimentoLocalRow(
+      id: sKeys(["id", "ID"]),
+      dataIso: dataIso,
+      horaInicio: sKeys(["horaInicio", "hora_inicio", "HORA_INICIO"]),
+      horaFim: sKeys(["horaFim", "hora_fim", "HORA_FIM"]),
+      idBaia: sKeys(["idBaia", "id_baia", "ID_BAIA"]),
+      nomeBaia: sKeys(["nomeBaia", "nome_baia", "nome_local", "NOME_LOCAL"]),
+      linha: sKeys(["linha", "LINHA"]),
+      trato: iKeys(["trato", "TRATO"]),
+      idDieta: sKeys(["idDieta", "id_dieta", "ID_DIETA"]),
+      racaoNome: sKeys(["racaoNome", "racao_nome", "NOME_RACAO"]),
+      previstoKg: dKeys(["previstoKg", "previsto", "PREVISTO"]),
+      realizadoKg: dKeys(["realizadoKg", "realizado", "REALIZADO"]),
+      syncOk: flagSync == 1,
+    );
+  }
 }
 
 // =========================================================

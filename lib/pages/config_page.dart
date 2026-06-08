@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 
 import "../repo/config_repo.dart";
+import "../services/config_disk_backup.dart";
 import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
@@ -112,10 +113,53 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _connectingStationWifi = false;
   bool get _isDistribuidor => _operacao == 2;
 
+  String? _backupPath;
+
   @override
   void initState() {
     super.initState();
     _loadFromDb();
+    unawaited(_loadBackupInfo());
+  }
+
+  Future<void> _loadBackupInfo() async {
+    final path = await ConfigDiskBackup.backupPathLabel();
+    if (!mounted) return;
+    setState(() => _backupPath = path);
+  }
+
+  Future<void> _onRestaurarBackupDisco() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Restaurar configuração"),
+        content: const Text(
+          "Carregar a configuração salva em disco?\n"
+          "Os valores atuais desta tela serão substituídos.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text("Restaurar"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final restored = await ConfigDiskBackup.restoreNow(_cfgRepo);
+    if (!mounted) return;
+    if (!restored) {
+      _toast("Nenhum backup encontrado em disco.");
+      return;
+    }
+    await _loadFromDb();
+    await _loadBackupInfo();
+    _toast("Configuração restaurada do backup em disco.");
   }
 
   @override
@@ -1384,6 +1428,47 @@ class _ConfigPageState extends State<ConfigPage> {
                   const SizedBox(height: 22),
                 ],
 
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Backup em disco",
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        "Ao confirmar, a configuração é salva em Downloads/RFeed. "
+                        "Se reinstalar o app, ela pode ser restaurada automaticamente.",
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      if ((_backupPath ?? "").trim().isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _backupPath!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onRestaurarBackupDisco,
+                        icon: const Icon(Icons.restore),
+                        label: const Text("Restaurar do disco"),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
                   height: 52,

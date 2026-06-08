@@ -6,7 +6,8 @@ uses
   Horse.Jhonson,
   Horse.CORS,
   System.JSON,
-  System.SysUtils;
+  System.SysUtils,
+  FireDAC.Comp.Client;
 
 function RetornaDataFormadata(vData: string): string;
 procedure RegistraRotas;
@@ -18,6 +19,9 @@ procedure GetPrevisaoTrato(Req: THorseRequest; Res: THorseResponse; Next: TProc)
 procedure GetBaias(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 procedure GetTeste(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 procedure GetVagao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetDashboardFabricacaoResumo(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetDashboardFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure GetDashboardFabricacaoFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 implementation
 
 uses
@@ -41,6 +45,58 @@ begin
     Result := 'Sem Data';
 end;
 
+function QueryParam(const Req: THorseRequest; const AName, ADefault: string): string;
+begin
+  if not Req.Query.TryGetValue(AName, Result) then
+    Result := ADefault;
+  Result := Trim(Result);
+  if Result = '' then
+    Result := ADefault;
+end;
+
+function TryParseIsoDate(const AIso: string; out ADate: TDateTime): Boolean;
+var
+  D: string;
+begin
+  D := RetornaDataFormadata(AIso);
+  Result := TryStrToDate(D, ADate);
+end;
+
+procedure RequireDateRangeOr400(Req: THorseRequest; Res: THorseResponse;
+  out AIni, AFim: TDateTime; out AOk: Boolean);
+var
+  SIni, SFim: string;
+begin
+  AOk := False;
+  SIni := QueryParam(Req, 'data_ini', '');
+  SFim := QueryParam(Req, 'data_fim', '');
+
+  if (SIni = '') or (SFim = '') then
+  begin
+    Res.Send(TJSONObject.Create
+      .AddPair('erro', 'Parâmetros obrigatórios: data_ini e data_fim (yyyy-mm-dd).')
+    ).Status(400);
+    Exit;
+  end;
+
+  if (not TryParseIsoDate(SIni, AIni)) or (not TryParseIsoDate(SFim, AFim)) then
+  begin
+    Res.Send(TJSONObject.Create
+      .AddPair('erro', 'Data inválida. Use yyyy-mm-dd.')
+    ).Status(400);
+    Exit;
+  end;
+
+  AOk := True;
+end;
+
+procedure BindCommonFilters(Q: TFDQuery; Req: THorseRequest);
+begin
+  Q.ParamByName('ID_DIETA').AsString := QueryParam(Req, 'id_dieta', '');
+  Q.ParamByName('ID_OPERADOR').AsString := QueryParam(Req, 'id_operador', '');
+  Q.ParamByName('ID_VAGAO').AsString := QueryParam(Req, 'id_vagao', '');
+end;
+
 procedure RegistraRotas;
 begin
  THorse.Get('/GetTeste',GetTeste);
@@ -51,6 +107,166 @@ begin
  THorse.Get('/baias/get/:idfazenda',GetBaias);
  THorse.Get('/previsao_trato/get/:idfazenda/:dataPrev',GetPrevisaoTrato);
  THorse.Get('/vagao/get',GetVagao);
+ THorse.Get('/dashboard/fabricacao/resumo', GetDashboardFabricacaoResumo);
+ THorse.Get('/dashboard/fabricacao/insumos', GetDashboardFabricacaoInsumos);
+ THorse.Get('/dashboard/fabricacao/fornecimento', GetDashboardFabricacaoFornecimento);
+end;
+
+procedure GetDashboardFabricacaoResumo(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Q: TFDQuery;
+  DIni, DFim: TDateTime;
+  OkRange: Boolean;
+begin
+  RequireDateRangeOr400(Req, Res, DIni, DFim, OkRange);
+  if not OkRange then
+    Exit;
+
+  dmGlobal := TdmDB.Create(nil);
+  Q := TFDQuery.Create(nil);
+  try
+    dmGlobal.ConectaDBCGPec;
+    Q.Connection := dmGlobal.FBCon;
+    Q.SQL.Text :=
+      'SELECT ' +
+      '  cop.NOME AS OPERADOR, ' +
+      '  vag.NOME AS VAGAO, ' +
+      '  cd.NOME_DIETA, ' +
+      '  cfr.QTDE_PREVISTA, ' +
+      '  cfr.QTDE_REALIZADA, ' +
+      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG, ' +
+      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT, ' +
+      '  cfr.ID, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO, cfr.DATA_REGISTO ' +
+      'FROM CADASTRO_FABRICA_RACAO cfr ' +
+      'JOIN CADASTRO_DIETAS cd ON cfr.ID_DIETA = cd.ID ' +
+      'JOIN CADASTRO_USUARIO cop ON cfr.ID_OPERADOR = cop.ID ' +
+      'LEFT JOIN CADASTRO_INSUMOS vag ON vag.ID = cfr.ID_VAGAO ' +
+      'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
+      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
+      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
+      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      'ORDER BY cfr.DATA_REGISTO DESC';
+    Q.ParamByName('DATA_INI').AsDate := DIni;
+    Q.ParamByName('DATA_FIM').AsDate := DFim;
+    BindCommonFilters(Q, Req);
+    Q.Open;
+    Res.Send<TJSONArray>(Q.ToJSONArray).Status(200);
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+  Q.Free;
+  dmGlobal.Free;
+end;
+
+procedure GetDashboardFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Q: TFDQuery;
+  DIni, DFim: TDateTime;
+  OkRange: Boolean;
+begin
+  RequireDateRangeOr400(Req, Res, DIni, DFim, OkRange);
+  if not OkRange then
+    Exit;
+
+  dmGlobal := TdmDB.Create(nil);
+  Q := TFDQuery.Create(nil);
+  try
+    dmGlobal.ConectaDBCGPec;
+    Q.Connection := dmGlobal.FBCon;
+    Q.SQL.Text :=
+      'SELECT ' +
+      '  cop.NOME AS OPERADOR, ' +
+      '  vag.NOME AS VAGAO, ' +
+      '  cd.NOME_DIETA, ' +
+      '  cfr.QTDE_PREVISTA, ' +
+      '  cfr.QTDE_REALIZADA, ' +
+      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG_TOTAL, ' +
+      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT_TOTAL, ' +
+      '  ci2.NOME AS INSUMO, ' +
+      '  dfr.QTDE_PREVISTA AS PREVISTO_KG_INSUMO, ' +
+      '  dfr.QTDE_REALIZADA AS REALIZADO_KG_INSUMO, ' +
+      '  (dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) AS DIF_KG_INSUMO, ' +
+      '  ((dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) * 100) / NULLIF(dfr.QTDE_PREVISTA, 0) AS DIFPERCENT_INSUMO, ' +
+      '  cfr.ID, dfr.ID AS ID_DETALHE, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO ' +
+      'FROM CADASTRO_FABRICA_RACAO cfr ' +
+      'JOIN DETALHES_FABRICA_RACAO dfr ON dfr.ID_CADASTRO_FABRICA_RACAO = cfr.ID ' +
+      'JOIN CADASTRO_INSUMOS ci2 ON ci2.ID = dfr.ID_INSUMO ' +
+      'JOIN CADASTRO_DIETAS cd ON cfr.ID_DIETA = cd.ID ' +
+      'JOIN CADASTRO_USUARIO cop ON cfr.ID_OPERADOR = cop.ID ' +
+      'LEFT JOIN CADASTRO_INSUMOS vag ON vag.ID = cfr.ID_VAGAO ' +
+      'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
+      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
+      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
+      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      'ORDER BY cfr.DATA_REGISTO DESC';
+    Q.ParamByName('DATA_INI').AsDate := DIni;
+    Q.ParamByName('DATA_FIM').AsDate := DFim;
+    BindCommonFilters(Q, Req);
+    Q.Open;
+    Res.Send<TJSONArray>(Q.ToJSONArray).Status(200);
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+  Q.Free;
+  dmGlobal.Free;
+end;
+
+procedure GetDashboardFabricacaoFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  dmGlobal: TdmDB;
+  Q: TFDQuery;
+  DIni, DFim: TDateTime;
+  OkRange: Boolean;
+begin
+  RequireDateRangeOr400(Req, Res, DIni, DFim, OkRange);
+  if not OkRange then
+    Exit;
+
+  dmGlobal := TdmDB.Create(nil);
+  Q := TFDQuery.Create(nil);
+  try
+    dmGlobal.ConectaDBCGPec;
+    Q.Connection := dmGlobal.FBCon;
+    Q.SQL.Text :=
+      'SELECT ' +
+      '  cop.NOME AS OPERADOR, ' +
+      '  vag.NOME AS VAGAO, ' +
+      '  cd.NOME_DIETA, ' +
+      '  cfr.QTDE_PREVISTA, ' +
+      '  cfr.QTDE_REALIZADA, ' +
+      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG, ' +
+      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT, ' +
+      '  db.NOME_LOCAL AS CURRAL, ' +
+      '  cf.PREVISTO AS PREVISTO_FORNECIMENTO, ' +
+      '  cf.REALIZADO AS REALIZADO_FORNECIMENTO, ' +
+      '  (cf.PREVISTO - cf.REALIZADO) AS DIF_KG_FORNECIMENTO, ' +
+      '  cfr.ID, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO, cf.ID AS ID_FORNECIMENTO, cf.ID_BAIA ' +
+      'FROM CADASTRO_FABRICA_RACAO cfr ' +
+      'JOIN CADASTRO_DIETAS cd ON cfr.ID_DIETA = cd.ID ' +
+      'JOIN CADASTRO_USUARIO cop ON cfr.ID_OPERADOR = cop.ID ' +
+      'LEFT JOIN CADASTRO_INSUMOS vag ON vag.ID = cfr.ID_VAGAO ' +
+      'LEFT JOIN CADASTRO_FORNECIMENTO cf ON cf.ID_FABRICACAO = cfr.ID ' +
+      'LEFT JOIN DETALHES_BAIAS db ON db.ID = cf.ID_BAIA ' +
+      'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
+      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
+      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
+      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      'ORDER BY cfr.DATA_REGISTO DESC';
+    Q.ParamByName('DATA_INI').AsDate := DIni;
+    Q.ParamByName('DATA_FIM').AsDate := DFim;
+    BindCommonFilters(Q, Req);
+    Q.Open;
+    Res.Send<TJSONArray>(Q.ToJSONArray).Status(200);
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+  Q.Free;
+  dmGlobal.Free;
 end;
 
 procedure GetTeste(Req: THorseRequest; Res: THorseResponse; Next: TProc);

@@ -8,6 +8,7 @@ import "../repo/config_repo.dart";
 import "../services/carregamento_bridge.dart";
 import "../services/wifi_guard.dart";
 import "../widgets/app_logo.dart";
+import "../widgets/app_version_label.dart";
 
 class MenuPage extends StatefulWidget {
   const MenuPage({super.key});
@@ -359,7 +360,9 @@ class _MenuPageState extends State<MenuPage> {
                                     const Center(child: AppLogo(height: 230)),
                               ),
 
-                              const SizedBox(height: 14),
+                              const SizedBox(height: 6),
+                              const AppVersionLabel(),
+                              const SizedBox(height: 10),
 
                               // ===== LINHA 1 =====
                               Row(

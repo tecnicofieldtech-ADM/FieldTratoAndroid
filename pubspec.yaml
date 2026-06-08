@@ -2,7 +2,7 @@
 description: RFeed AutomaÃƒÂ§ÃƒÂ£o - Flutter
 publish_to: "none"
 
-version: 1.0.9+16
+version: 1.0.13+2022
 
 environment:
   sdk: ">=3.2.0 <4.0.0"

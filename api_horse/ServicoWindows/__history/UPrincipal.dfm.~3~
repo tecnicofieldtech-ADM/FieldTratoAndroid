@@ -1,6 +1,0 @@
-object ApiRFeed: TApiRFeed
-  DisplayName = 'ApiRFeedService'
-  OnStart = ServiceStart
-  Height = 480
-  Width = 640
-end

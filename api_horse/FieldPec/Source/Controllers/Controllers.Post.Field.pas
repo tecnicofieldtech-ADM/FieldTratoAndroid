@@ -1,4 +1,4 @@
-﻿unit Controllers.Post.Field;
+unit Controllers.Post.Field;
 
 interface
 
@@ -30,6 +30,8 @@ uses
   System.IniFiles,
   UdmFieldPec,
   Controllers.Mirror;
+
+function ExtractStrCI(const Obj: TJSONObject; const Keys: array of string): string; forward;
 
 procedure LimpaJSONObject(JSON: TJSONObject);
 begin
@@ -565,6 +567,9 @@ var
   vData: TDateTime;
   vMsFornec, vRealizadoNum, vRealizadoAtual, vRealizadoGravar: Double;
   vFornecimentoAcumulativo: Boolean;
+  vPontoCorteKg: Double;
+  vEncontrou: Boolean;
+  vIdFallback: string;
 
   function GetStr(const K: string; const Def: string = ''): string;
   begin
@@ -613,6 +618,30 @@ var
     end;
   end;
 
+  function ReadPontoCorteFornecimentoKgIni: Double;
+  var
+    LIniPath, LVal: string;
+    LIni: TIniFile;
+  begin
+    Result := 50;
+    LIniPath := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'ApiConfig.ini';
+    if not FileExists(LIniPath) then
+      LIniPath := IncludeTrailingPathDelimiter(GetCurrentDir) + 'ApiConfig.ini';
+    if not FileExists(LIniPath) then
+      Exit(50);
+
+    LIni := TIniFile.Create(LIniPath);
+    try
+      LVal := Trim(LIni.ReadString('API', 'PontoCorteFornecimentoKg', '50'));
+      LVal := StringReplace(LVal, ',', '.', [rfReplaceAll]);
+      Result := StrToFloatDef(LVal, 50);
+      if Result < 0 then
+        Result := 0;
+    finally
+      LIni.Free;
+    end;
+  end;
+
 begin
   dmGlobal := nil;
   Body := nil;
@@ -630,6 +659,8 @@ begin
       JSONResult := TJSONObject.Create;
 
       vId := GetStr('id', '');
+      if vId = '' then
+        vId := GetStr('id_fornecimento', '');
       vIdFabricacao := GetStr('id_fabricacao', '0');
       vIdUsuario := GetStr('id_usuario_lancamento', '0');
       vIdTratador := GetStr('id_tratador', '0');
@@ -638,20 +669,108 @@ begin
       vMS := GetStr('ms_dieta_realizada', '0');
 
       vIdBaia := GetStr('id_baia', '');
+      if vIdBaia = '' then
+        vIdBaia := GetStr('IDCURRAL', '');
       vIdRacaoPrev := GetStr('id_racao', '');
       if vIdRacaoPrev = '' then
         vIdRacaoPrev := GetStr('id_dieta_prevista', '');
-      vTratoStr := GetStr('trato', '0');
+      vTratoStr := GetStr('trato', '');
+      if vTratoStr = '' then
+        vTratoStr := GetStr('TRATO', '0');
       vDataISO := GetStr('data', '');
+      if vDataISO = '' then
+        vDataISO := GetStr('DATA_FORN', '');
 
       vTrato := StrToIntDef(vTratoStr, 0);
       vData := ParseDataRef(vDataISO);
+      if (Trim(vIdRacaoPrev) = '') or (Trim(vIdRacaoPrev) = '0') then
+      begin
+        if (Trim(vIdDietaRealizada) <> '') and (Trim(vIdDietaRealizada) <> '0') then
+          vIdRacaoPrev := Trim(vIdDietaRealizada);
+      end;
+
       vRealizadoNum := StrToFloatBR(vRealizado);
       vMsFornec := StrToFloatBR(vMS);
       vFornecimentoAcumulativo := ReadFornecimentoAcumulativoIni;
+      vPontoCorteKg := ReadPontoCorteFornecimentoKgIni;
+
+      if (vPontoCorteKg > 0) and (vRealizadoNum <= vPontoCorteKg) then
+      begin
+        if vId <> '' then
+          JSONResult.AddPair('id', vId);
+        JSONResult.AddPair('ok', TJSONBool.Create(True));
+        JSONResult.AddPair('ignorado_ponto_corte', TJSONBool.Create(True));
+        JSONResult.AddPair('ponto_corte_kg', TJSONNumber.Create(vPontoCorteKg));
+        JSONResult.AddPair('realizado_recebido', TJSONNumber.Create(vRealizadoNum));
+        JSONResult.AddPair('modo', 'ignorado_ponto_corte');
+        Res.Send(JSONResult).Status(200);
+        MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+        Exit;
+      end;
 
       dmGlobal.Fornecimento.Connection := dmGlobal.FBCon;
+      vIdFallback := vId;
+      vEncontrou := False;
 
+      if (vIdBaia <> '') and (vIdRacaoPrev <> '') and (vIdRacaoPrev <> '0')
+         and (vTrato > 0) and (vData <> 0) then
+      begin
+        with dmGlobal.qryAux do
+        begin
+          Close;
+          SQL.Clear;
+          SQL.Add('UPDATE CADASTRO_FORNECIMENTO');
+          SQL.Add('SET');
+          SQL.Add('  ID_FABRICACAO = :ID_FAB,');
+          SQL.Add('  ID_USUARIO_LANCAMENTO = :ID_USU,');
+          SQL.Add('  ID_TRATADOR = :ID_TRAT,');
+          SQL.Add('  ID_DIETA_REALIZADA = :ID_DIETA_R,');
+          if vFornecimentoAcumulativo then
+            SQL.Add('  REALIZADO = COALESCE(REALIZADO, 0) + :REAL,')
+          else
+            SQL.Add('  REALIZADO = :REAL,');
+          SQL.Add('  MS_DIETA_REALIZADA = :MS,');
+          SQL.Add('  STATUS = ''R''');
+          SQL.Add('WHERE');
+          SQL.Add('  ID_BAIA = :ID_BAIA');
+          SQL.Add('  AND TRATO = :TRATO');
+          SQL.Add('  AND DATA = :DATA');
+          SQL.Add('  AND ID_DIETA = :ID_RACAO');
+          SQL.Add('RETURNING ID');
+
+          ParamByName('ID_FAB').AsString := vIdFabricacao;
+          ParamByName('ID_USU').AsString := vIdUsuario;
+          ParamByName('ID_TRAT').AsString := vIdTratador;
+          ParamByName('ID_DIETA_R').AsString := vIdDietaRealizada;
+          ParamByName('REAL').AsFloat := vRealizadoNum;
+          ParamByName('MS').AsFloat := vMsFornec;
+          ParamByName('ID_BAIA').AsString := vIdBaia;
+          ParamByName('TRATO').AsInteger := vTrato;
+          ParamByName('DATA').AsDate := vData;
+          ParamByName('ID_RACAO').AsString := vIdRacaoPrev;
+
+          Open;
+
+          if not IsEmpty then
+          begin
+            vId := FieldByName('ID').AsString;
+            vEncontrou := True;
+          end;
+          Close;
+        end;
+
+        if vEncontrou then
+        begin
+          JSONResult.AddPair('id', vId);
+          JSONResult.AddPair('modo', 'update_por_chave_natural');
+          JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
+          Res.Send(JSONResult).Status(200);
+          MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+          Exit;
+        end;
+      end;
+
+      vId := vIdFallback;
       if vId <> '' then
       begin
         with dmGlobal.Fornecimento do
@@ -662,7 +781,8 @@ begin
           Open;
 
           if IsEmpty then
-            raise Exception.Create('Registro não encontrado pelo ID informado: ' + vId);
+            raise Exception.Create(
+              'Registro nao encontrado por chave natural nem pelo ID: ' + vId);
 
           vRealizadoAtual := StrToFloatBR(FieldByName('REALIZADO').AsString);
           if vFornecimentoAcumulativo then
@@ -692,56 +812,9 @@ begin
       end;
 
       if (vIdBaia = '') or (vIdRacaoPrev = '') or (vTrato <= 0) or (vData = 0) then
-        raise Exception.Create('Sem ID e chave natural incompleta. Envie: id_baia, id_racao, trato, data.');
+        raise Exception.Create('Chave natural incompleta e ID ausente. Envie: id_baia, id_racao, trato, data (ou id).');
 
-      with dmGlobal.qryAux do
-      begin
-        Close;
-        SQL.Clear;
-        SQL.Add('UPDATE CADASTRO_FORNECIMENTO');
-        SQL.Add('SET');
-        SQL.Add('  ID_FABRICACAO = :ID_FAB,');
-        SQL.Add('  ID_USUARIO_LANCAMENTO = :ID_USU,');
-        SQL.Add('  ID_TRATADOR = :ID_TRAT,');
-        SQL.Add('  ID_DIETA_REALIZADA = :ID_DIETA_R,');
-        if vFornecimentoAcumulativo then
-          SQL.Add('  REALIZADO = COALESCE(REALIZADO, 0) + :REAL,')
-        else
-          SQL.Add('  REALIZADO = :REAL,');
-        SQL.Add('  MS_DIETA_REALIZADA = :MS,');
-        SQL.Add('  STATUS = ''R''');
-        SQL.Add('WHERE');
-        SQL.Add('  ID_BAIA = :ID_BAIA');
-        SQL.Add('  AND TRATO = :TRATO');
-        SQL.Add('  AND DATA = :DATA');
-        SQL.Add('  AND ID_DIETA = :ID_RACAO');
-        SQL.Add('RETURNING ID');
-
-        ParamByName('ID_FAB').AsString := vIdFabricacao;
-        ParamByName('ID_USU').AsString := vIdUsuario;
-        ParamByName('ID_TRAT').AsString := vIdTratador;
-        ParamByName('ID_DIETA_R').AsString := vIdDietaRealizada;
-        ParamByName('REAL').AsFloat := vRealizadoNum;
-        ParamByName('MS').AsFloat := vMsFornec;
-        ParamByName('ID_BAIA').AsString := vIdBaia;
-        ParamByName('TRATO').AsInteger := vTrato;
-        ParamByName('DATA').AsDate := vData;
-        ParamByName('ID_RACAO').AsString := vIdRacaoPrev;
-
-        Open;
-
-        if IsEmpty then
-          raise Exception.Create('Nenhum registro encontrado para (baia+dieta+trato+data).');
-
-        vId := FieldByName('ID').AsString;
-        Close;
-      end;
-
-      JSONResult.AddPair('id', vId);
-      JSONResult.AddPair('modo', 'update_por_chave_natural');
-      JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
-      Res.Send(JSONResult).Status(200);
-      MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+      raise Exception.Create('Nenhum registro encontrado para (baia+dieta+trato+data).');
     finally
       FreeAndNil(dmGlobal);
     end;

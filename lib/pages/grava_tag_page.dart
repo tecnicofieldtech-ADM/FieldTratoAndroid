@@ -73,6 +73,54 @@ class _GravaTagPageState extends State<GravaTagPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _onLimparTag(GravaTagCurral curral) async {
+    if (_curralLendoId != null) return;
+
+    final tag = (curral.rfid ?? "").trim();
+    if (tag.isEmpty) {
+      _toast("Este curral ja esta sem tag vinculada.");
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Limpar tag"),
+        content: Text(
+          "Remover o vínculo da tag $tag do curral ${curral.nomeLocal}?\n\n"
+          "Depois você pode gravar uma nova tag neste curral.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text("Limpar"),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+
+    setState(() => _curralLendoId = curral.id);
+    try {
+      final removida = await _repo.limparVinculo(idCurral: curral.id);
+      if (!mounted) return;
+      if (removida != null && removida == _ultimoEpc) {
+        setState(() => _ultimoEpc = "");
+      }
+      _toast("Tag removida do curral ${curral.nomeLocal}.");
+      await _carregarTudo();
+    } catch (e) {
+      _toast("Erro ao limpar tag: $e");
+    } finally {
+      if (mounted) setState(() => _curralLendoId = null);
+    }
+  }
+
   Future<void> _onGravarTag(GravaTagCurral curral) async {
     if (_curralLendoId != null) return;
 
@@ -266,23 +314,46 @@ class _GravaTagPageState extends State<GravaTagPage> {
                                     ),
                                   ),
                                   const SizedBox(height: 10),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton.icon(
-                                      onPressed: lendo ? null : () => _onGravarTag(c),
-                                      icon: lendo
-                                          ? const SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(strokeWidth: 2),
-                                            )
-                                          : const Icon(Icons.nfc),
-                                      label: Text(
-                                        lendo
-                                            ? "Lendo TAG..."
-                                            : "Gravar TAG neste curral",
+                                  Row(
+                                    children: [
+                                      if (tag.isNotEmpty) ...[
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            onPressed: lendo
+                                                ? null
+                                                : () => _onLimparTag(c),
+                                            icon: const Icon(Icons.clear),
+                                            label: const Text("Limpar tag"),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      Expanded(
+                                        flex: tag.isNotEmpty ? 2 : 1,
+                                        child: ElevatedButton.icon(
+                                          onPressed: lendo
+                                              ? null
+                                              : () => _onGravarTag(c),
+                                          icon: lendo
+                                              ? const SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                )
+                                              : const Icon(Icons.nfc),
+                                          label: Text(
+                                            lendo
+                                                ? "Lendo TAG..."
+                                                : tag.isEmpty
+                                                    ? "Gravar TAG neste curral"
+                                                    : "Gravar nova tag",
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -397,6 +468,19 @@ class _ReadTagDialogState extends State<_ReadTagDialog> {
     Navigator.of(context).pop(null);
   }
 
+  void _limparLeitura() {
+    if (_closing) return;
+    _timeout?.cancel();
+    _timeout = Timer(const Duration(seconds: 8), () {
+      if (!mounted || _closing) return;
+      setState(() => _status = "Sem leitura no tempo limite. Tente novamente.");
+    });
+    setState(() {
+      _epc = "";
+      _status = "Leitura limpa. Aproxime a nova tag.";
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -417,9 +501,22 @@ class _ReadTagDialogState extends State<_ReadTagDialog> {
       ),
       actions: [
         TextButton(
+          onPressed: _epc.isEmpty ? null : _limparLeitura,
+          child: const Text("Limpar leitura"),
+        ),
+        TextButton(
           onPressed: _cancel,
           child: const Text("Cancelar"),
         ),
+        if (_epc.isNotEmpty)
+          FilledButton(
+            onPressed: () {
+              if (_closing) return;
+              _closing = true;
+              Navigator.of(context).pop(_epc);
+            },
+            child: const Text("Usar esta tag"),
+          ),
       ],
     );
   }

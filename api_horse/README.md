@@ -9,7 +9,7 @@ API REST em **Delphi + Horse** para o CG Pec (Firebird). Prioridade de deploy no
 | `CGPec/Source/` | Projeto Delphi (`dpr/ApiRFeed.dpr`), controllers, DM |
 | `ServicoWindows/` | Variante serviço Windows |
 | `installer/` | Instalador Inno Setup + scripts de serviço |
-| `Deploy/` | Saída de build: copiar `ApiRFeed.exe` + `ApiConfig.ini` |
+| `Deploy/` | Saída de build: `ApiRFeed.exe` ou `ApiRFeedWindows.exe` + `ApiConfig.ini` (mesma pasta, mesma porta) |
 
 ## Configuração
 
@@ -35,8 +35,15 @@ Enabled=1
 
 ## Build (Delphi)
 
-- **Executável:** `CGPec/Source/dpr/ApiRFeed.dproj` → Release Win32 → `Deploy/`
-- **Serviço Windows:** `ServicoWindows/ApiRFeedWindows.dproj` → Release Win32 (post-build copia `web-admin\`)
+- **Executável:** `CGPec/Source/dpr/ApiRFeed.dproj` → Release Win32 → `Deploy/ApiRFeed.exe`
+- **Serviço Windows:** `ServicoWindows/ApiRFeedWindows.dproj` → Release Win32 → `Deploy/ApiRFeedWindows.exe` (mesmo `ApiConfig.ini`, mesma porta **3001**)
+
+### Versão da API
+
+- Constantes em `CGPec/Source/UApiVersion.pas` (`API_VERSION_NAME`, `API_VERSION_BUILD`).
+- Ao publicar, atualize também `web-admin/api-version.js` (`EXPECTED`) com os mesmos valores.
+- Endpoints: `GET /api/version` (JSON) e campo `version`/`build`/`label` em `GET /api/config`.
+- Painel `/config` e `/health` exibem badge **API atualizada** ou **desatualizada**.
 
 ## Instalador para o cliente (serviço)
 

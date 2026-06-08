@@ -73,11 +73,14 @@ begin
     // Inicia o servidor Horse em uma thread separada
     FServerThread := TTask.Run(
       procedure
+      var
+        LPort: Integer;
       begin
         THorse.Use(Jhonson);
         THorse.Use(HandleException);
         THorse.Use(RequestLogMiddleware);
-        THorse.Listen(3001);
+        LPort := dmdb.GetApiListenPort;
+        THorse.Listen(LPort);
       end
     );
 

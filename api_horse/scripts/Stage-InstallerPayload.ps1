@@ -26,9 +26,9 @@ function Find-ApiExe {
     if ($Hint) { $candidates += $Hint }
 
     $bases = @(
-        "C:\RSistemas\Aplicativos\RFeedAutomacao\API\ServicoWindows",
+        (Join-Path $Root "Deploy"),
         (Join-Path $Root "ServicoWindows"),
-        (Join-Path $Root "Deploy")
+        "C:\RSistemas\Aplicativos\RFeedAutomacao\API\ServicoWindows"
     )
     foreach ($base in $bases) {
         if (-not $base) { continue }

@@ -3,6 +3,8 @@ import "dart:math";
 import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
+import "../../../utils/ms_percent.dart";
+import "../../fornecimento/data/fornecimento_tables.dart";
 import "../domain/models.dart";
 import "../domain/fabricacao_flow.dart";
 
@@ -96,7 +98,7 @@ class FabricacaoRepo {
         substr(COALESCE(p.DATA,''),1,10) AS data_ymd,
         COALESCE(p.TRATO,0) AS trato,
         SUM(COALESCE(p.PREVISTO_KG,0)) AS previsto,
-        SUM(COALESCE(p.REALIZADO_KG,0)) AS realizado
+        SUM(${FornTables.sqlRealizadoKgLocal("p")}) AS realizado
       FROM PREVISAO p
       ${where.isEmpty ? "" : "WHERE ${where.join(" AND ")}"}
       GROUP BY id_dieta, data_ymd, trato
@@ -902,8 +904,35 @@ class FabricacaoRepo {
       }
     }
 
-    final msRealizada =
+    var msRealizada =
         (totalRealizado > 0) ? (totalMS / totalRealizado) * 100.0 : 0.0;
+
+    if (!MsPercent.isValid(msRealizada)) {
+      final headDietaCol =
+          await _pickCol(h, ["ID_DIETA", "IDDIETA", "ID_RACAO"]) ?? "ID_DIETA";
+      final headRow = await db.query(
+        h,
+        columns: [headDietaCol],
+        where: "ID = ?",
+        whereArgs: [idFabricacao],
+        limit: 1,
+      );
+      final idDieta = headRow.isNotEmpty
+          ? (headRow.first[headDietaCol] ?? "").toString().trim()
+          : "";
+      if (idDieta.isNotEmpty) {
+        final dietaRows = await db.rawQuery(
+          "SELECT COALESCE(MS, 0) AS ms FROM DIETA WHERE TRIM(ID) = TRIM(?) LIMIT 1",
+          [idDieta],
+        );
+        if (dietaRows.isNotEmpty) {
+          msRealizada = MsPercent.resolve(
+            msFabricacao: 0,
+            msDieta: (dietaRows.first["ms"] as num?)?.toDouble(),
+          );
+        }
+      }
+    }
 
     final headRealCol = await _pickCol(
             h, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG", "REALIZADO"]) ??
@@ -912,7 +941,9 @@ class FabricacaoRepo {
         await _pickCol(h, ["MS_REALIZADA", "MSREALIZADA", "MS_REAL"]);
 
     final values = <String, Object?>{headRealCol: totalRealizado};
-    if (headMsCol != null) values[headMsCol] = msRealizada;
+    if (headMsCol != null && MsPercent.isValid(msRealizada)) {
+      values[headMsCol] = msRealizada;
+    }
 
     await db.update(
       h,
@@ -1026,6 +1057,55 @@ class FabricacaoRepo {
     b[8] = (b[8] & 0x3f) | 0x80;
     final s = b.map(h).join();
     return "${s.substring(0, 8)}-${s.substring(8, 12)}-${s.substring(12, 16)}-${s.substring(16, 20)}-${s.substring(20)}";
+  }
+
+  // =========================================================
+  // ✅ CRIA / REUTILIZA CARREGAMENTO PARA UMA FABRICAÇÃO
+  // =========================================================
+  Future<String?> criarCarregamentoParaFabricacao({
+    required String idFabricacao,
+    String? idVagaoOverride,
+    int tipoTrabalho = 0,
+  }) async {
+    final id = idFabricacao.trim();
+    if (id.isEmpty) {
+      throw Exception("ID da fabricação inválido.");
+    }
+
+    final h = await getFabricacaoById(id);
+    if (h == null) {
+      throw Exception("Fabricação não encontrada.");
+    }
+
+    var idVagao = (idVagaoOverride ?? "").trim();
+    if (idVagao.isEmpty) {
+      idVagao = await getIdVagaoByFabricacaoId(id);
+    }
+    if (idVagao.isEmpty) {
+      throw Exception(
+        "Vagão não informado. Selecione um vagão nas configurações ou na fabricação.",
+      );
+    }
+
+    var totalReal = h.qtdRealizada;
+    if (totalReal <= 0) {
+      totalReal = await getTotalRealizadoFabricacao(id);
+    }
+    if (totalReal <= 0) {
+      throw Exception(
+        "Fabricação sem peso realizado. Não é possível gerar carregamento.",
+      );
+    }
+
+    final pesoCarregado = (tipoTrabalho == 0) ? totalReal : 0.0;
+
+    return ensureCarregamentoAberto(
+      idFabricacao: id,
+      idDieta: h.idDieta,
+      pesoFabricado: totalReal,
+      pesoCarregado: pesoCarregado,
+      idVagao: idVagao,
+    );
   }
 
   // =========================================================

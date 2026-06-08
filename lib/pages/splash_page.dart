@@ -3,7 +3,8 @@ import "package:flutter/material.dart";
 import "../repo/config_repo.dart";
 import "../repo/user_repo.dart";
 import "../widgets/app_logo.dart";
-import "../services/session_service.dart"; // ✅ NOVO
+import "../services/session_service.dart";
+import "../services/config_disk_backup.dart";
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -26,10 +27,13 @@ class _SplashPageState extends State<SplashPage> {
     // pequena pausa para mostrar a splash
     await Future.delayed(const Duration(milliseconds: 800));
 
-    // 1) carrega config (se existir)
+    // 1) restaura CONFIG do disco se app foi reinstalado
+    await ConfigDiskBackup.tryRestoreIfConfigEmpty(_cfgRepo);
+
+    // 2) carrega config
     await _cfgRepo.getConfig();
 
-    // 2) restaura sessão (SharedPreferences)
+    // 3) restaura sessão (SharedPreferences ou backup em disco)
     await SessionService.instance.restore();
 
     if (!mounted) return;

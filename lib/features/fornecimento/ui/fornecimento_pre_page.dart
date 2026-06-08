@@ -9,6 +9,7 @@ import "../../../helpers/rfid_comm.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
 import "fornecimento_weigh_page.dart";
+import "../../../widgets/scale_peso_highlight_card.dart";
 
 
 
@@ -136,7 +137,9 @@ class _FornecimentoPrePageState extends State<FornecimentoPrePage> {
                   const SizedBox(height: 12),
                   _CurralInfoCard(ctrl: ctrl, curral: c),
                   const SizedBox(height: 12),
-                  _PesoCard(ctrl: ctrl),
+                  _BalancaDestaqueCard(ctrl: ctrl, curral: c),
+                  const SizedBox(height: 12),
+                  _PesoSessaoCard(ctrl: ctrl),
                   const SizedBox(height: 12),
                   _AcoesCard(
                     ctrl: ctrl,
@@ -772,8 +775,49 @@ class _CurralInfoCard extends StatelessWidget {
       );
 }
 
-class _PesoCard extends StatelessWidget {
-  const _PesoCard({required this.ctrl});
+class _BalancaDestaqueCard extends StatelessWidget {
+  const _BalancaDestaqueCard({
+    required this.ctrl,
+    required this.curral,
+  });
+
+  final _FornecimentoPreController ctrl;
+  final CurralPrev curral;
+
+  @override
+  Widget build(BuildContext context) {
+    // scaleStatus em pre_page é string legada; mapeia para enum quando possível
+    final stRaw = ctrl.scaleStatus.toLowerCase();
+    ScaleStatus st = ScaleStatus.disconnected;
+    if (stRaw.contains("conectando")) {
+      st = ScaleStatus.connecting;
+    } else if (stRaw.contains("erro")) {
+      st = ScaleStatus.error;
+    } else if (stRaw.contains("ok") ||
+        (stRaw.contains("conect") && !stRaw.contains("desconect"))) {
+      st = ScaleStatus.connected;
+    }
+    final scaleUi = scaleConnectionUi(st);
+
+    return ScalePesoHighlightCard(
+      pesoKg: ctrl.pesoAtual.toDouble(),
+      pesoLabel: "Peso balança",
+      secondaryLabel: "Previsto (curral)",
+      secondaryKg: curral.previstoKg,
+      connectionSlots: [
+        ScaleConnectionStatusChip(
+          title: "Balança",
+          detail: scaleUi.detail,
+          icon: scaleUi.icon,
+          color: scaleUi.color,
+        ),
+      ],
+    );
+  }
+}
+
+class _PesoSessaoCard extends StatelessWidget {
+  const _PesoSessaoCard({required this.ctrl});
   final _FornecimentoPreController ctrl;
 
   @override
@@ -785,26 +829,8 @@ class _PesoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Pesagem",
+            const Text("Sessão de pesagem",
                 style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    "Peso atual: ${ctrl.pesoAtual.toStringAsFixed(3)}",
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w900),
-                  ),
-                ),
-                if (ctrl.busy)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
             const SizedBox(height: 10),
             Row(
               children: [

@@ -8,6 +8,7 @@ import "../../../helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
+import "../../../widgets/scale_peso_highlight_card.dart";
 
 class FornecimentoWeighPage extends StatefulWidget {
   const FornecimentoWeighPage({
@@ -328,6 +329,13 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
           child: ListView(
           padding: const EdgeInsets.all(14),
           children: [
+            ScalePesoHighlightCard(
+              pesoKg: pesoAtual.toDouble(),
+              pesoLabel: "Peso balança",
+              secondaryLabel: "Previsto (curral)",
+              secondaryKg: widget.curral.previstoKg,
+            ),
+            const SizedBox(height: 12),
             Card(
               elevation: 2,
               child: Padding(
@@ -337,7 +345,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                   children: [
                     const Text("RFID", style: TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 8),
-                    Text("Último EPC: ${lastEpc.isEmpty ? "" : lastEpc}"),
+                    Text("Último EPC: ${lastEpc.isEmpty ? "—" : lastEpc}"),
                   ],
                 ),
               ),
@@ -350,12 +358,7 @@ class _FornecimentoWeighPageState extends State<FornecimentoWeighPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("Pesagem", style: TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 8),
-                    Text(
-                      "Peso atual: ${pesoAtual.toStringAsFixed(3)}",
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-                    ),
+                    const Text("Sessão de pesagem", style: TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 10),
                     Row(
                       children: [

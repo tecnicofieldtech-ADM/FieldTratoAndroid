@@ -17,6 +17,7 @@ uses
   procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   procedure PostGpsTrack(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
   procedure UploadLog(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 implementation
@@ -107,6 +108,16 @@ begin
   Result := TryStrToDate(T, Dt, FS);
 end;
 
+function NormalizeMsPercent(const Value: Double): Double;
+begin
+  Result := 0;
+  if Value <= 0 then
+    Exit;
+  if Value > 100 then
+    Exit;
+  Result := Value;
+end;
+
 function TryFetchDietaMsCgPec(dm: TdmDB; const IdDieta: string): Double;
 var
   Q: TFDQuery;
@@ -125,8 +136,8 @@ begin
     Q.ParamByName('ID').AsString := Id;
     Q.Open;
 
-    if (not Q.IsEmpty) and (Q.FieldByName('M').AsFloat > 0) then
-      Result := Q.FieldByName('M').AsFloat;
+    if not Q.IsEmpty then
+      Result := NormalizeMsPercent(Q.FieldByName('M').AsFloat);
   except
     Result := 0;
   end;
@@ -151,23 +162,20 @@ begin
       'WHERE UPPER(TRIM(CAST(cfr.ID AS VARCHAR(64)))) = UPPER(TRIM(:ID))';
     Q.ParamByName('ID').AsString := Id;
     Q.Open;
-    if (not Q.IsEmpty) and (Q.FieldByName('M').AsFloat > 0) then
-      Result := Q.FieldByName('M').AsFloat;
+    if not Q.IsEmpty then
+      Result := NormalizeMsPercent(Q.FieldByName('M').AsFloat);
   except
     Result := 0;
   end;
   Q.Free;
 end;
 
-/// MS do fornecimento: body → MS_BATIDA da fabricação → MS_DIETA do cadastro.
-function ResolveMsFornecimento(dm: TdmDB; const IdFabricacao, IdDieta: string;
-  MsFromBody: Double): Double;
+/// MS do fornecimento: MS_BATIDA da fabricação → MS_DIETA do cadastro (0 < MS <= 100).
+function ResolveMsFornecimento(dm: TdmDB; const IdFabricacao, IdDieta: string): Double;
 var
   IdFab, IdD: string;
 begin
-  Result := MsFromBody;
-  if Result > 0 then
-    Exit;
+  Result := 0;
 
   IdFab := Trim(IdFabricacao);
   if (IdFab <> '') and (IdFab <> '0') then
@@ -574,6 +582,90 @@ begin
   MirrorPostBody('/Post/GpsTrack', Body, JSONResult.ToJSON, 200);
 end;
 
+procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fornecimento');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fornecimento_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
 procedure RegistraRotas;
 begin
   THorse.Post('/Post/Fornecimento',PostFornecimento);
@@ -582,6 +674,7 @@ begin
   THorse.Put('/logs/upload/:device', UploadLog);
   THorse.Post('/Post/GravaTag', PostGravaTag);
   THorse.Post('/Post/GpsTrack', PostGpsTrack);
+  THorse.Post('/Post/FornecimentoAudit', PostFornecimentoAudit);
 end;
 
 function NormalizeEPC(const S: string): string;
@@ -870,11 +963,14 @@ var
   vMsFornec, vRealizadoNum, vRealizadoAtual, vRealizadoGravar: Double;
   vIdDietaMs: string;
   vFornecimentoAcumulativo: Boolean;
+  vPontoCorteKg: Double;
 
   // chave natural
   vIdBaia, vIdRacaoPrev, vTratoStr, vDataISO: string;
   vTrato: Integer;
   vData: TDateTime;
+  vEncontrou: Boolean;
+  vIdFallback: string;
 
   function GetStr(const K: string; const Def: string = ''): string;
   begin
@@ -912,30 +1008,122 @@ begin
       vMS := GetStr('ms_dieta_realizada', '0');
 
       vIdBaia := GetStr('id_baia', '');
+      if vIdBaia = '' then
+        vIdBaia := GetStr('IDCURRAL', '');
       vIdRacaoPrev := GetStr('id_racao', '');
       if vIdRacaoPrev = '' then
         vIdRacaoPrev := GetStr('id_dieta_prevista', '');
-      vTratoStr := GetStr('trato', '0');
+      vTratoStr := GetStr('trato', '');
+      if vTratoStr = '' then
+        vTratoStr := GetStr('TRATO', '0');
       vDataISO := GetStr('data', '');
+      if vDataISO = '' then
+        vDataISO := GetStr('DATA_FORN', '');
 
       vTrato := StrToIntDef(vTratoStr, 0);
       if not ParseFlexDate(vDataISO, vData) then
         vData := 0;
 
+      if (Trim(vIdRacaoPrev) = '') or (Trim(vIdRacaoPrev) = '0') then
+      begin
+        if (Trim(vIdDietaRealizada) <> '') and (Trim(vIdDietaRealizada) <> '0') then
+          vIdRacaoPrev := Trim(vIdDietaRealizada);
+      end;
+
       vRealizadoNum := ParseFlexNumber(vRealizado);
       vFornecimentoAcumulativo := dmGlobal.GetFornecimentoAcumulativo;
+      vPontoCorteKg := dmGlobal.GetPontoCorteFornecimentoKg;
       vIdDietaMs := vIdDietaRealizada;
       if (Trim(vIdDietaMs) = '') or (Trim(vIdDietaMs) = '0') then
         vIdDietaMs := vIdRacaoPrev;
-      vMsFornec := ResolveMsFornecimento(
-        dmGlobal,
-        vIdFabricacao,
-        vIdDietaMs,
-        JsonFlexNumber(Body, ['ms_dieta_realizada', 'msDietaRealizada'])
-      );
+      vMsFornec := 0;
+
+      // Abaixo do ponto de corte: nao grava no CG Pec, mas confirma sync (HTTP 200).
+      if (vPontoCorteKg > 0) and (vRealizadoNum <= vPontoCorteKg) then
+      begin
+        if vId <> '' then
+          JSONResult.AddPair('id', vId);
+        JSONResult.AddPair('ok', TJSONBool.Create(True));
+        JSONResult.AddPair('ignorado_ponto_corte', TJSONBool.Create(True));
+        JSONResult.AddPair('ponto_corte_kg', TJSONNumber.Create(vPontoCorteKg));
+        JSONResult.AddPair('realizado_recebido', TJSONNumber.Create(vRealizadoNum));
+        JSONResult.AddPair('modo', 'ignorado_ponto_corte');
+        Res.Send(JSONResult).Status(200);
+        MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+        Exit;
+      end;
+
+      vMsFornec := ResolveMsFornecimento(dmGlobal, vIdFabricacao, vIdDietaMs);
+      if vMsFornec <= 0 then
+        raise Exception.Create(
+          'MS dieta realizada invalida (deve ser > 0 e <= 100). ' +
+          'Verifique MS_BATIDA da fabricacao ou MS_DIETA no cadastro.');
 
       dmGlobal.Fornecimento.Connection := dmGlobal.FBCon;
+      vIdFallback := vId;
+      vEncontrou := False;
 
+      // 1) Prioridade: chave natural (baia + trato + data + id_dieta)
+      if (vIdBaia <> '') and (vIdRacaoPrev <> '') and (vIdRacaoPrev <> '0')
+         and (vTrato > 0) and (vData <> 0) then
+      begin
+        with dmGlobal.qryAux do
+        begin
+          Close;
+          SQL.Clear;
+          SQL.Add('UPDATE CADASTRO_FORNECIMENTO');
+          SQL.Add('SET');
+          SQL.Add('  ID_FABRICACAO = :ID_FAB,');
+          SQL.Add('  ID_USUARIO_LANCAMENTO = :ID_USU,');
+          SQL.Add('  ID_TRATADOR = :ID_TRAT,');
+          SQL.Add('  ID_DIETA_REALIZADA = :ID_DIETA_R,');
+          if vFornecimentoAcumulativo then
+            SQL.Add('  REALIZADO = COALESCE(REALIZADO, 0) + :REAL,')
+          else
+            SQL.Add('  REALIZADO = :REAL,');
+          SQL.Add('  MS_DIETA_REALIZADA = :MS,');
+          SQL.Add('  STATUS = ''R''');
+          SQL.Add('WHERE');
+          SQL.Add('  ID_BAIA = :ID_BAIA');
+          SQL.Add('  AND TRATO = :TRATO');
+          SQL.Add('  AND DATA = :DATA');
+          SQL.Add('  AND ID_DIETA = :ID_RACAO');
+          SQL.Add('RETURNING ID');
+
+          ParamByName('ID_FAB').AsString := vIdFabricacao;
+          ParamByName('ID_USU').AsString := vIdUsuario;
+          ParamByName('ID_TRAT').AsString := vIdTratador;
+          ParamByName('ID_DIETA_R').AsString := vIdDietaRealizada;
+          ParamByName('REAL').AsFloat := vRealizadoNum;
+          ParamByName('MS').AsFloat := vMsFornec;
+          ParamByName('ID_BAIA').AsString := vIdBaia;
+          ParamByName('TRATO').AsInteger := vTrato;
+          ParamByName('DATA').AsDate := vData;
+          ParamByName('ID_RACAO').AsString := vIdRacaoPrev;
+
+          Open;
+
+          if not IsEmpty then
+          begin
+            vId := FieldByName('ID').AsString;
+            vEncontrou := True;
+          end;
+          Close;
+        end;
+
+        if vEncontrou then
+        begin
+          JSONResult.AddPair('id', vId);
+          JSONResult.AddPair('modo', 'update_por_chave_natural');
+          JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
+          Res.Send(JSONResult).Status(200);
+          MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+          Exit;
+        end;
+      end;
+
+      // 2) Fallback: ID da previsao (ultimo caso)
+      vId := vIdFallback;
       if vId <> '' then
       begin
         with dmGlobal.Fornecimento do
@@ -946,7 +1134,8 @@ begin
           Open;
 
           if IsEmpty then
-            raise Exception.Create('Registro não encontrado pelo ID informado: ' + vId);
+            raise Exception.Create(
+              'Registro nao encontrado por chave natural nem pelo ID: ' + vId);
 
           vRealizadoAtual := ParseFlexNumber(FieldByName('REALIZADO').AsString);
           if vFornecimentoAcumulativo then
@@ -976,56 +1165,9 @@ begin
       end;
 
       if (vIdBaia = '') or (vIdRacaoPrev = '') or (vTrato <= 0) or (vData = 0) then
-        raise Exception.Create('Sem ID e chave natural incompleta. Envie: id_baia, id_racao, trato, data.');
+        raise Exception.Create('Chave natural incompleta e ID ausente. Envie: id_baia, id_racao, trato, data (ou id).');
 
-      with dmGlobal.qryAux do
-      begin
-        Close;
-        SQL.Clear;
-        SQL.Add('UPDATE CADASTRO_FORNECIMENTO');
-        SQL.Add('SET');
-        SQL.Add('  ID_FABRICACAO = :ID_FAB,');
-        SQL.Add('  ID_USUARIO_LANCAMENTO = :ID_USU,');
-        SQL.Add('  ID_TRATADOR = :ID_TRAT,');
-        SQL.Add('  ID_DIETA_REALIZADA = :ID_DIETA_R,');
-        if vFornecimentoAcumulativo then
-          SQL.Add('  REALIZADO = COALESCE(REALIZADO, 0) + :REAL,')
-        else
-          SQL.Add('  REALIZADO = :REAL,');
-        SQL.Add('  MS_DIETA_REALIZADA = :MS,');
-        SQL.Add('  STATUS = ''R''');
-        SQL.Add('WHERE');
-        SQL.Add('  ID_BAIA = :ID_BAIA');
-        SQL.Add('  AND TRATO = :TRATO');
-        SQL.Add('  AND DATA = :DATA');
-        SQL.Add('  AND ID_DIETA = :ID_RACAO');
-        SQL.Add('RETURNING ID');
-
-        ParamByName('ID_FAB').AsString := vIdFabricacao;
-        ParamByName('ID_USU').AsString := vIdUsuario;
-        ParamByName('ID_TRAT').AsString := vIdTratador;
-        ParamByName('ID_DIETA_R').AsString := vIdDietaRealizada;
-        ParamByName('REAL').AsFloat := vRealizadoNum;
-        ParamByName('MS').AsFloat := vMsFornec;
-        ParamByName('ID_BAIA').AsString := vIdBaia;
-        ParamByName('TRATO').AsInteger := vTrato;
-        ParamByName('DATA').AsDate := vData;
-        ParamByName('ID_RACAO').AsString := vIdRacaoPrev;
-
-        Open;
-
-        if IsEmpty then
-          raise Exception.Create('Nenhum registro encontrado para (baia+dieta+trato+data).');
-
-        vId := FieldByName('ID').AsString;
-        Close;
-      end;
-
-      JSONResult.AddPair('id', vId);
-      JSONResult.AddPair('modo', 'update_por_chave_natural');
-      JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
-      Res.Send(JSONResult).Status(200);
-      MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+      raise Exception.Create('Nenhum registro encontrado para (baia+dieta+trato+data).');
     finally
       FreeAndNil(dmGlobal);
     end;

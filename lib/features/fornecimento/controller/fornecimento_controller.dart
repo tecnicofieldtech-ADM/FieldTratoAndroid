@@ -48,6 +48,7 @@ class FornecimentoController extends ChangeNotifier {
   // sessão por curral
   double? pesoInicio;
   DateTime? horaInicio;
+  String? _idCadastroAberto;
 
   // config
   ModeloBalanca modeloBalanca = ModeloBalanca.topcon;
@@ -157,6 +158,7 @@ class FornecimentoController extends ChangeNotifier {
       indexAtual = 0;
       pesoInicio = null;
       horaInicio = null;
+      _idCadastroAberto = null;
     } catch (e) {
       _erro = e.toString();
     } finally {
@@ -208,6 +210,7 @@ class FornecimentoController extends ChangeNotifier {
       indexAtual = 0;
       pesoInicio = null;
       horaInicio = null;
+      _idCadastroAberto = null;
     } catch (e) {
       _erro = e.toString();
     } finally {
@@ -287,11 +290,50 @@ class FornecimentoController extends ChangeNotifier {
 
     indexAtual = novoIndex;
 
-    // inicia sessão do novo
+    final c = atual;
+    if (c == null) return;
+
     pesoInicio = pesoAtual;
     horaInicio = DateTime.now();
 
+    final idRacao = (idRacaoCarregada ?? "").trim();
+    final dataRef = _parseDataIso(c.dataIso);
+    final idFornecimento = (c.idFornecimento ?? "").trim().isNotEmpty
+        ? (c.idFornecimento ?? "").trim()
+        : (idRacao.isEmpty
+            ? ""
+            : FornecimentoRepo.comboKey(
+                idBaia: c.idBaia,
+                idRacao: idRacao,
+                dataYmd: _ymd(dataRef),
+                trato: c.trato,
+              ));
+
+    if (idFornecimento.isNotEmpty) {
+      try {
+        _idCadastroAberto = await repo.iniciarCadastroFornecimento(
+          idFornecimento: idFornecimento,
+          idCurral: c.idBaia,
+          data: dataRef,
+          trato: c.trato,
+          previstoKg: c.previstoKg,
+          pesoInicio: pesoInicio!,
+          idUsuario: idUsuario,
+        );
+      } catch (e) {
+        _erro = e.toString();
+        pesoInicio = null;
+        horaInicio = null;
+        _idCadastroAberto = null;
+      }
+    }
+
     notifyListeners();
+  }
+
+  static DateTime _parseDataIso(String iso) {
+    final base = iso.length >= 10 ? iso.substring(0, 10) : iso;
+    return DateTime.tryParse(base) ?? DateTime.now();
   }
 
   // -----------------------
@@ -334,7 +376,7 @@ class FornecimentoController extends ChangeNotifier {
     final realizado = realizadoParcial;
 
     try {
-      // 1) salva finalizado (SQLite) - novo fluxo
+      // Grava 1 linha em CADASTRO_FORNECIMENTO; acumulado na API na sync.
       await repo.salvarCadastroFinalizado(
         idFornecimento: idFornecimento,
         idCurral: c.idBaia,
@@ -345,29 +387,13 @@ class FornecimentoController extends ChangeNotifier {
         realizadoKg: realizado,
         idUsuario: idUsuario,
         origemMapa: _origemMapa,
-      );
-
-      // 3) soma com acumulado e atualiza PREVISAO (por data+trato+baia)
-      final acumulado = await repo.getRealizadoAcumuladoDoCurral(
-        idFornecimento: idFornecimento,
-        idCurral: c.idBaia,
-        data: data,
-        trato: trato,
-      );
-
-      final novoRealizado = _round3(acumulado + realizado);
-
-      await repo.setPrevRealizado(
-        idFornecimento: idFornecimento,
-        idCurral: c.idBaia,
-        data: data,
-        trato: trato,
-        realizadoKg: novoRealizado,
+        idCadastroAberto: _idCadastroAberto,
       );
 
       // limpa sessão
       pesoInicio = null;
       horaInicio = null;
+      _idCadastroAberto = null;
 
       // recarrega mapa para refletir realizado/falta
       await montarMapaCurrais(idFazenda: idFaz);

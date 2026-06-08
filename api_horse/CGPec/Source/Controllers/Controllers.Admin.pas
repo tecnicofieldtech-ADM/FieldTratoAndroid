@@ -14,9 +14,11 @@ uses
   System.Classes,
   System.JSON,
   System.IOUtils,
+  System.StrUtils,
   Udm,
   UBiMirror,
-  URequestLog;
+  URequestLog,
+  UApiVersion;
 
 const
   MASK_PASSWORD = '********';
@@ -79,6 +81,11 @@ end;
 procedure GetMonitorPage(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 begin
   SendHtml('requests.html', Res);
+end;
+
+procedure GetDashboardFabricacaoPage(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+begin
+  SendHtml('dashboard-fabricacao.html', Res);
 end;
 
 procedure GetRequestLogsApi(Req: THorseRequest; Res: THorseResponse; Next: TProc);
@@ -154,6 +161,8 @@ begin
   Result := TJSONObject.Create;
   Result.AddPair('activeClient', dmdb.GetActiveClient);
   Result.AddPair('fornecimentoAcumulativo', TJSONBool.Create(dmdb.GetFornecimentoAcumulativo));
+  ApiVersionAddPairs(Result);
+  Result.AddPair('pontoCorteFornecimentoKg', TJSONNumber.Create(dmdb.GetPontoCorteFornecimentoKg));
   Result.AddPair('backends', LBackends);
   Result.AddPair('mirror', LMirror);
   Result.AddPair('nextApiBaseUrl', NextApiBaseUrl);
@@ -194,6 +203,28 @@ begin
   finally
     LBackends.Free;
   end;
+end;
+
+procedure GetApiVersion(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  LJson: TJSONObject;
+begin
+  try
+    LJson := BuildApiVersionJson;
+    try
+      Res.Send(LJson.ToJSON).ContentType('application/json; charset=utf-8').Status(200);
+    finally
+      LJson.Free;
+    end;
+  except
+    on E: Exception do
+      Res.Send(TJSONObject.Create.AddPair('erro', E.Message)).Status(500);
+  end;
+end;
+
+procedure GetApiVersionJs(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+begin
+  SendWebAdminAsset('api-version.js', 'application/javascript; charset=utf-8', Res);
 end;
 
 procedure GetApiConfig(Req: THorseRequest; Res: THorseResponse; Next: TProc);
@@ -255,6 +286,21 @@ begin
   Result := StrToIntDef(LVal.Value, Default);
 end;
 
+function JsonDouble(const Obj: TJSONObject; const Name: string; Default: Double): Double;
+var
+  LVal: TJSONValue;
+  LS: string;
+begin
+  Result := Default;
+  if Obj = nil then
+    Exit;
+  LVal := Obj.GetValue(Name);
+  if LVal = nil then
+    Exit;
+  LS := StringReplace(Trim(LVal.Value), ',', '.', [rfReplaceAll]);
+  Result := StrToFloatDef(LS, Default);
+end;
+
 function JsonBool(const Obj: TJSONObject; const Name: string; Default: Boolean): Boolean;
 var
   LVal: TJSONValue;
@@ -297,6 +343,8 @@ var
   LSyncNote: string;
   LFornAcumulativo: Boolean;
   LFornAcumStr: string;
+  LPontoCorteKg: Double;
+  LPontoCorteStr: string;
 begin
   try
     LBody := TJSONObject.ParseJSONValue(Req.Body) as TJSONObject;
@@ -400,12 +448,17 @@ begin
       else
         LFornAcumStr := '0';
 
+      LPontoCorteKg := JsonDouble(LBody, 'pontoCorteFornecimentoKg', dmdb.GetPontoCorteFornecimentoKg);
+      if LPontoCorteKg < 0 then
+        raise Exception.Create('Ponto de corte fornecimento (kg) deve ser 0 ou maior.');
+      LPontoCorteStr := StringReplace(FormatFloat('0.###', LPontoCorteKg), ',', '.', [rfReplaceAll]);
+
       dmdb.WriteApiConfigIni(LActiveClient,
         LCgHost, LCgUser, LCgPass, IntToStr(LCgPort), LCgDb, LCgRole,
         LFpHost, LFpUser, LFpPass, IntToStr(LFpPort), LFpDb, LFpRole,
         LPgHost, LPgUser, LPgPass, IntToStr(LPgPort), LPgDb, LPgEnabled,
         LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase,
-        LFornAcumStr);
+        LFornAcumStr, LPontoCorteStr);
       dmdb.DisconnectCgpec;
       BiMirrorReloadConfig;
 
@@ -612,6 +665,182 @@ begin
   end;
 end;
 
+function GetAuditFornecimentoBaseDir: string;
+var
+  Env: string;
+begin
+  Env := Trim(GetEnvironmentVariable('RFEED_AUDIT_DIR'));
+  if Env <> '' then
+    Exit(IncludeTrailingPathDelimiter(Env));
+
+  Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+  Result := TPath.Combine(Result, 'audit');
+  Result := TPath.Combine(Result, 'fornecimento');
+  Result := IncludeTrailingPathDelimiter(Result);
+end;
+
+function IsSafeAuditDeviceId(const S: string): Boolean;
+var
+  I: Integer;
+  C: Char;
+begin
+  Result := (Trim(S) <> '') and (Length(S) <= 128);
+  if not Result then
+    Exit;
+  for I := 1 to Length(S) do
+  begin
+    C := S[I];
+    if (C = '\') or (C = '/') or (C = ':') or (C = '*') or (C = '?') or (C = '"') or
+       (C = '<') or (C = '>') or (C = '|') then
+      Exit(False);
+  end;
+  Result := Pos('..', S) = 0;
+end;
+
+function IsSafeAuditFileName(const S: string): Boolean;
+begin
+  Result := (Trim(S) <> '') and (Length(S) <= 255);
+  if not Result then
+    Exit;
+  if (Pos('\', S) > 0) or (Pos('/', S) > 0) or (Pos('..', S) > 0) then
+    Exit(False);
+  Result := StartsText('fornecimento_full_', S) and EndsText('.json', LowerCase(S));
+end;
+
+function ResolveAuditFornecimentoFile(const DeviceId, FileName: string): string;
+var
+  LBase, LDir, LPath: string;
+begin
+  if not IsSafeAuditDeviceId(DeviceId) then
+    raise Exception.Create('device_id invalido');
+  if not IsSafeAuditFileName(FileName) then
+    raise Exception.Create('nome de arquivo invalido');
+
+  LBase := TPath.GetFullPath(ExcludeTrailingPathDelimiter(GetAuditFornecimentoBaseDir));
+  LDir := TPath.GetFullPath(TPath.Combine(LBase, DeviceId));
+  if not SameText(TPath.GetDirectoryName(LDir), LBase) then
+    raise Exception.Create('caminho fora da pasta de auditoria');
+
+  LPath := TPath.GetFullPath(TPath.Combine(LDir, FileName));
+  if not SameText(TPath.GetDirectoryName(LPath), LDir) then
+    raise Exception.Create('arquivo fora da pasta do device');
+  if not TFile.Exists(LPath) then
+    raise Exception.Create('arquivo nao encontrado');
+  Result := LPath;
+end;
+
+procedure GetAuditFornecimentoPage(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+begin
+  SendHtml('audit-fornecimento.html', Res);
+end;
+
+procedure GetAuditFornecimentoListApi(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  LBase, LFilterDevice, LDeviceName, LFilePath: string;
+  LRoot, LItem: TJSONObject;
+  LAllFiles: TJSONArray;
+  LFileObj: TJSONObject;
+  LDeviceDirs, LFileNames: TArray<string>;
+  I, J: Integer;
+  LModified: TDateTime;
+begin
+  LRoot := TJSONObject.Create;
+  try
+    try
+      LBase := GetAuditFornecimentoBaseDir;
+      LRoot.AddPair('baseDir', LBase);
+      LRoot.AddPair('envOverride', TJSONBool.Create(Trim(GetEnvironmentVariable('RFEED_AUDIT_DIR')) <> ''));
+      LAllFiles := TJSONArray.Create;
+      LRoot.AddPair('files', LAllFiles);
+
+      LFilterDevice := Trim(Req.Query.Items['device']);
+      if (LFilterDevice <> '') and (not IsSafeAuditDeviceId(LFilterDevice)) then
+        raise Exception.Create('Filtro device invalido');
+
+      if TDirectory.Exists(LBase) then
+      begin
+        if LFilterDevice <> '' then
+          LDeviceDirs := [TPath.Combine(LBase, LFilterDevice)]
+        else
+          LDeviceDirs := TDirectory.GetDirectories(LBase);
+
+        for I := 0 to Length(LDeviceDirs) - 1 do
+        begin
+          if not TDirectory.Exists(LDeviceDirs[I]) then
+            Continue;
+
+          LDeviceName := ExtractFileName(ExcludeTrailingPathDelimiter(LDeviceDirs[I]));
+          if not IsSafeAuditDeviceId(LDeviceName) then
+            Continue;
+
+          LFileNames := TDirectory.GetFiles(LDeviceDirs[I], 'fornecimento_full_*.json');
+          for J := 0 to Length(LFileNames) - 1 do
+          begin
+            LFilePath := LFileNames[J];
+            LFileObj := TJSONObject.Create;
+            LFileObj.AddPair('device_id', LDeviceName);
+            LFileObj.AddPair('filename', ExtractFileName(LFilePath));
+            LFileObj.AddPair('bytes', TJSONNumber.Create(TFile.GetSize(LFilePath)));
+            LModified := TFile.GetLastWriteTime(LFilePath);
+            LFileObj.AddPair('modified', FormatDateTime('yyyy-mm-dd"T"hh:nn:ss', LModified));
+            LFileObj.AddPair('saved_path', LFilePath);
+            LAllFiles.AddElement(LFileObj);
+          end;
+        end;
+      end;
+
+      LRoot.AddPair('totalFiles', TJSONNumber.Create(LAllFiles.Count));
+      Res.Send(LRoot.ToJSON).ContentType('application/json; charset=utf-8').Status(200);
+    except
+      on E: Exception do
+      begin
+        LItem := TJSONObject.Create;
+        try
+          LItem.AddPair('erro', E.Message);
+          Res.Send(LItem.ToJSON).ContentType('application/json; charset=utf-8').Status(400);
+        finally
+          LItem.Free;
+        end;
+      end;
+    end;
+  finally
+    LRoot.Free;
+  end;
+end;
+
+procedure GetAuditFornecimentoFileApi(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  LDevice, LName, LInline, LPath, LContent: string;
+  LErr: TJSONObject;
+begin
+  try
+    LDevice := Trim(Req.Query.Items['device']);
+    LName := Trim(Req.Query.Items['name']);
+    if LDevice = '' then
+      LDevice := Trim(Req.Query.Items['device_id']);
+    if LName = '' then
+      LName := Trim(Req.Query.Items['filename']);
+
+    LPath := ResolveAuditFornecimentoFile(LDevice, LName);
+    LInline := LowerCase(Trim(Req.Query.Items['inline']));
+
+    if (LInline = '1') or (LInline = 'true') or (LInline = 'yes') then
+    begin
+      LContent := TFile.ReadAllText(LPath, TEncoding.UTF8);
+      Res.Send(LContent).ContentType('application/json; charset=utf-8').Status(200);
+    end
+    else
+      Res.Download(LPath, 'application/json; charset=utf-8');
+  except
+    on E: Exception do
+    begin
+      LErr := TJSONObject.Create;
+      LErr.AddPair('erro', E.Message);
+      Res.Send(LErr.ToJSON).ContentType('application/json; charset=utf-8').Status(404);
+    end;
+  end;
+end;
+
 procedure RegistraRotasAdmin;
 begin
   THorse.Get('/', GetRoot);
@@ -619,9 +848,16 @@ begin
   THorse.Get('/health', GetHealthPage);
   THorse.Get('/requests', GetRequestsPage);
   THorse.Get('/monitor', GetMonitorPage);
+  THorse.Get('/dashboard/fabricacao', GetDashboardFabricacaoPage);
+  THorse.Get('/audit/fornecimento', GetAuditFornecimentoPage);
+  THorse.Get('/audit', GetAuditFornecimentoPage);
   THorse.Get('/web-admin/request-monitor.js', GetRequestMonitorJs);
+  THorse.Get('/web-admin/api-version.js', GetApiVersionJs);
   THorse.Get('/api/request-logs', GetRequestLogsApi);
   THorse.Delete('/api/request-logs', DeleteRequestLogsApi);
+  THorse.Get('/api/audit/fornecimento', GetAuditFornecimentoListApi);
+  THorse.Get('/api/audit/fornecimento/file', GetAuditFornecimentoFileApi);
+  THorse.Get('/api/version', GetApiVersion);
   THorse.Get('/api/config', GetApiConfig);
   THorse.Post('/api/config', PostApiConfig);
   THorse.Post('/api/config/postgres', PostApiConfigPostgres);

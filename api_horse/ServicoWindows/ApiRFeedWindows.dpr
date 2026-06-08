@@ -6,6 +6,7 @@ uses
   Controllers.Get in '..\CGPec\Source\Controllers\Controllers.Get.pas',
   Controllers.Post in '..\CGPec\Source\Controllers\Controllers.Post.pas',
   Controllers.Admin in '..\CGPec\Source\Controllers\Controllers.Admin.pas',
+  UApiVersion in '..\CGPec\Source\UApiVersion.pas',
   Controllers.Mirror in '..\CGPec\Source\Controllers\Controllers.Mirror.pas',
   UBiMirror in '..\CGPec\Source\BiMirror\UBiMirror.pas',
   URequestLog in '..\CGPec\Source\RequestLog\URequestLog.pas',

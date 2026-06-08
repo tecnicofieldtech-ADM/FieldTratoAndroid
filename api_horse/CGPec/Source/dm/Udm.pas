@@ -175,6 +175,8 @@ type
     procedure RepairIniEncodingIfNeeded(const APath: string);
     function  GetActiveClient: string;
     function  GetFornecimentoAcumulativo: Boolean;
+    function  GetPontoCorteFornecimentoKg: Double;
+    function  GetApiListenPort: Integer;
     procedure ReadCgpecIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure ReadFieldPecIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure ReadPostgresIni(out AHost, AUser, APassword, APort, ADatabase, AEnabled: string);
@@ -188,7 +190,8 @@ type
       const FpServer, FpUser, FpPassword, FpPort, FpDatabase, FpRole: string;
       const PgHost, PgUser, PgPassword, PgPort, PgDatabase, PgEnabled: string;
       const MirrorEnabled, MirrorUrl, MirrorNextApiBase: string;
-      const FornecimentoAcumulativo: string = '1');
+      const FornecimentoAcumulativo: string = '1';
+      const PontoCorteFornecimentoKg: string = '');
     procedure TestCgpecConnection(const AServer, AUser, APassword, APort, ADatabase: string;
       out AOk: Boolean; out AError: string);
     procedure TestFieldPecConnection(const AServer, AUser, APassword, APort, ADatabase: string;
@@ -406,6 +409,23 @@ begin
   end;
 end;
 
+function IsLocalFirebirdHost(const AServer: string): Boolean;
+var
+  S: string;
+  LBuf: array[0..MAX_COMPUTERNAME_LENGTH] of Char;
+  LSize: DWORD;
+begin
+  S := LowerCase(Trim(AServer));
+  if (S = '') or (S = 'localhost') or (S = '127.0.0.1') or (S = '.') or (S = 'local') then
+    Exit(True);
+
+  LSize := MAX_COMPUTERNAME_LENGTH + 1;
+  if GetComputerName(LBuf, LSize) then
+    Result := SameText(S, string(LBuf))
+  else
+    Result := False;
+end;
+
 procedure Tdmdb.ConectaDBCGPec;
 var
   Arquivo: string;
@@ -417,7 +437,7 @@ begin
   Arquivo := ConfigIniFilePath;
   if not FileExists(Arquivo) then
     raise Exception.Create('Arquivo ApiConfig.ini não localizado em: ' + Arquivo + sLineBreak +
-      'Use http://127.0.0.1:3001/config para criar a configuração.');
+      'Use http://127.0.0.1:' + IntToStr(GetApiListenPort) + '/config para criar a configuração.');
 
   RepairIniEncodingIfNeeded(Arquivo);
 
@@ -436,7 +456,9 @@ begin
     raise Exception.Create('Port não lida do ApiConfig.ini (' + Arquivo + ')');
   if vDB = '' then
     raise Exception.Create('DB não lido do ApiConfig.ini (' + Arquivo + ')');
-  if not FileExists(vDB) then
+  // Só valida arquivo local quando o Firebird está nesta máquina.
+  // Servidor remoto (ex.: 192.168.10.250) usa caminho do .FDB no host remoto.
+  if IsLocalFirebirdHost(vServer) and not FileExists(vDB) then
     raise Exception.Create('Arquivo FDB não encontrado: ' + vDB);
 
   FBDriver.VendorLib := vVendorLib;
@@ -647,6 +669,32 @@ begin
   Result := not ((LVal = '0') or (LVal = 'false') or (LVal = 'no') or (LVal = 'nao') or (LVal = 'não'));
 end;
 
+function Tdmdb.GetPontoCorteFornecimentoKg: Double;
+var
+  LVal: string;
+begin
+  LVal := Trim(ReadIniValue(ConfigIniFilePath, 'API', 'PontoCorteFornecimentoKg', '50'));
+  LVal := StringReplace(LVal, ',', '.', [rfReplaceAll]);
+  Result := StrToFloatDef(LVal, 50);
+  if Result < 0 then
+    Result := 0;
+end;
+
+function Tdmdb.GetApiListenPort: Integer;
+var
+  LVal: string;
+  LPort: Integer;
+const
+  DEFAULT_API_PORT = 3001;
+begin
+  LVal := Trim(ReadIniValue(ConfigIniFilePath, 'API', 'Port', IntToStr(DEFAULT_API_PORT)));
+  LPort := StrToIntDef(LVal, DEFAULT_API_PORT);
+  if (LPort < 1) or (LPort > 65535) then
+    Result := DEFAULT_API_PORT
+  else
+    Result := LPort;
+end;
+
 function AcumIniStr(Acum: Boolean): string;
 begin
   if Acum then
@@ -661,11 +709,12 @@ procedure Tdmdb.WriteApiConfigIni(
   const FpServer, FpUser, FpPassword, FpPort, FpDatabase, FpRole: string;
   const PgHost, PgUser, PgPassword, PgPort, PgDatabase, PgEnabled: string;
   const MirrorEnabled, MirrorUrl, MirrorNextApiBase: string;
-  const FornecimentoAcumulativo: string = '1');
+  const FornecimentoAcumulativo: string = '1';
+  const PontoCorteFornecimentoKg: string = '');
 var
   LPath: string;
   LLines: TStringList;
-  LNextBase, LMirrorUrl, LClient, LFornAcum: string;
+  LNextBase, LMirrorUrl, LClient, LFornAcum, LPontoCorte: string;
 begin
   LPath := ConfigIniFilePath;
   LClient := LowerCase(Trim(ActiveClient));
@@ -674,6 +723,9 @@ begin
   LFornAcum := Trim(FornecimentoAcumulativo);
   if (LFornAcum <> '0') and (LFornAcum <> '1') then
     LFornAcum := '1';
+  LPontoCorte := Trim(PontoCorteFornecimentoKg);
+  if LPontoCorte = '' then
+    LPontoCorte := StringReplace(FormatFloat('0.###', GetPontoCorteFornecimentoKg), ',', '.', [rfReplaceAll]);
   LNextBase := Trim(MirrorNextApiBase);
   if LNextBase = '' then
     LNextBase := 'http://127.0.0.1:3000';
@@ -685,6 +737,8 @@ begin
     LLines.Add('[API]');
     LLines.Add('ActiveClient=' + LClient);
     LLines.Add('FornecimentoAcumulativo=' + LFornAcum);
+    LLines.Add('PontoCorteFornecimentoKg=' + LPontoCorte);
+    LLines.Add('Port=' + IntToStr(GetApiListenPort));
     LLines.Add('');
     LLines.Add('[CGPEC]');
     LLines.Add('Server=' + Trim(CgServer));

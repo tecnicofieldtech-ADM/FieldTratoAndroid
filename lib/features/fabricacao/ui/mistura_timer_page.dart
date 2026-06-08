@@ -16,13 +16,14 @@ class MisturaTimerPage extends StatefulWidget {
     // opcionais
     this.titulo,
     this.onDonePopToRoot = true,
+    this.segundosQuandoMinutosZero = 0,
   });
 
-  /// ✅ minutos de mistura (ex: 1 = 60s)
-  /// Regra:
-  /// - <= 0: não deveria abrir (tratado na weigh_page),
-  ///   mas se abrir, encerra imediatamente.
+  /// ✅ minutos de mistura (ex: 1 = 60s). Se <= 0, usa [segundosQuandoMinutosZero].
   final int minutos;
+
+  /// Contagem quando [minutos] <= 0 (ex.: 10 s após finalizar sem tempo de mistura).
+  final int segundosQuandoMinutosZero;
 
   /// opcional (compat)
   final FabricacaoRepo? repo;
@@ -48,12 +49,13 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
   void initState() {
     super.initState();
 
-    // ✅ se vier 0 ou negativo, encerra imediatamente
-    if (widget.minutos <= 0) {
+    final totalSecs = widget.minutos > 0
+        ? widget.minutos * 60
+        : widget.segundosQuandoMinutosZero;
+
+    if (totalSecs <= 0) {
       _secs = 0;
       _done = true;
-
-      // garante 1 frame e já habilita "Finalizar"
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {});
@@ -61,7 +63,7 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
       return;
     }
 
-    _secs = widget.minutos * 60;
+    _secs = totalSecs;
 
     _t = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return;

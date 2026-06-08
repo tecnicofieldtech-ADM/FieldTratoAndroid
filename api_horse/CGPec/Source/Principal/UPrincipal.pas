@@ -41,6 +41,8 @@ uses
   Winapi.Windows;
 
 procedure TfrmPrincipal.FormShow(Sender: TObject);
+var
+  LPort: Integer;
 begin
   THorse.Use(Jhonson());
   THorse.Use(Cors);
@@ -58,8 +60,9 @@ begin
   end;
   Controllers.Admin.RegistraRotasAdmin;
   BiMirrorStart;
-  THorse.Listen(3001);
-  ShellExecute(0, 'open', 'http://127.0.0.1:3001/config', nil, nil, SW_SHOWNORMAL);
+  LPort := dmdb.GetApiListenPort;
+  THorse.Listen(LPort);
+  ShellExecute(0, 'open', PChar('http://127.0.0.1:' + IntToStr(LPort) + '/config'), nil, nil, SW_SHOWNORMAL);
 end;
 
 end.

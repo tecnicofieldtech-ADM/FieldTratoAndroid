@@ -16,6 +16,7 @@ uses
   Controllers.Get in '..\Controllers\Controllers.Get.pas',
   Controllers.Post in '..\Controllers\Controllers.Post.pas',
   Controllers.Admin in '..\Controllers\Controllers.Admin.pas',
+  UApiVersion in '..\UApiVersion.pas',
   Controllers.Mirror in '..\Controllers\Controllers.Mirror.pas',
   UBiMirror in '..\BiMirror\UBiMirror.pas',
   URequestLog in '..\RequestLog\URequestLog.pas',

@@ -188,7 +188,7 @@
 xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]></PostBuildEvent>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <DCC_UnitSearchPath>C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\jhonson\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-cors\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-basic-auth\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\handle-exception\src;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\jhonson\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-cors\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-basic-auth\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\handle-exception\src;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
@@ -205,6 +205,7 @@ xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
+        <DCC_UnitSearchPath>C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\jhonson\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-cors\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\horse-basic-auth\src;C:\RSistemas\Git\RFeedFlutter\api_horse\CGPec\Source\dpr\modules\handle-exception\src;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <PostBuildEvent><![CDATA[if not exist "$(OUTPUTDIR)web-admin\" mkdir "$(OUTPUTDIR)web-admin\"
 xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]></PostBuildEvent>
     </PropertyGroup>
@@ -235,6 +236,7 @@ xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]>
         <DCCReference Include="..\Controllers\Controllers.Get.pas"/>
         <DCCReference Include="..\Controllers\Controllers.Post.pas"/>
         <DCCReference Include="..\Controllers\Controllers.Admin.pas"/>
+        <DCCReference Include="..\UApiVersion.pas"/>
         <DCCReference Include="..\Controllers\Controllers.Mirror.pas"/>
         <DCCReference Include="..\BiMirror\UBiMirror.pas"/>
         <DCCReference Include="..\RequestLog\URequestLog.pas"/>
@@ -1132,7 +1134,8 @@ xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\..\..\web-admin\*.html&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
+&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\..\..\web-admin\*.html&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win32'">
@@ -1140,7 +1143,8 @@ xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\..\..\web-admin\*.html&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
+&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\..\..\web-admin\*.html&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

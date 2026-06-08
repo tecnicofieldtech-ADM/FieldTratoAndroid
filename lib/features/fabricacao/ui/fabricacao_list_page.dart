@@ -28,7 +28,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   int? _tipoTrabalho;
 
   // ---------- filtros ----------
-  DateTime? _filterDate; // data única
+  late DateTime _filterDate; // data do dia (padrão: hoje)
   String? _filterDieta; // nome da ração (combo)
   int? _filterTrato; // trato (combo)
 
@@ -38,11 +38,13 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
   // animação "finalizada"
   late final AnimationController _animCtrl;
+  int _carregRefreshTick = 0;
   late final Animation<double> _pulse;
 
   @override
   void initState() {
     super.initState();
+    _filterDate = _today();
     _animCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -122,6 +124,11 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   bool _sameDate(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
+  DateTime _today() {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day);
+  }
+
   int get _qtdFiltradosSyncHabilitavel {
     final ids = <String>{};
     for (final f in _filtered) {
@@ -135,17 +142,15 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   List<FabricacaoHeader> get _filtered {
     Iterable<FabricacaoHeader> it = _items;
 
-    if (_filterDate != null) {
-      final d0 = _filterDate!;
-      it = it.where((e) {
-        try {
-          final d = DateTime.parse(e.dataFabricacao);
-          return _sameDate(d, d0);
-        } catch (_) {
-          return false;
-        }
-      });
-    }
+    final d0 = _filterDate;
+    it = it.where((e) {
+      try {
+        final d = DateTime.parse(e.dataFabricacao);
+        return _sameDate(d, d0);
+      } catch (_) {
+        return false;
+      }
+    });
 
     if (_filterDieta != null && _filterDieta!.trim().isNotEmpty) {
       final dn = _filterDieta!.trim().toLowerCase();
@@ -425,11 +430,10 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   // ---------- UI filtros ----------
   Future<void> _pickDate() async {
     final now = DateTime.now();
-    final initial = _filterDate ?? now;
 
     final picked = await showDatePicker(
       context: context,
-      initialDate: initial,
+      initialDate: _filterDate,
       firstDate: DateTime(now.year - 2, 1, 1),
       lastDate: DateTime(now.year + 1, 12, 31),
     );
@@ -444,15 +448,22 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
   void _clearFilters() {
     setState(() {
-      _filterDate = null;
+      _filterDate = _today();
       _filterDieta = null;
       _filterTrato = null;
     });
   }
 
+  String _fmtFilterDate(DateTime d) {
+    final yy = (d.year % 100).toString().padLeft(2, "0");
+    return "${d.day.toString().padLeft(2, "0")}/"
+        "${d.month.toString().padLeft(2, "0")}/$yy";
+  }
+
   Widget _filtersBar() {
-    final hasFilters =
-        _filterDate != null || _filterDieta != null || _filterTrato != null;
+    final hasFilters = !_sameDate(_filterDate, _today()) ||
+        _filterDieta != null ||
+        _filterTrato != null;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -468,11 +479,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                 child: OutlinedButton.icon(
                   onPressed: _pickDate,
                   icon: const Icon(Icons.event),
-                  label: Text(_filterDate == null
-                      ? "Data"
-                      : "${_filterDate!.day.toString().padLeft(2, "0")}/"
-                          "${_filterDate!.month.toString().padLeft(2, "0")}/"
-                          "${(_filterDate!.year % 100).toString().padLeft(2, "0")}"),
+                  label: Text(_fmtFilterDate(_filterDate)),
                 ),
               ),
               const SizedBox(width: 10),
@@ -545,8 +552,70 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   }
 
   // pill do carregamento (ficou no nível do State, não dentro do _statusPill)
-  Widget _carregamentoPill(String fabId) {
+  Future<void> _forcarGerarCarregamento(FabricacaoHeader it) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text("Gerar carregamento"),
+        content: Text(
+          "Criar carregamento para a fabricação de ${it.dietaNome.trim().isEmpty ? "ração" : it.dietaNome}?\n\n"
+          "Use quando a finalização ocorreu sem gerar o carregamento (ex.: vagão não configurado).",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text("Gerar"),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    try {
+      var idVagao = await _cfgRepo.getIdVagao();
+      if (idVagao.trim().isEmpty) {
+        idVagao = await widget.repo.getIdVagaoByFabricacaoId(it.id);
+      }
+
+      await widget.repo.criarCarregamentoParaFabricacao(
+        idFabricacao: it.id,
+        idVagaoOverride: idVagao.trim().isEmpty ? null : idVagao.trim(),
+        tipoTrabalho: _tipoTrabalho ?? 0,
+      );
+
+      if (!mounted) return;
+      setState(() => _carregRefreshTick++);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Carregamento criado com sucesso."),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text("Erro ao gerar carregamento"),
+          content: Text("$e"),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text("OK"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _carregamentoPill(String fabId, {FabricacaoHeader? item}) {
+    final emAberto = item?.status == FabricacaoStatus.emAndamento;
     return FutureBuilder<Map<String, Object?>?>(
+      key: ValueKey("carreg-$fabId-$_carregRefreshTick"),
       future: widget.repo.getCarregamentoStatusByFabricacao(fabId),
       builder: (_, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
@@ -567,17 +636,38 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
         final m = snap.data;
         if (m == null) {
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.red.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
-            ),
-            child: const Text(
-              "Carregamento: Não criado",
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
-            ),
+          return Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+                ),
+                child: const Text(
+                  "Carregamento: Não criado",
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+                ),
+              ),
+              if (item != null && !emAberto)
+                TextButton.icon(
+                  onPressed: () => _forcarGerarCarregamento(item),
+                  icon: const Icon(Icons.local_shipping_outlined, size: 18),
+                  label: const Text("Gerar carregamento"),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
           );
         }
 
@@ -835,7 +925,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                             spacing: 8,
                                             runSpacing: 8,
                                             children: [
-                                              _carregamentoPill(it.id),
+                                              _carregamentoPill(it.id, item: it),
                                             ],
                                           ),
                                           Text(

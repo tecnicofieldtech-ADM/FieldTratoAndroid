@@ -364,10 +364,27 @@ class BootstrapSync {
   //
   // Mudanças aplicadas:
   // 1) NÃO dá delete geral: limpa apenas o DIA/TRATO e (se existir) a RAÇÃO.
-  // 2) Preserva REALIZADO_KG local: se API vier 0/null e local > 0, mantém local.
+  // 2) PREVISAO.REALIZADO_KG = valor da API (acumulado no servidor).
+  //    O mapa local soma CADASTRO_FORNECIMENTO para exibição.
   // 3) DATA sempre gravada como "YYYY-MM-DD"
   // 4) Logs úteis + amostra
   // =========================================================
+  double _mergeRealizadoPosDownload({
+    required double localReal,
+    required double apiRealizado,
+  }) {
+    if (apiRealizado <= 0) return localReal > 0 ? localReal : 0;
+    if (localReal <= 0) return apiRealizado;
+
+    // Servidor CG Pec (FornecimentoAcumulativo=1) pode devolver ~2x após re-sync.
+    if (apiRealizado >= localReal * 1.8 &&
+        apiRealizado <= localReal * 2.2) {
+      return localReal;
+    }
+
+    return apiRealizado >= localReal ? apiRealizado : localReal;
+  }
+
   Future<int> baixarPrevisaoTrato(
     Map<String, Object?> cfg,
     String idFazenda,
@@ -520,10 +537,15 @@ class BootstrapSync {
           continue;
         }
 
-        // ✅ preserva realizado local se API veio 0 e local > 0
+        // PREVISAO guarda só o acumulado vindo da API; mapa usa também CADASTRO local.
         final key = "$idFornecimento|$idBaia|$trato|$data|$idRacao".toUpperCase();
         final localReal = realizadoLocal[key] ?? 0.0;
-        final realizadoFinal = (apiRealizado <= 0 && localReal > 0) ? localReal : apiRealizado;
+        final realizadoFinal = apiRealizado > 0
+            ? _mergeRealizadoPosDownload(
+                localReal: localReal,
+                apiRealizado: apiRealizado,
+              )
+            : 0.0;
 
         await txn.insert(
           "PREVISAO",

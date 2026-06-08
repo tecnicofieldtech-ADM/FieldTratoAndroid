@@ -11,6 +11,7 @@ import "../controller/fornecimento_dashboard_controller.dart";
 import "../data/fornecimento_repo.dart";
 import "../../../services/session_service.dart";
 import "../../../repo/config_repo.dart";
+import "../../../widgets/scale_peso_highlight_card.dart";
 
 class FornecimentoDashboardPage extends StatefulWidget {
   const FornecimentoDashboardPage({
@@ -57,6 +58,9 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   bool _mapaHorizontalFixo = false;
   String? _linhaFiltroSaved;
   String? _curralSelSaved;
+  final ScrollController _mapaHScrollCtrl = ScrollController();
+  double _mapaHScrollOffset = 0;
+  bool _ctrlWasLoading = false;
 
   @override
   void initState() {
@@ -74,7 +78,47 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       cooldown: const Duration(seconds: 2),
     );
 
+    _mapaHScrollCtrl.addListener(_trackMapaHorizontalScroll);
+    _ctrl.addListener(_onCtrlLoadingForMapaScroll);
+
     _boot();
+  }
+
+  void _trackMapaHorizontalScroll() {
+    if (!_mapaHScrollCtrl.hasClients) return;
+    _mapaHScrollOffset = _mapaHScrollCtrl.offset;
+  }
+
+  void _onCtrlLoadingForMapaScroll() {
+    final loading = _ctrl.loading;
+    if (_ctrlWasLoading && !loading && _mapaHScrollOffset > 0) {
+      _scheduleMapaHorizontalScrollRestore();
+    }
+    _ctrlWasLoading = loading;
+  }
+
+  void _captureMapaHorizontalScroll() {
+    if (_mapaHScrollCtrl.hasClients) {
+      _mapaHScrollOffset = _mapaHScrollCtrl.offset;
+    }
+  }
+
+  void _scheduleMapaHorizontalScrollRestore({int attempt = 0}) {
+    if (_mapaHScrollOffset <= 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_mapaHScrollCtrl.hasClients) {
+        final max = _mapaHScrollCtrl.position.maxScrollExtent;
+        final target = _mapaHScrollOffset.clamp(0.0, max);
+        if ((_mapaHScrollCtrl.offset - target).abs() > 1) {
+          _mapaHScrollCtrl.jumpTo(target);
+        }
+        return;
+      }
+      if (attempt < 8) {
+        _scheduleMapaHorizontalScrollRestore(attempt: attempt + 1);
+      }
+    });
   }
 
   Future<void> _loadUiPrefs() async {
@@ -180,14 +224,19 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       }
 
       if (hostR.isNotEmpty && portR > 0) {
-        // Garante estado limpo antes de reconectar (evita corrida connect/disconnect).
-        try {
-          await widget.rfid.disconnect();
-        } catch (_) {}
-
         widget.rfid.configure(host: hostR, port: portR);
-        await widget.rfid.connect();
-        _ctrl.setLeituraRfid(true);
+        if (_ctrl.rfidPausado) {
+          try {
+            await widget.rfid.disconnect();
+          } catch (_) {}
+          widget.rfid.setLeituraAtiva(false);
+        } else {
+          try {
+            await widget.rfid.disconnect();
+          } catch (_) {}
+          widget.rfid.setLeituraAtiva(true);
+          await widget.rfid.connect();
+        }
       } else {
         _ctrl.setLeituraRfid(false);
       }
@@ -266,9 +315,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     } catch (_) {}
     try {
       widget.rfid.setLeituraAtiva(false);
+      // ignore: unawaited_futures
+      widget.rfid.disconnect();
     } catch (_) {}
 
     _beeper.dispose();
+    _ctrl.removeListener(_onCtrlLoadingForMapaScroll);
+    _mapaHScrollCtrl.dispose();
     _ctrl.dispose();
     super.dispose();
   }
@@ -291,11 +344,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   }
 
   Future<void> _onSalvarSeguro() async {
+    _captureMapaHorizontalScroll();
     try {
       await _ensureLoggedOrRedirect();
       if (_currentUserId().isEmpty) return;
 
       await _ctrl.salvarFornecimento(idFazenda: widget.idFazenda);
+      _scheduleMapaHorizontalScrollRestore();
     } catch (e) {
       _ctrl.setError("Erro ao salvar: $e");
     }
@@ -398,13 +453,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     try {
       widget.scale.stopNow();
     } catch (_) {}
-    try {
-      // ignore: unawaited_futures
-      widget.rfid.disconnect();
-    } catch (_) {}
+    if (!_ctrl.rfidPausado) {
+      try {
+        await widget.rfid.disconnect();
+      } catch (_) {}
+    }
 
-    // ignore: unawaited_futures
-    _connectDevicesFromConfig();
+    await _connectDevicesFromConfig();
   }
 
   @override
@@ -427,9 +482,6 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
         });
 
         Widget mainBody() {
-          if (_ctrl.loading) {
-            return const Center(child: CircularProgressIndicator());
-          }
           if (_ctrl.error != null) {
             return Center(
               child: Padding(
@@ -451,30 +503,32 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 trato: h?.trato ?? widget.trato,
                 racaoId: h?.racaoId,
                 racaoNome: h?.racaoNome,
-                pesoAtual: _ctrl.pesoAtual,
-                scaleStatus: _ctrl.scaleStatus,
-                rfidStatus: _ctrl.rfidStatus,
-                scaleMsg: _ctrl.scaleMsg,
-                rfidMsg: _ctrl.rfidMsg,
-                rfidPausado: _ctrl.rfidPausado,
               ),
               const SizedBox(height: 8),
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                  child: _RightPanel(
-                    selected: sel,
-                    sessaoAtiva: _ctrl.sessaoAtiva,
-                    fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
-                    realizadoEstimadoKg: realizadoEst,
-                    aFornecerEstimadoKg: aFornecerEst,
-                    onSalvar: _onSalvarSeguro,
-                    ultimo: _ctrl.ultimo,
-                    fmt: _fmtNum,
-                    progress: progress,
-                    level: level,
-                  ),
-                ),
+                child: _ctrl.loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        child: _RightPanel(
+                          selected: sel,
+                          pesoAtual: _ctrl.pesoAtual,
+                          scaleStatus: _ctrl.scaleStatus,
+                          scaleMsg: _ctrl.scaleMsg,
+                          rfidStatus: _ctrl.rfidStatus,
+                          rfidMsg: _ctrl.rfidMsg,
+                          rfidPausado: _ctrl.rfidPausado,
+                          sessaoAtiva: _ctrl.sessaoAtiva,
+                          fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
+                          realizadoEstimadoKg: realizadoEst,
+                          aFornecerEstimadoKg: aFornecerEst,
+                          onSalvar: _onSalvarSeguro,
+                          ultimo: _ctrl.ultimo,
+                          fmt: _fmtNum,
+                          progress: progress,
+                          level: level,
+                        ),
+                      ),
               ),
               if (_mapaHorizontalFixo) _mapaHorizontalBar(),
               Padding(
@@ -536,7 +590,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                     left: 12,
                     right: 12,
                     child: _NoticeCard(
-                      title: "Curral sem previsto",
+                      title: (_ctrl.uiNoticeTitle ?? "Aviso").trim(),
                       message: _ctrl.uiNotice!.trim(),
                       onClose: _ctrl.clearNotice,
                     ),
@@ -612,6 +666,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                     ? const Center(
                         child: Text("Sem currais para o filtro selecionado."))
                     : ListView.separated(
+                        controller: _mapaHScrollCtrl,
                         scrollDirection: Axis.horizontal,
                         itemCount: list.length,
                         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -664,130 +719,86 @@ class _HeaderBar extends StatelessWidget {
     required this.trato,
     required this.racaoId,
     required this.racaoNome,
-    required this.pesoAtual,
-    required this.scaleStatus,
-    required this.rfidStatus,
-    required this.scaleMsg,
-    required this.rfidMsg,
-    required this.rfidPausado,
   });
 
   final int trato;
   final String? racaoId;
   final String? racaoNome;
-  final double pesoAtual;
-
-  final ScaleStatus scaleStatus;
-  final RfidStatus rfidStatus;
-
-  final String? scaleMsg;
-  final String? rfidMsg;
-  final bool rfidPausado;
-
-  Color _dot(Color ok, Color warn, Color bad, dynamic status) {
-    final s = status.toString().toLowerCase();
-    if (s.contains("connected")) return ok;
-    if (s.contains("connecting")) return warn;
-    if (s.contains("error")) return bad;
-    return Colors.grey;
-  }
-
-  String _statusTxt(dynamic st) {
-    final s = st.toString().split(".").last;
-    if (s == "connected") return "ON";
-    if (s == "connecting") return "Conectando";
-    if (s == "error") return "ERRO";
-    return "OFF";
-  }
 
   @override
   Widget build(BuildContext context) {
-    Widget chip(String title, String value, {IconData? icon, Color? dot}) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-          color: Colors.white,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (dot != null) ...[
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 8),
-            ],
-            if (icon != null) ...[
-              Icon(icon, size: 18),
-              const SizedBox(width: 6),
-            ],
-            Text("$title: ",
-                style: const TextStyle(fontWeight: FontWeight.w900)),
-            Flexible(
-              child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-          ],
-        ),
-      );
-    }
-
     final dietaTxt = (racaoNome ?? "").trim().isNotEmpty
         ? racaoNome!.trim()
         : ((racaoId ?? "-").trim().isEmpty ? "-" : racaoId!.trim());
 
-    final pesoTxt = pesoAtual.toStringAsFixed(0);
-
-    final scaleDot = _dot(Colors.green, Colors.orange, Colors.red, scaleStatus);
-    final rfidDot = _dot(Colors.green, Colors.orange, Colors.red, rfidStatus);
-
-    final rfidTxt = rfidPausado
-        ? "${_statusTxt(rfidStatus)} (pausado)"
-        : _statusTxt(rfidStatus);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    Widget bigCard({
+      required String label,
+      required String value,
+      required IconData icon,
+      int flex = 1,
+    }) {
+      return Expanded(
+        flex: flex,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+            color: Colors.white,
+          ),
+          child: Row(
             children: [
+              Icon(icon, size: 28, color: Colors.teal.shade700),
+              const SizedBox(width: 10),
               Expanded(
-                child: Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    chip("Trato", trato.toString(), icon: Icons.restaurant),
-                    chip("Dieta", dietaTxt, icon: Icons.grass),
-                    chip("Peso", pesoTxt, icon: Icons.monitor_weight),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  chip("Balança", _statusTxt(scaleStatus), dot: scaleDot),
-                  const SizedBox(height: 8),
-                  chip("RFID", rfidTxt, dot: rfidDot),
-                ],
-              ),
             ],
           ),
-          if ((scaleMsg ?? "").trim().isNotEmpty ||
-              (rfidMsg ?? "").trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            if ((scaleMsg ?? "").trim().isNotEmpty)
-              Text("Balança: ${scaleMsg!.trim()}",
-                  style: const TextStyle(color: Colors.red)),
-            if ((rfidMsg ?? "").trim().isNotEmpty)
-              Text("RFID: ${rfidMsg!.trim()}",
-                  style: const TextStyle(color: Colors.red)),
-          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          bigCard(
+            label: "Trato",
+            value: trato.toString(),
+            icon: Icons.restaurant,
+          ),
+          const SizedBox(width: 10),
+          bigCard(
+            label: "Dieta",
+            value: dietaTxt,
+            icon: Icons.grass,
+            flex: 2,
+          ),
         ],
       ),
     );
@@ -978,6 +989,12 @@ class _CurralCardSmall extends StatelessWidget {
 class _RightPanel extends StatelessWidget {
   const _RightPanel({
     required this.selected,
+    required this.pesoAtual,
+    required this.scaleStatus,
+    required this.scaleMsg,
+    required this.rfidStatus,
+    required this.rfidMsg,
+    required this.rfidPausado,
     required this.sessaoAtiva,
     required this.fornecidoSessaoKg,
     required this.realizadoEstimadoKg,
@@ -990,6 +1007,12 @@ class _RightPanel extends StatelessWidget {
   });
 
   final CurralCardVM? selected;
+  final double pesoAtual;
+  final ScaleStatus scaleStatus;
+  final String? scaleMsg;
+  final RfidStatus rfidStatus;
+  final String? rfidMsg;
+  final bool rfidPausado;
   final bool sessaoAtiva;
   final double fornecidoSessaoKg;
 
@@ -1063,9 +1086,39 @@ class _RightPanel extends StatelessWidget {
       return difEst > 0 ? "+$t" : t;
     }
 
+    final scaleUi = scaleConnectionUi(scaleStatus, message: scaleMsg);
+    final rfidUi = rfidConnectionUi(
+      rfidStatus,
+      message: rfidMsg,
+      pausado: rfidPausado,
+    );
+
+    final previstoSel = hasSel ? previsto : 0.0;
+
     return SingleChildScrollView(
       child: Column(
         children: [
+          ScalePesoHighlightCard(
+            pesoKg: pesoAtual,
+            pesoLabel: "Peso balança",
+            secondaryLabel: hasSel ? "Previsto (curral)" : null,
+            secondaryKg: hasSel ? previstoSel : null,
+            connectionSlots: [
+              ScaleConnectionStatusChip(
+                title: "Balança",
+                detail: scaleUi.detail,
+                icon: scaleUi.icon,
+                color: scaleUi.color,
+              ),
+              ScaleConnectionStatusChip(
+                title: "RFID",
+                detail: rfidUi.detail,
+                icon: rfidUi.icon,
+                color: rfidUi.color,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -1123,14 +1176,6 @@ class _RightPanel extends StatelessWidget {
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: SizedBox(
-                    height: 10,
-                    child: LinearProgressIndicator(value: progressValue),
-                  ),
                 ),
                 const SizedBox(height: 10),
                 Row(
@@ -1241,6 +1286,14 @@ class _RightPanel extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: SizedBox(
+                    height: 10,
+                    child: LinearProgressIndicator(value: progressValue),
                   ),
                 ),
                 const SizedBox(height: 14),

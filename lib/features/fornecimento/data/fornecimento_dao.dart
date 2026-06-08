@@ -288,7 +288,7 @@ class FornecimentoDao {
       a.${FornTables.pvIdFornecimento} AS id_fornecimento,
       a.${FornTables.pvIdBaia}         AS id_baia,
       a.${FornTables.pvPrevistoKg}     AS previsto,
-      COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizado,
+      ${FornTables.sqlRealizadoKgLocal("a")} AS realizado,
       a.${FornTables.pvIdRacao}        AS id_racao
     FROM ${FornTables.previsao} a
     WHERE
@@ -445,10 +445,14 @@ class FornecimentoDao {
     required double realizado,
     required double previsto,
     int mapa = 0,
+    String? horaInicio,
   }) async {
     final db = await _db;
     final d = toSqlDate(data);
-    final hora = nowTime();
+    final horaFim = nowTime();
+    final horaIni = (horaInicio != null && horaInicio.trim().isNotEmpty)
+        ? horaInicio.trim()
+        : horaFim;
 
     await db.insert(
       FornTables.cadastroFornecimento,
@@ -458,8 +462,8 @@ class FornecimentoDao {
         FornTables.cfIdFabricacao: idFabricacao,
         FornTables.cfIdBaia: idBaia,
         FornTables.cfData: d,
-        FornTables.cfHoraInicio: hora,
-        FornTables.cfHoraFim: hora,
+        FornTables.cfHoraInicio: horaIni,
+        FornTables.cfHoraFim: horaFim,
         FornTables.cfPesoInicio: pesoFim,
         FornTables.cfPesoFim: pesoFim,
         FornTables.cfPrevisto: previsto,
@@ -530,21 +534,74 @@ class FornecimentoDao {
     final db = await _db;
     final d = toSqlDate(data);
 
+    final idF = idFornecimento.trim();
+    final idB = idBaia.trim();
+
     final rows = await db.query(
       FornTables.previsao,
       columns: [FornTables.pvRealizadoKg],
       where: """
-      ${FornTables.pvIdFornecimento} = ?
+      TRIM(${FornTables.pvIdFornecimento}) = TRIM(?)
       AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
       AND substr(${FornTables.pvData},1,10) = ?
       AND ${FornTables.pvTrato} = ?
     """,
-      whereArgs: [idFornecimento, idBaia, d, trato],
+      whereArgs: [idF, idB, d, trato],
       limit: 1,
     );
 
     if (rows.isEmpty) return 0.0;
     return _toDouble(rows.first[FornTables.pvRealizadoKg]);
+  }
+
+  Future<double> _maxRealizadoPrevisaoBaiaTrato({
+    required String idBaia,
+    required String d,
+    required int trato,
+  }) async {
+    final db = await _db;
+    final idB = idBaia.trim();
+
+    final rows = await db.query(
+      FornTables.previsao,
+      columns: [FornTables.pvRealizadoKg],
+      where: """
+      TRIM(${FornTables.pvIdBaia}) = TRIM(?)
+      AND substr(${FornTables.pvData},1,10) = ?
+      AND ${FornTables.pvTrato} = ?
+    """,
+      whereArgs: [idB, d, trato],
+    );
+
+    var maxV = 0.0;
+    for (final r in rows) {
+      final v = _toDouble(r[FornTables.pvRealizadoKg]);
+      if (v > maxV) maxV = v;
+    }
+    return maxV;
+  }
+
+  Future<double> getRealizadoAcumuladoWithFallback({
+    required String idFornecimento,
+    required String idBaia,
+    required DateTime data,
+    required int trato,
+  }) async {
+    final v = await getRealizadoAcumulado(
+      idFornecimento: idFornecimento,
+      idBaia: idBaia,
+      data: data,
+      trato: trato,
+    );
+    if (v > 0) return v;
+
+    final d = toSqlDate(data);
+    final fallback = await _maxRealizadoPrevisaoBaiaTrato(
+      idBaia: idBaia,
+      d: d,
+      trato: trato,
+    );
+    return fallback;
   }
 
   // =========================================================
@@ -562,6 +619,8 @@ class FornecimentoDao {
 
     final idF = (idFornecimento ?? "").trim();
 
+    final idB = idBaia.trim();
+
     if (idF.isNotEmpty) {
       await db.update(
         FornTables.previsao,
@@ -572,7 +631,7 @@ class FornecimentoDao {
         AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
         AND TRIM(${FornTables.pvIdFornecimento}) = TRIM(?)
       """,
-        whereArgs: [d, trato, idBaia, idF],
+        whereArgs: [d, trato, idB, idF],
       );
       return;
     }
@@ -585,7 +644,7 @@ class FornecimentoDao {
       AND ${FornTables.pvTrato} = ?
       AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
     """,
-      whereArgs: [d, trato, idBaia],
+      whereArgs: [d, trato, idB],
     );
   }
 
@@ -636,9 +695,85 @@ class FornecimentoDao {
     """, [dataSql, trato]);
   }
 
-  // =========================================================
-  // SYNC  ✅ CORRIGIDO: COALESCE(flag,0)=0
-  // =========================================================
+  /// Linhas de CADASTRO_FORNECIMENTO para baia+trato+data+dieta (detalhe na lista).
+  Future<List<Map<String, Object?>>> listSessoesPorChave({
+    required String dataYmd,
+    required int trato,
+    required String idBaia,
+    required String idRacao,
+    String? idFornecimento,
+  }) async {
+    final db = await _db;
+    final baia = idBaia.trim();
+    final racao = idRacao.trim();
+    final idPrev = (idFornecimento ?? "").trim();
+
+    return db.rawQuery("""
+      SELECT
+        ${FornTables.cfId}              AS id,
+        ${FornTables.cfHoraInicio}      AS hora_inicio,
+        ${FornTables.cfHoraFim}         AS hora_fim,
+        ${FornTables.cfPesoInicio}      AS peso_inicio,
+        ${FornTables.cfPesoFim}         AS peso_fim,
+        ${FornTables.cfRealizado}       AS realizado,
+        ${FornTables.cfPrevisto}        AS previsto,
+        ${FornTables.cfFlagSync}        AS flag_sync,
+        ${FornTables.cfIdDieta}         AS id_dieta,
+        ${FornTables.cfIdFornecimento}  AS id_fornecimento,
+        ${FornTables.cfIdFabricacao}    AS id_fabricacao
+      FROM ${FornTables.cadastroFornecimento}
+      WHERE substr(COALESCE(${FornTables.cfData}, ''), 1, 10) = ?
+        AND ${FornTables.cfTrato} = ?
+        AND TRIM(COALESCE(${FornTables.cfIdBaia}, '')) = TRIM(?)
+        AND COALESCE(${FornTables.cfRealizado}, 0) > 0
+        AND (
+          TRIM(COALESCE(${FornTables.cfIdDieta}, '')) = TRIM(?)
+          OR (
+            TRIM(COALESCE(${FornTables.cfIdDieta}, '')) = ''
+            AND TRIM(COALESCE(${FornTables.cfIdFornecimento}, '')) = TRIM(?)
+          )
+        )
+      ORDER BY
+        COALESCE(${FornTables.cfHoraInicio}, '') ASC,
+        ${FornTables.cfId} ASC
+    """, [dataYmd, trato, baia, racao, idPrev]);
+  }
+
+  /// Exportacao completa para auditoria (POST /Post/FornecimentoAudit).
+  Future<List<Map<String, Object?>>> listAllCadastroForAudit() async {
+    final db = await _db;
+
+    return db.rawQuery("""
+      SELECT
+        F.${FornTables.cfId}              AS id,
+        F.${FornTables.cfIdFornecimento}  AS id_fornecimento,
+        F.${FornTables.cfIdFabricacao}    AS id_fabricacao,
+        F.${FornTables.cfIdBaia}          AS id_baia,
+        F.${FornTables.cfData}            AS data,
+        F.${FornTables.cfHoraInicio}      AS hora_inicio,
+        F.${FornTables.cfHoraFim}         AS hora_fim,
+        F.${FornTables.cfPesoInicio}      AS peso_inicio,
+        F.${FornTables.cfPesoFim}         AS peso_fim,
+        F.${FornTables.cfPrevisto}        AS previsto,
+        F.${FornTables.cfRealizado}       AS realizado,
+        F.${FornTables.cfFlagSync}        AS flag_sync,
+        F.${FornTables.cfTrato}           AS trato,
+        F.${FornTables.cfIdUsuario}       AS id_usuario,
+        F.${FornTables.cfIdDieta}         AS id_dieta,
+        F.${FornTables.cfMapa}            AS mapa,
+        COALESCE(B.${FornTables.dbNomeLocal}, '') AS nome_baia,
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') AS linha
+      FROM ${FornTables.cadastroFornecimento} F
+      LEFT JOIN ${FornTables.detalhesBaias} B
+        ON TRIM(CAST(B.${FornTables.dbId} AS TEXT)) = TRIM(CAST(F.${FornTables.cfIdBaia} AS TEXT))
+      ORDER BY
+        substr(F.${FornTables.cfData}, 1, 10) DESC,
+        F.${FornTables.cfTrato} ASC,
+        F.${FornTables.cfHoraInicio} ASC,
+        F.${FornTables.cfId} ASC
+    """);
+  }
+
   Future<List<FornecimentoRow>> listPendentesSync({int limit = 200}) async {
     final db = await _db;
 

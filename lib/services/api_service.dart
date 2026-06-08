@@ -395,7 +395,20 @@ class ApiService {
         ),
       );
 
-      if (_isHttpSuccess(r.statusCode)) return true;
+      if (_isHttpSuccess(r.statusCode)) {
+        final data = r.data;
+        if (data is Map) {
+          final m = Map<String, dynamic>.from(data);
+          if (m["ignorado_ponto_corte"] == true) {
+            final kg = m["realizado_recebido"] ?? m["realizado"];
+            final corte = m["ponto_corte_kg"];
+            log?.call(
+              "Fornecimento ignorado (ponto de corte $corte kg): recebido=$kg — sync confirmado",
+            );
+          }
+        }
+        return true;
+      }
 
       log?.call("❌ /Post/Fornecimento HTTP ${r.statusCode}");
       return false;
@@ -405,6 +418,47 @@ class ApiService {
     } catch (e) {
       log?.call("❌ /Post/Fornecimento ERRO: $e");
       return false;
+    }
+  }
+
+  /// Envia snapshot completo de CADASTRO_FORNECIMENTO para auditoria no servidor.
+  Future<Map<String, dynamic>?> postFornecimentoAudit(
+    Map<String, dynamic> body, {
+    void Function(String)? log,
+  }) async {
+    try {
+      final r = await _dio.post(
+        "/Post/FornecimentoAudit",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null,
+          contentType: Headers.jsonContentType,
+          receiveTimeout: const Duration(seconds: 120),
+          sendTimeout: const Duration(seconds: 120),
+        ),
+      );
+
+      if (!_isHttpSuccess(r.statusCode)) {
+        log?.call("❌ /Post/FornecimentoAudit HTTP ${r.statusCode}");
+        return null;
+      }
+
+      final data = r.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      if (data is String && data.trim().isNotEmpty) {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      }
+      return {"ok": true};
+    } on DioException catch (e) {
+      log?.call(
+        "❌ /Post/FornecimentoAudit EXC HTTP ${e.response?.statusCode}",
+      );
+      return null;
+    } catch (e) {
+      log?.call("❌ /Post/FornecimentoAudit ERRO: $e");
+      return null;
     }
   }
 }

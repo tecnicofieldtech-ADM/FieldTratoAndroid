@@ -1,6 +1,7 @@
 import "package:sqflite/sqflite.dart";
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
+import "../services/config_disk_backup.dart";
 
 class ConfigRepo {
   Future<Database> get _db async => AppDb.instance.db;
@@ -38,6 +39,11 @@ class ConfigRepo {
       await addIfMissing(
         "tolerancia_carregamento_kg",
         "TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0",
+      );
+
+      await addIfMissing(
+        "ponto_corte_fornecimento_kg",
+        "PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50",
       );
 
       // ✅ GARANTE que ID_VAGAO exista como TEXT (UUID)
@@ -87,6 +93,8 @@ class ConfigRepo {
       await txn.delete("CONFIG");
       await txn.insert("CONFIG", data);
     });
+
+    await ConfigDiskBackup.exportAfterSave(config: data);
   }
 
   // -------------------------
@@ -211,6 +219,13 @@ class ConfigRepo {
     return d < 0 ? 0.0 : d;
   }
 
+  /// Mínimo de kg para gravar linha em CADASTRO_FORNECIMENTO (padrão 50).
+  Future<double> getPontoCorteFornecimentoKg() async {
+    final v = await _getField("PONTO_CORTE_FORNECIMENTO_KG");
+    final d = _toDouble(v, def: 50.0);
+    return d < 0 ? 0.0 : d;
+  }
+
   // =========================================================
   // ✅ Fazendas
   // =========================================================
@@ -239,7 +254,7 @@ class ConfigRepo {
           _getFieldFromCfg(cfg, "PORTA") ??
           _getFieldFromCfg(cfg, "API_PORT") ??
           _getFieldFromCfg(cfg, "PORT"),
-      def: 3000,
+      def: 3001,
     );
 
     final useHttps = _toInt(

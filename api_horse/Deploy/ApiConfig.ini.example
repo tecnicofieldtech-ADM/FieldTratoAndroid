@@ -1,7 +1,12 @@
 [API]
 ActiveClient=cgpec
+; Porta HTTP da API Horse (EXE e servico Windows usam o mesmo ApiConfig.ini).
+Port=3001
 ; 1 = soma realizado por fabricação no POST /Post/Fornecimento (next-api). 0 = substitui (último vence).
 FornecimentoAcumulativo=1
+; Mínimo (kg) para gravar no CG Pec via POST /Post/Fornecimento apenas.
+; Abaixo disso a API confirma sync sem atualizar o banco. Nao se aplica a /Post/Fabricacao. 0 = desliga.
+PontoCorteFornecimentoKg=50
 
 [CGPEC]
 Server=127.0.0.1

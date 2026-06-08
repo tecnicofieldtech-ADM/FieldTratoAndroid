@@ -87,6 +87,9 @@ class ScaleComm {
   Stream<ScaleEvent> get statusStream => _statusCtrl.stream;
   Stream<ScaleWeightEvent> get weightStream => _weightCtrl.stream;
 
+  ScaleStatus _lastStatus = ScaleStatus.disconnected;
+  ScaleStatus get lastStatus => _lastStatus;
+
   double? get lastWeight => _lastWeight;
   DateTime? get lastReadAt => _lastReadAt;
 
@@ -338,6 +341,7 @@ class ScaleComm {
   }
 
   void _emitStatus(ScaleStatus s, {String? message}) {
+    _lastStatus = s;
     if (_statusCtrl.isClosed) return;
     _statusCtrl.add(ScaleEvent(s, message: message));
   }

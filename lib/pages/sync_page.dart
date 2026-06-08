@@ -7,6 +7,7 @@ import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
 import "../services/bootstrap_sync.dart";
+import "../services/fornecimento_audit_service.dart";
 import "../services/sync_orchestrator.dart";
 import "../services/wifi_guard.dart";
 
@@ -35,7 +36,10 @@ class _SyncPageState extends State<SyncPage> {
     bootstrap: _bootstrap,
   );
 
+  final _fornecimentoAudit = FornecimentoAuditService();
+
   bool _running = false;
+  bool _auditRunning = false;
   int _currentIndex = -1;
   String _currentTitle = "";
   List<SyncStep> _steps = [];
@@ -148,7 +152,7 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   Future<void> _runSync() async {
-    if (_running) return;
+    if (_running || _auditRunning) return;
 
     final ssid = await WifiGuard.getCurrentSsid();
     if (!mounted) return;
@@ -258,6 +262,50 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
+  Future<void> _enviarAuditoriaFornecimento() async {
+    if (_running || _auditRunning) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Auditoria fornecimento"),
+        content: const Text(
+          "Enviar todos os registros locais de CADASTRO_FORNECIMENTO "
+          "para a API gravar em disco no servidor?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Enviar"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _auditRunning = true);
+    _addLog("Iniciando auditoria CADASTRO_FORNECIMENTO...");
+
+    try {
+      final resp = await _fornecimentoAudit.enviarAuditoriaCompleta(
+        log: _addLog,
+      );
+      final qtd = resp["registros"] ?? resp["total"];
+      final path = resp["saved_path"] ?? resp["filename"] ?? "";
+      _addLog("Auditoria OK: $qtd registro(s) salvos em $path");
+      _toast("Auditoria enviada com sucesso.");
+    } catch (e) {
+      _addLog("Falha auditoria: $e");
+      _toast("Falha ao enviar auditoria.");
+    } finally {
+      if (mounted) setState(() => _auditRunning = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = _steps.length;
@@ -275,8 +323,21 @@ class _SyncPageState extends State<SyncPage> {
         elevation: 0.5,
         actions: [
           IconButton(
+            tooltip: "Auditoria fornecimento (enviar tabela completa)",
+            onPressed: (_running || _auditRunning)
+                ? null
+                : _enviarAuditoriaFornecimento,
+            icon: _auditRunning
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.fact_check_outlined),
+          ),
+          IconButton(
             tooltip: "Atualizar pendências",
-            onPressed: _running ? null : _loadPendencias,
+            onPressed: (_running || _auditRunning) ? null : _loadPendencias,
             icon: _loadingPend
                 ? const SizedBox(
                     width: 18,
@@ -287,7 +348,9 @@ class _SyncPageState extends State<SyncPage> {
           ),
           IconButton(
             tooltip: "Limpar log",
-            onPressed: _running ? null : () => setState(() => _log.clear()),
+            onPressed: (_running || _auditRunning)
+                ? null
+                : () => setState(() => _log.clear()),
             icon: const Icon(Icons.delete_outline),
           ),
         ],
@@ -367,7 +430,7 @@ class _SyncPageState extends State<SyncPage> {
                     width: double.infinity,
                     height: 52,
                     child: ElevatedButton.icon(
-                      onPressed: _running ? null : _runSync,
+                      onPressed: (_running || _auditRunning) ? null : _runSync,
                       icon: _running
                           ? const SizedBox(
                               width: 18,
@@ -379,6 +442,27 @@ class _SyncPageState extends State<SyncPage> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.black,
                         foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: (_running || _auditRunning)
+                          ? null
+                          : _enviarAuditoriaFornecimento,
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: Text(
+                        _auditRunning
+                            ? "Enviando auditoria..."
+                            : "Auditoria fornecimento (tabela completa)",
+                      ),
+                      style: OutlinedButton.styleFrom(
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),

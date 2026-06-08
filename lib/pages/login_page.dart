@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "../repo/user_repo.dart";
 import "../widgets/app_logo.dart";
+import "../widgets/app_version_label.dart";
 import "../services/session_service.dart";
 
 import "../db/app_db.dart";
@@ -194,7 +195,15 @@ class _LoginPageState extends State<LoginPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 const AppLogo(height: 150),
-                                const SizedBox(height: 18),
+                                const SizedBox(height: 8),
+                                const AppVersionLabel(
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
                                 DropdownButtonFormField<String>(
                                   key: ValueKey(validUserValue),
                                   initialValue: validUserValue,

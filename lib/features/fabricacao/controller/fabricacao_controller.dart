@@ -1116,12 +1116,23 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   // FINALIZAÇÃO (antes do timer)
   // =========================================================
-  Future<int> finalizarFabricacaoAntesDoTimer() async {
-    final h = header;
-    if (h == null) return 0;
-
+  /// Grava ingrediente atual e totais parciais (sem marcar finalizada).
+  Future<void> prepararFinalizacao() async {
     await salvarIngredienteAtual();
     await atualizaFabricacaoParcial();
+
+    final h = header;
+    if (h == null) return;
+
+    final total = await repo.getTotalRealizadoFabricacao(h.id);
+    header = h.copyWith(qtdRealizada: total);
+    notifyListeners();
+  }
+
+  /// Marca cabeçalho como finalizada. Pressupõe [prepararFinalizacao] já executado.
+  Future<int> concluirFinalizacaoSemSalvar() async {
+    final h = header;
+    if (h == null) return 0;
 
     final agora = _fmtHHmmss(DateTime.now());
     final total = await repo.getTotalRealizadoFabricacao(h.id);
@@ -1150,6 +1161,11 @@ class FabricacaoController extends ChangeNotifier {
     } catch (_) {
       return 0;
     }
+  }
+
+  Future<int> finalizarFabricacaoAntesDoTimer() async {
+    await prepararFinalizacao();
+    return concluirFinalizacaoSemSalvar();
   }
 
   // =========================================================

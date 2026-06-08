@@ -101,8 +101,8 @@
     <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
         <DCC_RemoteDebug>false</DCC_RemoteDebug>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <DCC_UnitSearchPath>C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\horse\src;C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\jhonson\src;C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\horse-cors\src;C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\horse-basic-auth\src;C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\handle-exception\src;C:\RSistemas\Aplicativos\RFeedAutomacao\API\CGPec\Source\dpr\modules\loggerpro;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-        <DCC_ExeOutput>C:\RSistemas\Aplicativos\RFeedAutomacao\API\ServicoWindows\Win32\Debug</DCC_ExeOutput>
+        <DCC_UnitSearchPath>..\CGPec\Source;..\CGPec\Source\dpr\modules\horse\src;..\CGPec\Source\dpr\modules\jhonson\src;..\CGPec\Source\dpr\modules\horse-cors\src;..\CGPec\Source\dpr\modules\horse-basic-auth\src;..\CGPec\Source\dpr\modules\handle-exception\src;..\CGPec\Source\dpr\modules\loggerpro;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_ExeOutput>C:\RSistemas\Git\RFeedFlutter\api_horse\Deploy</DCC_ExeOutput>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <PostBuildEvent><![CDATA[if not exist "$(OUTPUTDIR)web-admin\" mkdir "$(OUTPUTDIR)web-admin\"
@@ -116,6 +116,8 @@ xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBui
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
+        <DCC_ExeOutput>..\Deploy\</DCC_ExeOutput>
+        <DCC_UnitSearchPath>..\CGPec\Source;..\CGPec\Source\dpr\modules\horse\src;..\CGPec\Source\dpr\modules\jhonson\src;..\CGPec\Source\dpr\modules\horse-cors\src;..\CGPec\Source\dpr\modules\horse-basic-auth\src;..\CGPec\Source\dpr\modules\handle-exception\src;..\CGPec\Source\dpr\modules\loggerpro;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <PostBuildEvent><![CDATA[if not exist "$(OUTPUTDIR)web-admin\" mkdir "$(OUTPUTDIR)web-admin\"
 xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBuildEvent>
     </PropertyGroup>
@@ -131,6 +133,7 @@ xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBui
         <DCCReference Include="..\CGPec\Source\Controllers\Controllers.Get.pas"/>
         <DCCReference Include="..\CGPec\Source\Controllers\Controllers.Post.pas"/>
         <DCCReference Include="..\CGPec\Source\Controllers\Controllers.Admin.pas"/>
+        <DCCReference Include="..\CGPec\Source\UApiVersion.pas"/>
         <DCCReference Include="..\CGPec\Source\Controllers\Controllers.Mirror.pas"/>
         <DCCReference Include="..\CGPec\Source\BiMirror\UBiMirror.pas"/>
         <DCCReference Include="..\CGPec\Source\RequestLog\URequestLog.pas"/>
@@ -1014,4 +1017,20 @@ xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBui
     <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
     <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
     <Import Project="$(MSBuildProjectName).deployproj" Condition="Exists('$(MSBuildProjectName).deployproj')"/>
+    <PropertyGroup Condition="'$(Config)'=='Debug' And '$(Platform)'=='Win32'">
+        <PreBuildEvent/>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PreLinkEvent/>
+        <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win32'">
+        <PreBuildEvent/>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PreLinkEvent/>
+        <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+    </PropertyGroup>
 </Project>

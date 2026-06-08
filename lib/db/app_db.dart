@@ -77,7 +77,10 @@ class AppDb {
       STATION_BASE_URL_LEGACY TEXT,
 
       -- ✅ NOVO: tolerância em KG (ConfigRepo já garante, mas aqui nasce certo)
-      TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0
+      TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0,
+
+      -- Mínimo (kg) para gravar fornecimento no tablet (0 = aceita qualquer > 0)
+      PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50
     );
     """);
 
