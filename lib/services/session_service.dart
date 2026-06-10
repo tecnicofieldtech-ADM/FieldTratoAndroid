@@ -1,4 +1,5 @@
 // lib/services/session_service.dart
+import "../repo/last_login_repo.dart";
 import "../repo/session_repo.dart";
 
 class SessionUser {
@@ -18,6 +19,7 @@ class SessionService {
   static final SessionService instance = SessionService._();
 
   final SessionRepo _repo = SessionRepo();
+  final LastLoginRepo _lastLoginRepo = LastLoginRepo();
 
   SessionUser? _current;
   SessionUser? get current => _current;
@@ -44,15 +46,28 @@ class SessionService {
       nome: (row["NOME"] ?? "").toString(),
       login: (row["LOGIN"] ?? "").toString(),
     );
+
+    await _lastLoginRepo.save(
+      userId: id,
+      nome: _current!.nome,
+      login: _current!.login,
+    );
   }
 
   Future<void> setLogin({
     required String userId,
     required String nome,
     required String login,
+    String? cargo,
   }) async {
     _current = SessionUser(id: userId, nome: nome, login: login);
     await _repo.saveLogin(userId: userId, nome: nome, login: login);
+    await _lastLoginRepo.save(
+      userId: userId,
+      nome: nome,
+      login: login,
+      cargo: cargo,
+    );
   }
 
   Future<void> logout() async {

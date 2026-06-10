@@ -5,6 +5,8 @@ import "package:flutter/material.dart";
 import "package:network_info_plus/network_info_plus.dart";
 import "package:permission_handler/permission_handler.dart";
 import "../repo/config_repo.dart";
+import "../repo/last_login_repo.dart";
+import "../services/session_service.dart";
 import "../services/carregamento_bridge.dart";
 import "../services/wifi_guard.dart";
 import "../widgets/app_logo.dart";
@@ -550,8 +552,19 @@ class _MenuPageState extends State<MenuPage> {
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14)),
                           ),
-                          onPressed: () =>
-                              Navigator.pushReplacementNamed(context, "/login"),
+                          onPressed: () async {
+                            final user = SessionService.instance.current;
+                            if (user != null) {
+                              await LastLoginRepo().save(
+                                userId: user.id,
+                                nome: user.nome,
+                                login: user.login,
+                              );
+                            }
+                            await SessionService.instance.logout();
+                            if (!context.mounted) return;
+                            Navigator.pushReplacementNamed(context, "/login");
+                          },
                           icon: const Icon(Icons.logout),
                           label: const Text(
                             "Sair",

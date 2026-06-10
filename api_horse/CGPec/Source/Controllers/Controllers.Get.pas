@@ -28,7 +28,8 @@ uses
   Udm,
   DataSet.Serialize,
   Horse.Commons,
-  Controllers.Mirror;
+  Controllers.Mirror,
+  System.Math;
 
 function RetornaDataFormadata(vData: string): string;
 var
@@ -36,7 +37,7 @@ var
 begin
   if vData.Length = 10 then
   begin
-    VAno := Copy(vData, 0, 4);
+    VAno := Copy(vData, 1, 4);
     vMes := Copy(vData, 6, 2);
     vDia := Copy(vData, 9, 2);
     Result := vDia + '/' + vMes + '/' + VAno;
@@ -91,10 +92,20 @@ begin
 end;
 
 procedure BindCommonFilters(Q: TFDQuery; Req: THorseRequest);
+var
+  S: string;
 begin
-  Q.ParamByName('ID_DIETA').AsString := QueryParam(Req, 'id_dieta', '');
-  Q.ParamByName('ID_OPERADOR').AsString := QueryParam(Req, 'id_operador', '');
-  Q.ParamByName('ID_VAGAO').AsString := QueryParam(Req, 'id_vagao', '');
+  S := QueryParam(Req, 'id_dieta', '');
+  Q.ParamByName('SKIP_DIETA').AsInteger := IfThen(S = '', 1, 0);
+  Q.ParamByName('ID_DIETA').AsString := S;
+
+  S := QueryParam(Req, 'id_operador', '');
+  Q.ParamByName('SKIP_OPERADOR').AsInteger := IfThen(S = '', 1, 0);
+  Q.ParamByName('ID_OPERADOR').AsString := S;
+
+  S := QueryParam(Req, 'id_vagao', '');
+  Q.ParamByName('SKIP_VAGAO').AsInteger := IfThen(S = '', 1, 0);
+  Q.ParamByName('ID_VAGAO').AsString := S;
 end;
 
 procedure RegistraRotas;
@@ -133,19 +144,20 @@ begin
       '  cop.NOME AS OPERADOR, ' +
       '  vag.NOME AS VAGAO, ' +
       '  cd.NOME_DIETA, ' +
-      '  cfr.QTDE_PREVISTA, ' +
-      '  cfr.QTDE_REALIZADA, ' +
-      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG, ' +
-      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT, ' +
-      '  cfr.ID, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO, cfr.DATA_REGISTO ' +
+      '  CAST(cfr.QTDE_PREVISTA AS DOUBLE PRECISION) AS QTDE_PREVISTA, ' +
+      '  CAST(cfr.QTDE_REALIZADA AS DOUBLE PRECISION) AS QTDE_REALIZADA, ' +
+      '  CAST((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DOUBLE PRECISION) AS DIFKG, ' +
+      '  CAST(((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100.0) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DOUBLE PRECISION) AS DIFPERCENT, ' +
+      '  cfr.ID, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO, ' +
+      '  CAST(cfr.DATA_REGISTO AS TIMESTAMP) AS DATA_REGISTO ' +
       'FROM CADASTRO_FABRICA_RACAO cfr ' +
       'JOIN CADASTRO_DIETAS cd ON cfr.ID_DIETA = cd.ID ' +
       'JOIN CADASTRO_USUARIO cop ON cfr.ID_OPERADOR = cop.ID ' +
       'LEFT JOIN CADASTRO_INSUMOS vag ON vag.ID = cfr.ID_VAGAO ' +
       'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
-      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
-      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
-      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      '  AND ((:SKIP_DIETA = 1) OR (cfr.ID_DIETA = :ID_DIETA)) ' +
+      '  AND ((:SKIP_OPERADOR = 1) OR (cfr.ID_OPERADOR = :ID_OPERADOR)) ' +
+      '  AND ((:SKIP_VAGAO = 1) OR (cfr.ID_VAGAO = :ID_VAGAO)) ' +
       'ORDER BY cfr.DATA_REGISTO DESC';
     Q.ParamByName('DATA_INI').AsDate := DIni;
     Q.ParamByName('DATA_FIM').AsDate := DFim;
@@ -181,15 +193,15 @@ begin
       '  cop.NOME AS OPERADOR, ' +
       '  vag.NOME AS VAGAO, ' +
       '  cd.NOME_DIETA, ' +
-      '  cfr.QTDE_PREVISTA, ' +
-      '  cfr.QTDE_REALIZADA, ' +
-      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG_TOTAL, ' +
-      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT_TOTAL, ' +
+      '  CAST(cfr.QTDE_PREVISTA AS DOUBLE PRECISION) AS QTDE_PREVISTA, ' +
+      '  CAST(cfr.QTDE_REALIZADA AS DOUBLE PRECISION) AS QTDE_REALIZADA, ' +
+      '  CAST((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DOUBLE PRECISION) AS DIFKG_TOTAL, ' +
+      '  CAST(((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100.0) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DOUBLE PRECISION) AS DIFPERCENT_TOTAL, ' +
       '  ci2.NOME AS INSUMO, ' +
-      '  dfr.QTDE_PREVISTA AS PREVISTO_KG_INSUMO, ' +
-      '  dfr.QTDE_REALIZADA AS REALIZADO_KG_INSUMO, ' +
-      '  (dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) AS DIF_KG_INSUMO, ' +
-      '  ((dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) * 100) / NULLIF(dfr.QTDE_PREVISTA, 0) AS DIFPERCENT_INSUMO, ' +
+      '  CAST(dfr.QTDE_PREVISTA AS DOUBLE PRECISION) AS PREVISTO_KG_INSUMO, ' +
+      '  CAST(dfr.QTDE_REALIZADA AS DOUBLE PRECISION) AS REALIZADO_KG_INSUMO, ' +
+      '  CAST((dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) AS DOUBLE PRECISION) AS DIF_KG_INSUMO, ' +
+      '  CAST(((dfr.QTDE_PREVISTA - dfr.QTDE_REALIZADA) * 100.0) / NULLIF(dfr.QTDE_PREVISTA, 0) AS DOUBLE PRECISION) AS DIFPERCENT_INSUMO, ' +
       '  cfr.ID, dfr.ID AS ID_DETALHE, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO ' +
       'FROM CADASTRO_FABRICA_RACAO cfr ' +
       'JOIN DETALHES_FABRICA_RACAO dfr ON dfr.ID_CADASTRO_FABRICA_RACAO = cfr.ID ' +
@@ -198,9 +210,9 @@ begin
       'JOIN CADASTRO_USUARIO cop ON cfr.ID_OPERADOR = cop.ID ' +
       'LEFT JOIN CADASTRO_INSUMOS vag ON vag.ID = cfr.ID_VAGAO ' +
       'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
-      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
-      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
-      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      '  AND ((:SKIP_DIETA = 1) OR (cfr.ID_DIETA = :ID_DIETA)) ' +
+      '  AND ((:SKIP_OPERADOR = 1) OR (cfr.ID_OPERADOR = :ID_OPERADOR)) ' +
+      '  AND ((:SKIP_VAGAO = 1) OR (cfr.ID_VAGAO = :ID_VAGAO)) ' +
       'ORDER BY cfr.DATA_REGISTO DESC';
     Q.ParamByName('DATA_INI').AsDate := DIni;
     Q.ParamByName('DATA_FIM').AsDate := DFim;
@@ -236,14 +248,14 @@ begin
       '  cop.NOME AS OPERADOR, ' +
       '  vag.NOME AS VAGAO, ' +
       '  cd.NOME_DIETA, ' +
-      '  cfr.QTDE_PREVISTA, ' +
-      '  cfr.QTDE_REALIZADA, ' +
-      '  (cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DIFKG, ' +
-      '  ((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DIFPERCENT, ' +
+      '  CAST(cfr.QTDE_PREVISTA AS DOUBLE PRECISION) AS QTDE_PREVISTA, ' +
+      '  CAST(cfr.QTDE_REALIZADA AS DOUBLE PRECISION) AS QTDE_REALIZADA, ' +
+      '  CAST((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) AS DOUBLE PRECISION) AS DIFKG, ' +
+      '  CAST(((cfr.QTDE_PREVISTA - cfr.QTDE_REALIZADA) * 100.0) / NULLIF(cfr.QTDE_PREVISTA, 0) AS DOUBLE PRECISION) AS DIFPERCENT, ' +
       '  db.NOME_LOCAL AS CURRAL, ' +
-      '  cf.PREVISTO AS PREVISTO_FORNECIMENTO, ' +
-      '  cf.REALIZADO AS REALIZADO_FORNECIMENTO, ' +
-      '  (cf.PREVISTO - cf.REALIZADO) AS DIF_KG_FORNECIMENTO, ' +
+      '  CAST(cf.PREVISTO AS DOUBLE PRECISION) AS PREVISTO_FORNECIMENTO, ' +
+      '  CAST(cf.REALIZADO AS DOUBLE PRECISION) AS REALIZADO_FORNECIMENTO, ' +
+      '  CAST((cf.PREVISTO - cf.REALIZADO) AS DOUBLE PRECISION) AS DIF_KG_FORNECIMENTO, ' +
       '  cfr.ID, cfr.ID_DIETA, cfr.ID_OPERADOR, cfr.ID_VAGAO, cf.ID AS ID_FORNECIMENTO, cf.ID_BAIA ' +
       'FROM CADASTRO_FABRICA_RACAO cfr ' +
       'JOIN CADASTRO_DIETAS cd ON cfr.ID_DIETA = cd.ID ' +
@@ -252,9 +264,9 @@ begin
       'LEFT JOIN CADASTRO_FORNECIMENTO cf ON cf.ID_FABRICACAO = cfr.ID ' +
       'LEFT JOIN DETALHES_BAIAS db ON db.ID = cf.ID_BAIA ' +
       'WHERE cfr."DATA" BETWEEN :DATA_INI AND :DATA_FIM ' +
-      '  AND (:ID_DIETA = '''' OR cfr.ID_DIETA = :ID_DIETA) ' +
-      '  AND (:ID_OPERADOR = '''' OR cfr.ID_OPERADOR = :ID_OPERADOR) ' +
-      '  AND (:ID_VAGAO = '''' OR cfr.ID_VAGAO = :ID_VAGAO) ' +
+      '  AND ((:SKIP_DIETA = 1) OR (cfr.ID_DIETA = :ID_DIETA)) ' +
+      '  AND ((:SKIP_OPERADOR = 1) OR (cfr.ID_OPERADOR = :ID_OPERADOR)) ' +
+      '  AND ((:SKIP_VAGAO = 1) OR (cfr.ID_VAGAO = :ID_VAGAO)) ' +
       'ORDER BY cfr.DATA_REGISTO DESC';
     Q.ParamByName('DATA_INI').AsDate := DIni;
     Q.ParamByName('DATA_FIM').AsDate := DFim;
