@@ -39,6 +39,27 @@ begin
     JSON.RemovePair(JSON.Pairs[0].JsonString.Value);
 end;
 
+function JSONValueToStr(const V: TJSONValue): string;
+var
+  N: TJSONNumber;
+begin
+  Result := '';
+  if not Assigned(V) or (V is TJSONNull) then
+    Exit;
+
+  if V is TJSONNumber then
+  begin
+    N := TJSONNumber(V);
+    if Frac(N.AsDouble) = 0 then
+      Result := IntToStr(Round(N.AsDouble))
+    else
+      Result := FloatToStr(N.AsDouble);
+    Exit;
+  end;
+
+  Result := V.Value;
+end;
+
 function JSONStr(const Obj: TJSONObject; const Nome: string; const Padrao: string = ''): string;
 var
   V: TJSONValue;
@@ -48,8 +69,8 @@ begin
     Exit;
 
   V := Obj.Values[Nome];
-  if Assigned(V) and not (V is TJSONNull) then
-    Result := V.Value;
+  if Assigned(V) then
+    Result := JSONValueToStr(V);
 end;
 
 function JSONArray(const Obj: TJSONObject; const Nome: string): TJSONArray;
@@ -69,6 +90,94 @@ function StrToIntSafe(const S: string; const Default: Integer = 0): Integer;
 begin
   if not TryStrToInt(Trim(S), Result) then
     Result := Default;
+end;
+
+function JSONStrFirst(const Obj: TJSONObject; const Keys: array of string;
+  const Padrao: string = ''): string;
+var
+  I: Integer;
+  V: string;
+begin
+  Result := Padrao;
+  if Obj = nil then
+    Exit;
+
+  for I := 0 to High(Keys) do
+  begin
+    V := Trim(JSONStr(Obj, Keys[I]));
+    if V <> '' then
+      Exit(V);
+  end;
+
+  V := Trim(ExtractStrCI(Obj, Keys));
+  if V <> '' then
+    Result := V;
+end;
+
+function JSONIntFirst(const Obj: TJSONObject; const Keys: array of string;
+  const Default: Integer = 0): Integer;
+var
+  I: Integer;
+  V: TJSONValue;
+  N: Integer;
+  Pair: TJSONPair;
+  k: string;
+begin
+  Result := Default;
+  if Obj = nil then
+    Exit;
+
+  for I := 0 to High(Keys) do
+  begin
+    V := Obj.Values[Keys[I]];
+    if not Assigned(V) or (V is TJSONNull) then
+      Continue;
+
+    if V is TJSONNumber then
+      N := Round(TJSONNumber(V).AsDouble)
+    else
+      N := StrToIntSafe(Trim(JSONValueToStr(V)), 0);
+
+    if N > 0 then
+      Exit(N);
+  end;
+
+  for k in Keys do
+    for Pair in Obj do
+      if SameText(Pair.JsonString.Value, k) and Assigned(Pair.JsonValue) and
+        not (Pair.JsonValue is TJSONNull) then
+      begin
+        if Pair.JsonValue is TJSONNumber then
+          N := Round(TJSONNumber(Pair.JsonValue).AsDouble)
+        else
+          N := StrToIntSafe(Trim(JSONValueToStr(Pair.JsonValue)), 0);
+
+        if N > 0 then
+          Exit(N);
+      end;
+end;
+
+function JSONArrayFirst(const Obj: TJSONObject; const Keys: array of string): TJSONArray;
+var
+  I: Integer;
+  Pair: TJSONPair;
+  k: string;
+begin
+  Result := nil;
+  if Obj = nil then
+    Exit;
+
+  for I := 0 to High(Keys) do
+  begin
+    Result := JSONArray(Obj, Keys[I]);
+    if Assigned(Result) then
+      Exit;
+  end;
+
+  for k in Keys do
+    for Pair in Obj do
+      if SameText(Pair.JsonString.Value, k) and (Pair.JsonValue is TJSONArray) then
+        Exit(TJSONArray(Pair.JsonValue));
 end;
 
 function StrToFloatBR(const S: string): Double;
@@ -375,7 +484,7 @@ begin
     for Pair in Obj do
       if SameText(Pair.JsonString.Value, k) then
       begin
-        Result := Pair.JsonValue.Value;
+        Result := JSONValueToStr(Pair.JsonValue);
         Exit;
       end;
 end;
@@ -425,6 +534,7 @@ end;
 
 procedure PostGravaTag(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
+  dmGlobal: TdmFieldPec;
   Body: TJSONObject;
   JSONResult: TJSONObject;
   Q: TFDQuery;
@@ -447,6 +557,7 @@ var
   end;
 
 begin
+  dmGlobal := nil;
   Body := nil;
   JSONResult := nil;
   Q := nil;
@@ -471,7 +582,9 @@ begin
 
     vTag := NormalizeEPC(vTag);
 
-    Conn := dmFieldPec.FBCon;
+    dmGlobal := TdmFieldPec.Create(nil);
+    dmGlobal.ConectaDBField;
+    Conn := dmGlobal.FBCon;
 
     if not Conn.Connected then
       Conn.Connected := True;
@@ -545,6 +658,7 @@ begin
   finally
     Q.Free;
     JSONResult.Free;
+    dmGlobal.Free;
     // NAO liberar Body aqui
   end;
 end;
@@ -662,24 +776,16 @@ begin
       if vId = '' then
         vId := GetStr('id_fornecimento', '');
       vIdFabricacao := GetStr('id_fabricacao', '0');
-      vIdUsuario := GetStr('id_usuario_lancamento', '0');
-      vIdTratador := GetStr('id_tratador', '0');
-      vIdDietaRealizada := GetStr('id_dieta_realizada', '0');
-      vRealizado := GetStr('realizado', '0');
-      vMS := GetStr('ms_dieta_realizada', '0');
+      vIdUsuario := JSONStrFirst(Body, ['id_usuario_lancamento', 'ID_USUARIO', 'id_usuario'], '0');
+      vIdTratador := JSONStrFirst(Body, ['id_tratador', 'ID_MOTORISTA', 'id_motorista'], '0');
+      vIdDietaRealizada := JSONStrFirst(Body, ['id_dieta_realizada', 'ID_RACAO', 'IDRACAO', 'ID_DIETA'], '0');
+      vRealizado := JSONStrFirst(Body, ['realizado', 'REALIZADO_MN_KG', 'REALIZADO'], '0');
+      vMS := JSONStrFirst(Body, ['ms_dieta_realizada', 'MS_RACAO', 'MS_DIETA'], '0');
 
-      vIdBaia := GetStr('id_baia', '');
-      if vIdBaia = '' then
-        vIdBaia := GetStr('IDCURRAL', '');
-      vIdRacaoPrev := GetStr('id_racao', '');
-      if vIdRacaoPrev = '' then
-        vIdRacaoPrev := GetStr('id_dieta_prevista', '');
-      vTratoStr := GetStr('trato', '');
-      if vTratoStr = '' then
-        vTratoStr := GetStr('TRATO', '0');
-      vDataISO := GetStr('data', '');
-      if vDataISO = '' then
-        vDataISO := GetStr('DATA_FORN', '');
+      vIdBaia := JSONStrFirst(Body, ['id_baia', 'IDCURRAL', 'id_curral', 'ID_LOCAL']);
+      vIdRacaoPrev := JSONStrFirst(Body, ['id_racao', 'ID_RACAO', 'IDRACAO', 'id_dieta', 'id_dieta_prevista']);
+      vTratoStr := JSONStrFirst(Body, ['trato', 'TRATO'], '0');
+      vDataISO := JSONStrFirst(Body, ['data', 'DATA_FORN', 'data_forn', 'DATA_FAB']);
 
       vTrato := StrToIntDef(vTratoStr, 0);
       vData := ParseDataRef(vDataISO);
@@ -833,6 +939,7 @@ end;
 
 procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
+  dmGlobal: TdmFieldPec;
   Body: TJSONObject;
   Itens: TJSONArray;
   Fornecimentos: TJSONArray;
@@ -959,6 +1066,7 @@ var
   end;
 
 begin
+  dmGlobal := nil;
   Body := nil;
   Conn := nil;
   Q := nil;
@@ -969,26 +1077,30 @@ begin
     if not Assigned(Body) then
       raise Exception.Create('JSON inválido.');
 
-    IdLocalFab    := JSONStr(Body, 'id');
-    HandoffId     := JSONStr(Body, 'handoff_id');
-    IdFazenda     := StrToIntSafe(JSONStr(Body, 'id_fazenda'));
-    IdDieta       := StrToIntSafe(JSONStr(Body, 'id_dieta'));
-    IdUsuario     := StrToIntSafe(JSONStr(Body, 'id_usuario'));
-    IdOperador    := StrToIntSafe(JSONStr(Body, 'id_operador'));
-    DataFab       := StrToDateBR(JSONStr(Body, 'data'));
-    QtdePrevista  := StrToFloatBR(JSONStr(Body, 'qtde_prevista'));
-    QtdeRealizada := StrToFloatBR(JSONStr(Body, 'qtde_realizada'));
-    Itens         := JSONArray(Body, 'itens');
-    Fornecimentos := JSONArray(Body, 'fornecimentos');
+    IdLocalFab    := JSONStrFirst(Body, ['id', 'id_local', 'ID_LOCAL']);
+    HandoffId     := JSONStrFirst(Body, ['handoff_id', 'HANDOFF_ID'], IdLocalFab);
+    IdFazenda     := JSONIntFirst(Body, ['id_fazenda', 'ID_PROPRIEDADE', 'id_propriedade']);
+    IdDieta       := JSONIntFirst(Body, ['id_dieta', 'IDRACAO', 'ID_RACAO', 'id_racao', 'ID_DIETA', 'ID']);
+    IdUsuario     := JSONIntFirst(Body, ['id_usuario', 'ID_USUARIO']);
+    IdOperador    := JSONIntFirst(Body, ['id_operador', 'ID_OPERADOR'], IdUsuario);
+    DataFab       := StrToDateBR(JSONStrFirst(Body, ['data', 'DATA_FAB', 'data_fabricacao']));
+    QtdePrevista  := StrToFloatBR(JSONStrFirst(Body, ['qtde_prevista', 'KG_PREVISTO', 'qtd_prevista']));
+    QtdeRealizada := StrToFloatBR(JSONStrFirst(Body, ['qtde_realizada', 'KG_REALIZADO', 'qtd_realizada', 'kg_realizado']));
+    Itens         := JSONArrayFirst(Body, ['itens', 'FABRICACAO_INSUMOS', 'insumos']);
+    Fornecimentos := JSONArrayFirst(Body, ['fornecimentos', 'FORNECIMENTO_CONF']);
 
     if IdFazenda <= 0 then
-      raise Exception.Create('Campo id_fazenda inválido.');
+      raise Exception.Create('Campo id_fazenda/ID_PROPRIEDADE inválido.');
     if IdDieta <= 0 then
-      raise Exception.Create('Campo id_dieta inválido.');
+      raise Exception.Create(
+        'Campo id_dieta/IDRACAO/ID inválido. Informe IDRACAO (ou id_dieta) com ID numérico da ração.'
+      );
     if IdUsuario <= 0 then
-      raise Exception.Create('Campo id_usuario inválido.');
+      raise Exception.Create('Campo id_usuario/ID_USUARIO inválido.');
 
-    Conn := dmFieldPec.FBCon;
+    dmGlobal := TdmFieldPec.Create(nil);
+    dmGlobal.ConectaDBField;
+    Conn := dmGlobal.FBCon;
 
     if not Conn.Connected then
       Conn.Connected := True;
@@ -1067,14 +1179,14 @@ begin
 
           Item := TJSONObject(Itens.Items[IdxItem]);
 
-          IdInsumo := StrToIntSafe(JSONStr(Item, 'id_insumo'));
-          QtdePrevistaItem := StrToFloatBR(JSONStr(Item, 'qtde_prevista'));
-          QtdeRealizadaItem := StrToFloatBR(JSONStr(Item, 'qtd_realizada'));
-          MsInsumo := StrToFloatBR(JSONStr(Item, 'ms_insumo'));
-          IdUsuarioItem := StrToIntSafe(JSONStr(Item, 'id_usuario'), IdUsuario);
+          IdInsumo := JSONIntFirst(Item, ['id_insumo', 'ID_ALIMENTO', 'id_alimento']);
+          QtdePrevistaItem := StrToFloatBR(JSONStrFirst(Item, ['qtde_prevista', 'KG_PREVISTO']));
+          QtdeRealizadaItem := StrToFloatBR(JSONStrFirst(Item, ['qtd_realizada', 'KG_FABRICADO', 'qtd_realizado']));
+          MsInsumo := StrToFloatBR(JSONStrFirst(Item, ['ms_insumo', 'MS_INSUMO']));
+          IdUsuarioItem := JSONIntFirst(Item, ['id_usuario', 'ID_USUARIO'], IdUsuario);
 
           if IdInsumo <= 0 then
-            raise Exception.CreateFmt('Item %d com id_insumo inválido.', [IdxItem + 1]);
+            raise Exception.CreateFmt('Item %d com id_insumo/ID_ALIMENTO inválido.', [IdxItem + 1]);
 
           ValorKgInsumo := BuscarValorKgInsumo(IdDieta, IdInsumo);
 
@@ -1140,24 +1252,22 @@ begin
           if Trato <= 0 then
             Trato := StrToIntSafe(JSONStr(Forn, 'trato'));
 
-          IdMotorista := StrToIntSafe(JSONStr(Forn, 'id_tratador'));
-          if IdMotorista <= 0 then
-            IdMotorista := StrToIntSafe(JSONStr(Forn, 'id_usuario_lancamento'));
+          IdMotorista := JSONIntFirst(Forn, ['id_tratador', 'ID_MOTORISTA', 'id_usuario_lancamento', 'ID_USUARIO']);
 
-          IdRacaoRealizada := StrToIntSafe(JSONStr(Forn, 'id_dieta_realizada'));
+          IdRacaoRealizada := JSONIntFirst(Forn, ['id_dieta_realizada', 'ID_RACAO', 'id_racao', 'IDRACAO', 'ID_DIETA']);
           if IdRacaoRealizada <= 0 then
             IdRacaoRealizada := IdDieta;
 
-          Realizado := StrToFloatBR(JSONStr(Forn, 'realizado'));
+          Realizado := StrToFloatBR(JSONStrFirst(Forn, ['realizado', 'REALIZADO_MN_KG', 'REALIZADO']));
 
           if IdCurral <= 0 then
             raise Exception.CreateFmt('Fornecimento %d sem IDCURRAL.', [IdxForn + 1]);
           if Trato <= 0 then
             raise Exception.CreateFmt('Fornecimento %d sem TRATO.', [IdxForn + 1]);
           if IdMotorista <= 0 then
-            raise Exception.CreateFmt('Fornecimento %d sem id_tratador/id_usuario_lancamento.', [IdxForn + 1]);
+            raise Exception.CreateFmt('Fornecimento %d sem id_tratador/ID_MOTORISTA.', [IdxForn + 1]);
           if IdRacaoRealizada <= 0 then
-            raise Exception.CreateFmt('Fornecimento %d sem id_dieta_realizada.', [IdxForn + 1]);
+            raise Exception.CreateFmt('Fornecimento %d sem id_dieta_realizada/ID_RACAO.', [IdxForn + 1]);
 
           CustoTotalTrato := Realizado * BuscarValorKgRacao(IdRacaoRealizada);
 
@@ -1402,6 +1512,7 @@ begin
     Body.Free;
     Q.Free;
     RespJson.Free;
+    dmGlobal.Free;
   end;
 end;
 

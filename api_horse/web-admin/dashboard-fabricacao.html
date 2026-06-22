@@ -11,9 +11,9 @@
 <body class="min-h-full bg-gradient-to-b from-slate-50 via-teal-50/30 to-slate-50 text-slate-900">
   <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
     <header class="mb-8 rounded-2xl bg-slate-900 px-6 py-8 text-white sm:px-10">
-      <p class="text-xs font-semibold uppercase tracking-widest text-teal-300">CGPec · BI Operacional</p>
+      <p id="clientBadge" class="text-xs font-semibold uppercase tracking-widest text-teal-300">CGPec · BI Operacional</p>
       <h1 class="mt-2 text-3xl font-bold">Dashboard de Fabricação e Fornecimento</h1>
-      <p class="mt-2 text-sm text-slate-300">
+      <p id="headerDesc" class="mt-2 text-sm text-slate-300">
         Eficiência por período, dieta, operador e vagão. Compare previsto x realizado e rastreie onde a fabricação foi fornecida.
       </p>
     </header>
@@ -22,7 +22,8 @@
       <a href="/config" data-admin-nav="config" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Configuração</a>
       <a href="/dashboard/fabricacao" data-admin-nav="dashfab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
       <a href="/monitor" data-admin-nav="monitor" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
-      <a href="/audit/fornecimento" data-admin-nav="audit" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Auditoria</a>
+      <a href="/audit/fornecimento" data-admin-nav="audit-forn" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fornecimento</a>
+      <a href="/audit/fabricacao" data-admin-nav="audit-fab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fabricação</a>
       <a href="/health" data-admin-nav="health" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
     </nav>
 
@@ -44,7 +45,7 @@
           Operador (ID)
           <input id="idOperador" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Opcional">
         </label>
-        <label class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+        <label id="wrapVagao" class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
           Vagão (ID)
           <input id="idVagao" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Opcional">
         </label>
@@ -200,6 +201,24 @@
     RFeedRequestMonitor.initNav("dashfab");
     Chart.register(ChartDataLabels);
 
+    let activeClient = "cgpec";
+
+    async function loadClientConfig() {
+      try {
+        const r = await fetch("/api/config", { cache: "no-store" });
+        const data = await r.json();
+        activeClient = String(data.activeClient || "cgpec").toLowerCase();
+        const badge = document.getElementById("clientBadge");
+        if (activeClient === "fieldpec") {
+          badge.textContent = "FieldPec · BI Operacional";
+          badge.className = "text-xs font-semibold uppercase tracking-widest text-amber-300";
+          document.getElementById("wrapVagao").classList.add("hidden");
+          document.getElementById("headerDesc").textContent =
+            "Eficiência por período, ração e operador. Compare previsto x realizado e rastreie fornecimento nos currais (FORNECIMENTO_CONF).";
+        }
+      } catch (_) { /* mantém defaults CGPec */ }
+    }
+
     const fmtKg = (n) => `${(Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
     const fmtPct = (n) => `${(Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
     const esc = (v) => String(v ?? "").replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
@@ -245,7 +264,7 @@
       const idVagao = document.getElementById("idVagao").value.trim();
       if (idDieta) q.set("id_dieta", idDieta);
       if (idOperador) q.set("id_operador", idOperador);
-      if (idVagao) q.set("id_vagao", idVagao);
+      if (activeClient !== "fieldpec" && idVagao) q.set("id_vagao", idVagao);
       return q.toString();
     }
 
@@ -745,7 +764,7 @@
 
     document.getElementById("btnAtualizar").addEventListener("click", loadDashboard);
     rangeDefault();
-    loadDashboard();
+    loadClientConfig().then(loadDashboard);
   </script>
 </body>
 </html>

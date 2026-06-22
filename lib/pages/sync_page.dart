@@ -8,6 +8,7 @@ import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
 import "../services/bootstrap_sync.dart";
 import "../services/fornecimento_audit_service.dart";
+import "../services/fabricacao_audit_service.dart";
 import "../services/sync_orchestrator.dart";
 import "../services/wifi_guard.dart";
 
@@ -37,6 +38,7 @@ class _SyncPageState extends State<SyncPage> {
   );
 
   final _fornecimentoAudit = FornecimentoAuditService();
+  final _fabricacaoAudit = FabricacaoAuditService();
 
   bool _running = false;
   bool _auditRunning = false;
@@ -306,6 +308,51 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
+  Future<void> _enviarAuditoriaFabricacao() async {
+    if (_running || _auditRunning) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Auditoria fabricação"),
+        content: const Text(
+          "Enviar todos os registros locais de CADASTRO_FABRICA_RACAO "
+          "para a API gravar em disco no servidor?\n\n"
+          "Use para verificar quais fabricações não foram para o CGPec.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Enviar"),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _auditRunning = true);
+    _addLog("Iniciando auditoria CADASTRO_FABRICA_RACAO...");
+
+    try {
+      final resp = await _fabricacaoAudit.enviarAuditoriaCompleta(
+        log: _addLog,
+      );
+      final qtd = resp["registros"] ?? resp["total"];
+      final path = resp["saved_path"] ?? resp["filename"] ?? "";
+      _addLog("Auditoria fabricação OK: $qtd registro(s) salvos em $path");
+      _toast("Auditoria de fabricação enviada.");
+    } catch (e) {
+      _addLog("Falha auditoria fabricação: $e");
+      _toast("Falha ao enviar auditoria de fabricação.");
+    } finally {
+      if (mounted) setState(() => _auditRunning = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final total = _steps.length;
@@ -322,18 +369,40 @@ class _SyncPageState extends State<SyncPage> {
         foregroundColor: Colors.black,
         elevation: 0.5,
         actions: [
-          IconButton(
-            tooltip: "Auditoria fornecimento (enviar tabela completa)",
-            onPressed: (_running || _auditRunning)
-                ? null
-                : _enviarAuditoriaFornecimento,
+          PopupMenuButton<String>(
+            tooltip: "Auditoria (enviar tabelas ao servidor)",
+            enabled: !_running && !_auditRunning,
+            onSelected: (v) {
+              if (v == "forn") _enviarAuditoriaFornecimento();
+              if (v == "fab") _enviarAuditoriaFabricacao();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: "fab",
+                child: ListTile(
+                  leading: Icon(Icons.factory_outlined),
+                  title: Text("Auditoria fabricação"),
+                  subtitle: Text("CADASTRO_FABRICA_RACAO"),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: "forn",
+                child: ListTile(
+                  leading: Icon(Icons.fact_check_outlined),
+                  title: Text("Auditoria fornecimento"),
+                  subtitle: Text("CADASTRO_FORNECIMENTO"),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
             icon: _auditRunning
                 ? const SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.fact_check_outlined),
+                : const Icon(Icons.upload_file_outlined),
           ),
           IconButton(
             tooltip: "Atualizar pendências",

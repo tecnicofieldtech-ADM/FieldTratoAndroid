@@ -11,6 +11,10 @@ import "../controller/fornecimento_dashboard_controller.dart";
 import "../data/fornecimento_repo.dart";
 import "../../../services/session_service.dart";
 import "../../../repo/config_repo.dart";
+import "../../../repo/fazenda_repo.dart";
+import "../../../repo/user_repo.dart";
+import "../../../repo/vagao_repo.dart";
+import "../../../services/bootstrap_sync.dart";
 import "../../../widgets/scale_peso_highlight_card.dart";
 
 class FornecimentoDashboardPage extends StatefulWidget {
@@ -48,6 +52,16 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   late final FornecimentoDashboardController _ctrl;
 
   final _cfgRepo = ConfigRepo();
+  final _vagaoRepo = VagaoRepo();
+  final _fazendaRepo = FazendaRepo();
+  final _userRepo = UserRepo();
+
+  late final BootstrapSync _bootstrap = BootstrapSync(
+    cfgRepo: _cfgRepo,
+    vagaoRepo: _vagaoRepo,
+    fazendaRepo: _fazendaRepo,
+    userRepo: _userRepo,
+  );
   static const _kMapaHorizontal = "forn_dash_mapa_horizontal";
   static const _kLinhaFiltro = "forn_dash_linha_filtro";
   static const _kCurralSelecionado = "forn_dash_curral_sel";
@@ -194,6 +208,31 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     }
   }
 
+  String _ymd(DateTime d) {
+    final y = d.year.toString().padLeft(4, "0");
+    final m = d.month.toString().padLeft(2, "0");
+    final dd = d.day.toString().padLeft(2, "0");
+    return "$y-$m-$dd";
+  }
+
+  /// Atualiza baias + previsão do dia antes de montar o mapa (evita SQLite desatualizado).
+  Future<void> _refreshMapaRemoto({required DateTime data}) async {
+    try {
+      final cfg = await _cfgRepo.getConfig();
+      if (cfg == null) return;
+
+      final ymd = _ymd(data);
+      await _bootstrap.baixarBaias(cfg, widget.idFazenda);
+      await _bootstrap.baixarPrevisaoTrato(
+        cfg,
+        widget.idFazenda,
+        ymd,
+      );
+    } catch (_) {
+      // offline / API indisponível: segue com SQLite local
+    }
+  }
+
   Future<void> _connectDevicesFromConfig() async {
     try {
       final hostB = (await _cfgRepo.getHostBalanca()).trim();
@@ -288,6 +327,10 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     // ✅ conecta por config (await para evitar corrida de lifecycle)
     await _connectDevicesFromConfig();
 
+    await _refreshMapaRemoto(
+      data: widget.data ?? DateTime.now(),
+    );
+
     await _ctrl.init(
       data: widget.data ?? DateTime.now(),
       trato: widget.trato,
@@ -371,11 +414,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 final linhas = _ctrl.linhasDisponiveis;
                 final width = MediaQuery.of(ctx).size.width;
                 final cols = _gridCols(width);
-                final isNarrow = width < 390;
-                final cardRatio = cols <= 2
-                    ? (isNarrow ? 1.68 : 1.85)
-                    : (cols == 3 ? 1.95 : 2.05);
                 final list = _ctrl.curraisFiltrados;
+                const cardHeight = 118.0;
 
                 return Column(
                   mainAxisSize: MainAxisSize.min,
@@ -418,7 +458,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                           crossAxisCount: cols,
                           crossAxisSpacing: 8,
                           mainAxisSpacing: 8,
-                          childAspectRatio: cardRatio,
+                          mainAxisExtent: cardHeight,
                         ),
                         itemBuilder: (_, i) {
                           final c = list[i];
@@ -676,6 +716,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                               c.idFornecimento;
                           return SizedBox(
                             width: 250,
+                            height: 118,
                             child: _CurralCardSmall(
                               c: c,
                               isSelected: isSel,
@@ -869,85 +910,103 @@ class _CurralCardSmall extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasRealizado = c.realizadoKg > 0;
+    final semPrevisto = c.previstoKg <= 0;
 
     final bg = isSelected
         ? Colors.black
-        : (hasRealizado ? Colors.green.shade100 : Colors.white);
+        : (hasRealizado
+            ? Colors.green.shade100
+            : (semPrevisto ? Colors.grey.shade200 : Colors.white));
 
     final fg = isSelected ? Colors.white : Colors.black;
 
     String n0(num v) => v.toStringAsFixed(0).replaceAll(".", ",");
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: bg,
-          border: Border.all(
-            color: isSelected
-                ? Colors.black
-                : Colors.black.withValues(alpha: 0.10),
-          ),
+    final nome = c.curralNome.trim().isEmpty ? "Curral" : c.curralNome.trim();
+    final linhaTxt = (c.linha ?? "-").trim().isEmpty ? "-" : c.linha!.trim();
+
+    return Material(
+      color: bg,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: isSelected
+              ? Colors.black
+              : Colors.black.withValues(alpha: 0.10),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    c.curralNome,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: fg,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                if (!isSelected && hasRealizado) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(999),
-                      color: Colors.green.shade700,
-                    ),
-                    child: const Text(
-                      "OK",
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      nome,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white,
+                        color: fg,
                         fontWeight: FontWeight.w900,
-                        fontSize: 11,
+                        fontSize: 13,
+                        height: 1.1,
                       ),
                     ),
                   ),
+                  if (!isSelected && hasRealizado) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: Colors.green.shade700,
+                      ),
+                      child: const Text(
+                        "OK",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              "Linha: ${(c.linha ?? "-").trim().isEmpty ? "-" : c.linha!.trim()}",
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: fg.withValues(alpha: 0.75), fontSize: 12),
-            ),
-            const Spacer(),
-            Row(
-              children: [
-                Expanded(child: _mini(fg, "P", n0(c.previstoKg))),
-                const SizedBox(width: 6),
-                Expanded(child: _mini(fg, "R", n0(c.realizadoKg))),
-                const SizedBox(width: 6),
-                Expanded(child: _mini(fg, "D", n0(c.diffKg))),
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                "Linha: $linhaTxt",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: fg.withValues(alpha: 0.75),
+                  fontSize: 11,
+                  height: 1.1,
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                height: 28,
+                child: Row(
+                  children: [
+                    Expanded(child: _mini(fg, "P", n0(c.previstoKg))),
+                    const SizedBox(width: 4),
+                    Expanded(child: _mini(fg, "R", n0(c.realizadoKg))),
+                    const SizedBox(width: 4),
+                    Expanded(child: _mini(fg, "D", n0(c.diffKg))),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -955,7 +1014,7 @@ class _CurralCardSmall extends StatelessWidget {
 
   Widget _mini(Color fg, String t, String v) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: fg.withValues(alpha: 0.18)),

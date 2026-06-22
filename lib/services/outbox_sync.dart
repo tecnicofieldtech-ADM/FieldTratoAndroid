@@ -56,6 +56,28 @@ class OutboxSync {
       ELSE 0
     END""";
 
+  /// Fornecimento so sobe apos a fabricacao vinculada ter FLAG_SYNC=1 no tablet.
+  static const String _sqlFornecFabSyncGate = """
+    (
+      TRIM(COALESCE(cf.ID_FABRICACAO, '')) = ''
+      OR EXISTS (
+        SELECT 1 FROM CADASTRO_FABRICA_RACAO cfr_gate
+        WHERE TRIM(cfr_gate.ID) = TRIM(cf.ID_FABRICACAO)
+          AND IFNULL(cfr_gate.FLAG_SYNC, 0) = 1
+      )
+    )""";
+
+  Future<void> _marcarFornecimentoSyncOk(dynamic db, String idCadastro) async {
+    final id = idCadastro.trim();
+    if (id.isEmpty) return;
+    await db.update(
+      "CADASTRO_FORNECIMENTO",
+      {"FLAG_SYNC": 1},
+      where: "ID = ?",
+      whereArgs: [id],
+    );
+  }
+
   Future<double> _fetchDietaMs(dynamic db, String idDieta) async {
     final id = idDieta.trim();
     if (id.isEmpty) return 0;
@@ -373,12 +395,8 @@ class OutboxSync {
               .where((e) => e.isNotEmpty)
               .toList();
 
-          if (syncedRowIds.isNotEmpty) {
-            final inArgs = syncedRowIds.map((_) => "?").join(",");
-            await db.rawUpdate(
-              "UPDATE CADASTRO_FORNECIMENTO SET FLAG_SYNC=1 WHERE ID IN ($inArgs)",
-              syncedRowIds,
-            );
+          for (final idCad in syncedRowIds) {
+            await _marcarFornecimentoSyncOk(db, idCad);
           }
         }
       } else {
@@ -439,6 +457,24 @@ class OutboxSync {
         diag.isNotEmpty ? int.tryParse("${diag.first["qtd"]}") ?? 0 : 0;
     log("CADASTRO_FORNECIMENTO pendentes = $qtdPend");
 
+    final blockedFab = await db.rawQuery("""
+      SELECT COUNT(*) AS qtd
+      FROM CADASTRO_FORNECIMENTO cf
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND NOT $_sqlFornecFabSyncGate
+    """);
+    final qtdBlocked = blockedFab.isNotEmpty
+        ? int.tryParse("${blockedFab.first["qtd"]}") ?? 0
+        : 0;
+    if (qtdBlocked > 0) {
+      log(
+        "Fornecimento: $qtdBlocked registro(s) aguardando fabricacao (FLAG_SYNC fab=0). "
+        "Nao serao reenviados ate a fabricacao subir.",
+      );
+    }
+
     final rows = await db.rawQuery('''
       SELECT
         cf.ID                                                       AS id_cadastro,
@@ -464,17 +500,25 @@ class OutboxSync {
       WHERE COALESCE(cf.REALIZADO, 0) > 0
         AND IFNULL(cf.FLAG_SYNC, 0) = 0
         AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND $_sqlFornecFabSyncGate
       ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
     ''');
 
     if (rows.isEmpty) {
-      log("Nenhum fornecimento pendente para enviar.");
+      if (qtdBlocked > 0) {
+        log(
+          "Nenhum fornecimento elegivel agora (fabricacao pendente bloqueia envio).",
+        );
+      } else {
+        log("Nenhum fornecimento pendente para enviar.");
+      }
       return;
     }
 
-    final syncedRowIds = <String>{};
+    var syncedCount = 0;
 
-    // 1 linha CADASTRO_FORNECIMENTO = 1 POST; API (FornecimentoAcumulativo=1) soma.
+    // 1 linha CADASTRO_FORNECIMENTO = 1 POST (delta da sessao).
+    // API FornecimentoAcumulativo=1 soma; FLAG_SYNC deve subir logo apos cada OK.
     for (final r in rows) {
       final idPrev = _s(r["id_fornecimento"]);
       final idCad = _s(r["id_cadastro"]);
@@ -505,6 +549,7 @@ class OutboxSync {
       final payload = <String, dynamic>{
         // Chave natural primeiro na API; id e fallback se nao encontrar.
         "id": idPrev,
+        "id_cadastro": idCad,
         "id_fornecimento": idPrev,
         "id_fabricacao": _s(r["id_fabricacao"]),
         "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
@@ -527,7 +572,8 @@ class OutboxSync {
 
       final ok = await api.postFornecimento(payloadFixed, log: log);
       if (ok) {
-        syncedRowIds.add(idCad);
+        await _marcarFornecimentoSyncOk(db, idCad);
+        syncedCount++;
       } else {
         log(
           "Falha Fornecimento cadastro=$idCad chave=$idBaia|$idRacao|$dataRef|$trato",
@@ -535,13 +581,8 @@ class OutboxSync {
       }
     }
 
-    if (syncedRowIds.isNotEmpty) {
-      final inArgs = syncedRowIds.map((_) => "?").join(",");
-      await db.rawUpdate(
-        "UPDATE CADASTRO_FORNECIMENTO SET FLAG_SYNC=1 WHERE ID IN ($inArgs)",
-        syncedRowIds.toList(),
-      );
-      log("${syncedRowIds.length} registro(s) de fornecimento marcado(s) FLAG_SYNC=1");
+    if (syncedCount > 0) {
+      log("$syncedCount registro(s) de fornecimento marcado(s) FLAG_SYNC=1");
     }
   }
 }

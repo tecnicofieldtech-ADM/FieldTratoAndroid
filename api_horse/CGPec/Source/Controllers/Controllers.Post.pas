@@ -18,6 +18,7 @@ uses
   procedure PostFabricacaoInsumos(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   procedure PostGpsTrack(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+  procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
   function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
   procedure UploadLog(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 implementation
@@ -666,6 +667,90 @@ begin
   end;
 end;
 
+procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fabricacao');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fabricacao_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
 procedure RegistraRotas;
 begin
   THorse.Post('/Post/Fornecimento',PostFornecimento);
@@ -675,6 +760,7 @@ begin
   THorse.Post('/Post/GravaTag', PostGravaTag);
   THorse.Post('/Post/GpsTrack', PostGpsTrack);
   THorse.Post('/Post/FornecimentoAudit', PostFornecimentoAudit);
+  THorse.Post('/Post/FabricacaoAudit', PostFabricacaoAudit);
 end;
 
 function NormalizeEPC(const S: string): string;
@@ -952,6 +1038,46 @@ end;
 //  end;
 //end;
 
+function GetSyncDedupBaseDir: string;
+var
+  Env: string;
+begin
+  Env := GetEnvironmentVariable('RFEED_LOG_DIR');
+  if Env <> '' then
+    Result := TPath.Combine(IncludeTrailingPathDelimiter(Env), 'sync-dedup')
+  else
+    Result := TPath.Combine(
+      TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed'),
+      'sync-dedup');
+  Result := IncludeTrailingPathDelimiter(Result);
+end;
+
+function FornecimentoCadastroJaProcessado(const IdCadastro: string): Boolean;
+var
+  P: string;
+begin
+  Result := False;
+  if Trim(IdCadastro) = '' then
+    Exit;
+  P := TPath.Combine(
+    TPath.Combine(GetSyncDedupBaseDir, 'fornecimento'),
+    THashSHA2.GetHashString(Trim(IdCadastro)) + '.ok');
+  Result := TFile.Exists(P);
+end;
+
+procedure MarcarFornecimentoCadastroProcessado(const IdCadastro: string);
+var
+  Dir, P: string;
+begin
+  if Trim(IdCadastro) = '' then
+    Exit;
+  Dir := TPath.Combine(GetSyncDedupBaseDir, 'fornecimento');
+  if not TDirectory.Exists(Dir) then
+    ForceDirectories(Dir);
+  P := TPath.Combine(Dir, THashSHA2.GetHashString(Trim(IdCadastro)) + '.ok');
+  TFile.WriteAllText(P, FormatDateTime('yyyy-mm-dd hh:nn:ss', Now), TEncoding.UTF8);
+end;
+
 procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
   dmGlobal: Tdmdb;
@@ -959,6 +1085,7 @@ var
   JSONResult: TJSONObject;
 
   vId: string;
+  vIdCadastro: string;
   vIdFabricacao, vIdUsuario, vIdTratador, vIdDietaRealizada, vRealizado, vMS: string;
   vMsFornec, vRealizadoNum, vRealizadoAtual, vRealizadoGravar: Double;
   vIdDietaMs: string;
@@ -1033,10 +1160,27 @@ begin
       vRealizadoNum := ParseFlexNumber(vRealizado);
       vFornecimentoAcumulativo := dmGlobal.GetFornecimentoAcumulativo;
       vPontoCorteKg := dmGlobal.GetPontoCorteFornecimentoKg;
+      vIdCadastro := GetStr('id_cadastro', '');
       vIdDietaMs := vIdDietaRealizada;
       if (Trim(vIdDietaMs) = '') or (Trim(vIdDietaMs) = '0') then
         vIdDietaMs := vIdRacaoPrev;
       vMsFornec := 0;
+
+      if vIdCadastro <> '' then
+      begin
+        if FornecimentoCadastroJaProcessado(vIdCadastro) then
+        begin
+          if vId <> '' then
+            JSONResult.AddPair('id', vId);
+          JSONResult.AddPair('ok', TJSONBool.Create(True));
+          JSONResult.AddPair('modo', 'dedup_id_cadastro');
+          JSONResult.AddPair('id_cadastro', vIdCadastro);
+          JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
+          Res.Send(JSONResult).Status(200);
+          MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
+          Exit;
+        end;
+      end;
 
       // Abaixo do ponto de corte: nao grava no CG Pec, mas confirma sync (HTTP 200).
       if (vPontoCorteKg > 0) and (vRealizadoNum <= vPontoCorteKg) then
@@ -1113,6 +1257,8 @@ begin
 
         if vEncontrou then
         begin
+          if vIdCadastro <> '' then
+            MarcarFornecimentoCadastroProcessado(vIdCadastro);
           JSONResult.AddPair('id', vId);
           JSONResult.AddPair('modo', 'update_por_chave_natural');
           JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
@@ -1154,6 +1300,9 @@ begin
           Post;
           ApplyUpdates;
         end;
+
+        if vIdCadastro <> '' then
+          MarcarFornecimentoCadastroProcessado(vIdCadastro);
 
         JSONResult.AddPair('id', vId);
         JSONResult.AddPair('modo', 'update_por_id');

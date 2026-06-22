@@ -461,4 +461,45 @@ class ApiService {
       return null;
     }
   }
+
+  /// Envia snapshot completo de CADASTRO_FABRICA_RACAO para auditoria no servidor.
+  Future<Map<String, dynamic>?> postFabricacaoAudit(
+    Map<String, dynamic> body, {
+    void Function(String)? log,
+  }) async {
+    try {
+      final r = await _dio.post(
+        "/Post/FabricacaoAudit",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null,
+          contentType: Headers.jsonContentType,
+          receiveTimeout: const Duration(seconds: 120),
+          sendTimeout: const Duration(seconds: 120),
+        ),
+      );
+
+      if (!_isHttpSuccess(r.statusCode)) {
+        log?.call("❌ /Post/FabricacaoAudit HTTP ${r.statusCode}");
+        return null;
+      }
+
+      final data = r.data;
+      if (data is Map<String, dynamic>) return data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      if (data is String && data.trim().isNotEmpty) {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      }
+      return {"ok": true};
+    } on DioException catch (e) {
+      log?.call(
+        "❌ /Post/FabricacaoAudit EXC HTTP ${e.response?.statusCode}",
+      );
+      return null;
+    } catch (e) {
+      log?.call("❌ /Post/FabricacaoAudit ERRO: $e");
+      return null;
+    }
+  }
 }

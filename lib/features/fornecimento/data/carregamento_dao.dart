@@ -105,6 +105,32 @@ class CarregamentoDao {
   Future<int> marcarConsumido(String idCarregamento) =>
       finalizar(idCarregamento);
 
+  Future<int> updatePesoCarregadoAbertoPorFabricacao({
+    required String idFabricacao,
+    required double pesoCarregado,
+    required String idVagao,
+  }) async {
+    final db = await _db;
+    final fab = idFabricacao.trim();
+    if (fab.isEmpty) return 0;
+
+    final row = await getAbertoByFabricacao(fab);
+    if (row == null) return 0;
+
+    final idCar = (row["ID"] ?? row["id"] ?? "").toString().trim();
+    if (idCar.isEmpty) return 0;
+
+    return db.update(
+      _table,
+      {
+        "PESO_CARREGADO": pesoCarregado,
+        "ID_VAGAO": idVagao.trim(),
+      },
+      where: "TRIM(ID) = TRIM(?) AND COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      whereArgs: [idCar, statusAberto],
+    );
+  }
+
   Future<void> upsertFromRemote(Map<String, Object?> m) async {
     final db = await _db;
 

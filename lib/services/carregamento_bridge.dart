@@ -65,8 +65,36 @@ class CarregamentoBridgeServer {
         return _json(req, 200, {"ok": true});
       }
 
+      if (req.method == "GET" && (path == "/" || path.isEmpty)) {
+        return _json(req, 200, {
+          "ok": true,
+          "service": "RFeed bridge carregamento",
+          "message": "Bridge ativo. Use /health ou /carregamentos.",
+          "endpoints": [
+            "GET /health",
+            "GET /carregamentos",
+            "GET /carregamentos/:id",
+            "POST /carregamentos/:id/ack",
+          ],
+        });
+      }
+
       if (req.method == "GET" && path == "/carregamentos") {
         return _listCarregamentos(req);
+      }
+
+      if (req.method == "POST" && path.startsWith("/carregamentos/")) {
+        final segs =
+            path.split("/").where((e) => e.trim().isNotEmpty).toList();
+        if (segs.length >= 3 &&
+            segs[0] == "carregamentos" &&
+            segs[2].toLowerCase() == "ack") {
+          final id = segs[1].trim();
+          if (id.isEmpty) {
+            return _json(req, 400, {"erro": "id_invalido"});
+          }
+          return _postAck(req, id);
+        }
       }
 
       if (req.method == "GET" && path.startsWith("/carregamentos/")) {
@@ -147,6 +175,19 @@ class CarregamentoBridgeServer {
 
     _touch("DETALHE $idLocal");
     return _json(req, 200, payload);
+  }
+
+  Future<void> _postAck(HttpRequest req, String idLocal) async {
+    try {
+      await utf8.decoder.bind(req).join();
+    } catch (_) {}
+    final ok = await _repo.marcarRecebido(idLocal);
+    if (!ok) {
+      _touch("ACK_FAIL $idLocal");
+      return _json(req, 404, {"ok": false, "erro": "fabricacao_nao_encontrada"});
+    }
+    _touch("ACK_OK $idLocal");
+    return _json(req, 200, {"ok": true});
   }
 
   String? _extractId(String path) {

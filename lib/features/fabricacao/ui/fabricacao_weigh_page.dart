@@ -84,7 +84,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     super.initState();
     c = FabricacaoController(widget.repo)..addListener(_onChange);
     c.onRemoteFinishRequested = () async {
-      await _finalizarFluxoCompleto(confirmar: false, navegarAposFinalizar: true);
+      await _finalizarRemotoViaMirror();
     };
     _boot();
 
@@ -328,44 +328,79 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     return _cfgRepo.getFabricacaoFlowMode();
   }
 
-  Future<void> _finalizarParcialEstacionario() async {
+  bool get _mostrarFinalizarParcialEstacionario =>
+      _tipoTrabalho == 1 &&
+      _flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+      !_readOnlyStation;
+
+  /// Finish enviado pela Pá via mirror.
+  Future<void> _finalizarRemotoViaMirror() async {
+    if (!mounted) return;
+    if (_finishing || _readOnlyStation) return;
+
+    final flowMode = await _getFlowMode();
+    final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
+
+    if (tipoTrabalho == 1 &&
+        flowMode == FabricacaoFlowMode.startStationFinishTruck) {
+      await _finalizarParcialEstacionario(confirmar: false);
+      return;
+    }
+
+    await _finalizarFluxoCompleto(confirmar: false, navegarAposFinalizar: true);
+  }
+
+  static const Color _finalizarParcialAmareloEscuro = Color(0xFFB45309);
+
+  Future<void> _finalizarParcialEstacionario({bool confirmar = true}) async {
     final h = c.header;
     if (h == null) return;
 
-    final ok = await showDialog<bool>(
-          context: context,
-          builder: (dialogCtx) => AlertDialog(
-            title: const Text("Finalizar parcialmente"),
-            content: const Text(
-              "Finalizar parcialmente vai gerar um carregamento para o caminhão completar.\n"
-              "Após isso, esta fabricação ficará PENDENTE e este tablet NÃO enviará essa fabricação ao servidor.\n"
-              "Deseja continuar?",
+    if (confirmar) {
+      final ok = await showDialog<bool>(
+            context: context,
+            builder: (dialogCtx) => AlertDialog(
+              title: const Text("Finalizar parcialmente"),
+              content: const Text(
+                "Finalizar parcialmente vai gerar um carregamento para o caminhão completar.\n"
+                "Após isso, esta fabricação ficará PENDENTE e este tablet NÃO enviará essa fabricação ao servidor.\n"
+                "Deseja continuar?",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(false),
+                  child: const Text("Não"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(true),
+                  child: const Text("Sim"),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogCtx).pop(false),
-                child: const Text("Não"),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogCtx).pop(true),
-                child: const Text("Sim"),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+          ) ??
+          false;
 
-    if (!ok) return;
+      if (!ok) return;
+    }
 
     await c.salvarIngredienteAtual();
     await c.atualizaFabricacaoParcial();
     await widget.repo.marcarPendenteCaminhao(h.id);
 
+    await c.finalizeMirrorAndStop(
+      msg: "Carregamento enviado para o caminhão completar",
+      parcial: true,
+    );
+
     if (!mounted) return;
     setState(() => _readOnlyStation = true);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Fabricação marcada como pendente do caminhão."),
+      SnackBar(
+        content: Text(
+          confirmar
+              ? "Fabricação marcada como pendente do caminhão."
+              : "Finalização parcial (Pá): carregamento enviado para o caminhão completar.",
+        ),
       ),
     );
     await _goFabricacaoList();
@@ -451,13 +486,19 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
       await showPrePesadoDialog(
         context: context,
+        controller: c,
+        idDet: ing.idDet,
         nome: ing.insumoNome,
         previstoKg: ing.previstoKg,
         onConfirm: (realizado) async {
-          c.setRealizadoLocalByDetId(ing.idDet, realizado);
+          final atualIng = c.ingredientes.firstWhere(
+            (e) => e.idDet == ing.idDet,
+            orElse: () => ing,
+          );
+          if (atualIng.realizadoKg > 0) return;
 
           try {
-            await c.confirmarIngredientePrePesado(realizado);
+            await c.confirmarIngredientePrePesadoById(ing.idDet, realizado);
           } catch (e) {
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
@@ -826,6 +867,62 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: _bottomListaBar(),
             ),
+            if (_mostrarFinalizarParcialEstacionario)
+              SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Card(
+                  elevation: 2,
+                  clipBehavior: Clip.antiAlias,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          "Estacionário",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          "Gera carregamento para o caminhão completar a fabricação.",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            height: 1.25,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _finalizarParcialAmareloEscuro,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          onPressed: (_finishing || c.navLockedBySaveError)
+                              ? null
+                              : () async => _finalizarParcialEstacionario(),
+                          icon: const Icon(Icons.outbox),
+                          label: const Text(
+                            "Finalizar parcial",
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             _bottomNav(
               isLast: isLast,
               highlightFinalize: dentroTol,
@@ -1348,17 +1445,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               icon: const Icon(Icons.arrow_back),
               tooltip: "Anterior",
             ),
-            if (_tipoTrabalho == 1 &&
-                _flowMode == FabricacaoFlowMode.startStationFinishTruck &&
-                !_readOnlyStation) ...[
-              IconButton(
-                tooltip: "Finalizar parcial",
-                onPressed: (_finishing || c.navLockedBySaveError)
-                    ? null
-                    : () async => _finalizarParcialEstacionario(),
-                icon: const Icon(Icons.outbox),
-              ),
-            ],
             const SizedBox(width: 6),
             Expanded(
               child: AnimatedScale(

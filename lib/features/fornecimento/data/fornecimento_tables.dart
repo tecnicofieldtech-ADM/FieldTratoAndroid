@@ -46,6 +46,26 @@ class FornTables {
   static const String dbIdLote = "ID_LOTE";
   static const String dbIdFazenda = "ID_FAZENDA";
 
+  /// LINHA: banco (<=3 chars) ou ate 3 letras antes de '-'/'_' no nome.
+  static const int linhaCurralMaxLen = 3;
+
+  static String sqlLinhaResolvida(String nomeCol, String linhaCol) => """
+CASE
+  WHEN NULLIF(TRIM($linhaCol), '') IS NOT NULL
+       AND length(TRIM($linhaCol)) <= $linhaCurralMaxLen THEN
+    upper(TRIM($linhaCol))
+  ELSE upper(substr(
+    CASE
+      WHEN instr(replace($nomeCol, ' ', ''), '-') > 0 THEN
+        substr(replace($nomeCol, ' ', ''), 1, instr(replace($nomeCol, ' ', ''), '-') - 1)
+      WHEN instr(replace($nomeCol, ' ', ''), '_') > 0 THEN
+        substr(replace($nomeCol, ' ', ''), 1, instr(replace($nomeCol, ' ', ''), '_') - 1)
+      ELSE replace(trim($nomeCol), ' ', '')
+    END,
+    1, $linhaCurralMaxLen
+  ))
+END""";
+
   // =========================
   // CADASTRO_FORNECIMENTO (cols)
   //

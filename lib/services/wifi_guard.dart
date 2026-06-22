@@ -89,6 +89,26 @@ class WifiGuard {
     return normalized.startsWith("rfeed");
   }
 
+  /// Compara SSID atual com o valor salvo na config (ex.: rede do estacionário).
+  static bool ssidMatchesExpected(String current, String expected) {
+    final a = current.trim().replaceAll('"', "").toLowerCase();
+    final b = expected.trim().replaceAll('"', "").toLowerCase();
+    if (b.isEmpty) return false;
+    return a == b;
+  }
+
+  /// Após receber carregamento: exige SSID identificável e **diferente** da estacionária.
+  static bool isVagaoNetworkAfterCarregamento({
+    required String current,
+    required String stationSsid,
+  }) {
+    final cur = current.trim().replaceAll('"', "");
+    if (cur.isEmpty || cur.toLowerCase() == "<unknown ssid>") return false;
+    final station = stationSsid.trim();
+    if (station.isEmpty) return true;
+    return !ssidMatchesExpected(cur, station);
+  }
+
   static bool isBlockedSsid(String ssid) {
     if (ssid.trim().isEmpty) return true;
     return isRFeedSsid(ssid);

@@ -22,7 +22,8 @@
       <a href="/config" data-admin-nav="config" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Configuração</a>
       <a href="/dashboard/fabricacao" data-admin-nav="dashfab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
       <a href="/monitor" data-admin-nav="monitor" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
-      <a href="/audit/fornecimento" data-admin-nav="audit" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Auditoria</a>
+      <a href="/audit/fornecimento" data-admin-nav="audit-forn" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fornecimento</a>
+      <a href="/audit/fabricacao" data-admin-nav="audit-fab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fabricação</a>
       <a href="/health" data-admin-nav="health" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
     </nav>
 
@@ -222,7 +223,7 @@
     document.getElementById("btnRefresh").addEventListener("click", loadList);
     filterDevice.addEventListener("change", loadList);
 
-    RFeedRequestMonitor.initNav("audit");
+    RFeedRequestMonitor.initNav("audit-forn");
     loadList();
   </script>
 </body>

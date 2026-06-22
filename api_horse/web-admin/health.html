@@ -23,8 +23,10 @@
         class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
       <a href="/monitor" data-admin-nav="monitor"
         class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
-      <a href="/audit/fornecimento" data-admin-nav="audit"
-        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Auditoria</a>
+      <a href="/audit/fornecimento" data-admin-nav="audit-forn"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fornecimento</a>
+      <a href="/audit/fabricacao" data-admin-nav="audit-fab"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fabricação</a>
       <a href="/health" data-admin-nav="health"
         class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
     </nav>
@@ -74,7 +76,10 @@
       { id: "det", label: "Detalhes dietas", method: "GET", path: "/dietas_detalhes/get/{idfazenda}" },
       { id: "usu", label: "Usuários", method: "GET", path: "/usuarios/get/{idfazenda}" },
       { id: "prev", label: "Previsão trato", method: "GET", path: "/previsao_trato/get/{idfazenda}/{dataPrev}" },
-      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste"\n}' },
+      { id: "dashfab", label: "Dashboard fab. resumo", method: "GET", path: "/dashboard/fabricacao/resumo?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashfabi", label: "Dashboard fab. insumos", method: "GET", path: "/dashboard/fabricacao/insumos?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashforn", label: "Dashboard fab. fornecimento", method: "GET", path: "/dashboard/fabricacao/fornecimento?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste-field-001",\n  "ID_PROPRIEDADE": "1",\n  "IDRACAO": "1",\n  "ID_USUARIO": "1",\n  "DATA_FAB": "19/06/2026",\n  "KG_PREVISTO": "1000",\n  "KG_REALIZADO": "950",\n  "itens": [],\n  "fornecimentos": []\n}' },
       { id: "fabi", label: "Post Fabricação Insumo", method: "POST", path: "/Post/Fabricacao_Insumo", body: '{\n  "itens": []\n}' },
       { id: "forn", label: "Post Fornecimento", method: "POST", path: "/Post/Fornecimento", body: '{\n  "id": "teste"\n}' },
       { id: "tag", label: "Post GravaTag", method: "POST", path: "/Post/GravaTag", body: '{\n  "ID_PASTO_CURRAL": "1",\n  "TAG": "ABC"\n}' },
@@ -92,7 +97,10 @@
       { id: "det", label: "Detalhes dietas", method: "GET", path: "/dietas_detalhes/get" },
       { id: "usu", label: "Usuários", method: "GET", path: "/usuarios/get" },
       { id: "prev", label: "Previsão trato", method: "GET", path: "/previsao_trato/get", altPath: "/previsao_trato/get/{idfazenda}/{dataPrev}" },
-      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste"\n}' },
+      { id: "dashfab", label: "Dashboard fab. resumo", method: "GET", path: "/dashboard/fabricacao/resumo?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashfabi", label: "Dashboard fab. insumos", method: "GET", path: "/dashboard/fabricacao/insumos?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashforn", label: "Dashboard fab. fornecimento", method: "GET", path: "/dashboard/fabricacao/fornecimento?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste-field-001",\n  "ID_PROPRIEDADE": "1",\n  "IDRACAO": "1",\n  "ID_USUARIO": "1",\n  "DATA_FAB": "19/06/2026",\n  "KG_PREVISTO": "1000",\n  "KG_REALIZADO": "950",\n  "itens": [],\n  "fornecimentos": []\n}' },
       { id: "forn", label: "Post Fornecimento", method: "POST", path: "/Post/Fornecimento", body: '{\n  "id": "teste"\n}' },
       { id: "tag", label: "Post GravaTag", method: "POST", path: "/Post/GravaTag", body: '{\n  "ID_PASTO_CURRAL": "1",\n  "TAG": "ABC"\n}' },
       { id: "log", label: "Upload log", method: "PUT", path: "/logs/upload/{device}", body: "linha de log\n" },

@@ -4,6 +4,12 @@ import "package:uuid/uuid.dart";
 import "../../../db/app_db.dart";
 import "../domain/fabricacao_flow.dart";
 
+/// Canal físico usado nesta fabricação (gravado em ORIGEM / ORIGIN_DEVICE).
+enum FabricacaoCanalCarga {
+  estacionario,
+  rotormix,
+}
+
 class FabricacaoCreateService {
   Future<Database> get _db async => AppDb.instance.db;
 
@@ -21,6 +27,7 @@ class FabricacaoCreateService {
     required String idFazenda,
     required int trato,
     required double totalKg,
+    FabricacaoCanalCarga canalCarga = FabricacaoCanalCarga.estacionario,
   }) async {
     final db = await _db;
     final idFab = _newId();
@@ -31,6 +38,11 @@ class FabricacaoCreateService {
         "${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
     final horaInicio =
         "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}";
+
+    final origemTag = switch (canalCarga) {
+      FabricacaoCanalCarga.estacionario => "ESTACIONARIO",
+      FabricacaoCanalCarga.rotormix => "ROTORMIX",
+    };
 
     await db.transaction((txn) async {
       // 1) Cabeçalho
@@ -50,11 +62,11 @@ class FabricacaoCreateService {
         "STATUS": 1,
         "FLAG_SYNC": 0,
         "ID_FAZENDA": idFazenda,
-        "ORIGEM": "ESTACIONARIO",
+        "ORIGEM": origemTag,
         "FAB_STATUS": fabricacaoStatusEmAndamento,
         "HANDOFF_ID": handoffId,
         "EXPORTADO_EM": null,
-        "ORIGIN_DEVICE": "ESTACIONARIO",
+        "ORIGIN_DEVICE": origemTag,
         "MS_PREVISTA": 0,
         "MS_REALIZADA": 0,
       });

@@ -170,6 +170,37 @@ class FornecimentoDao {
     return id.isEmpty ? null : id;
   }
 
+  Future<Map<String, Object?>?> getFabricacaoResumo(String idFabricacao) async {
+    final db = await _db;
+    final id = idFabricacao.trim();
+    if (id.isEmpty) return null;
+
+    final rows = await db.rawQuery("""
+      SELECT
+        f.ID AS id,
+        f.ID_DIETA AS id_dieta,
+        f.DATA_FABRICACAO AS data_fabricacao,
+        f.HORA_INICIO AS hora_inicio,
+        f.HORA_FIM AS hora_fim,
+        COALESCE(f.QTD_PREVISTA, 0) AS qtd_prevista,
+        COALESCE(f.QTD_REALIZADA, 0) AS qtd_realizada,
+        COALESCE(f.FINALIZADA, 0) AS finalizada,
+        COALESCE(f.FLAG_SYNC, 0) AS flag_sync,
+        COALESCE(f.FAB_STATUS, 0) AS fab_status,
+        COALESCE(f.HANDOFF_ID, '') AS handoff_id,
+        COALESCE(f.ORIGIN_DEVICE, '') AS origin_device,
+        COALESCE(d.NOME, f.ID_DIETA, '') AS racao_nome
+      FROM ${FornTables.cadastroFabrica} f
+      LEFT JOIN DIETA d
+        ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(f.ID_DIETA AS TEXT))
+      WHERE TRIM(f.ID) = TRIM(?)
+      LIMIT 1
+    """, [id]);
+
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
   // =========================================================
   // LISTA CURRAIS (PREVISAO + DETALHES_BAIAS)
   // =========================================================

@@ -1,5 +1,6 @@
-import "package:app_settings/app_settings.dart";
 import "package:flutter/foundation.dart";
+
+import "../../../services/wifi_guard.dart";
 
 class WifiSwitchResult {
   WifiSwitchResult({
@@ -30,22 +31,17 @@ class WifiSwitcher {
       return WifiSwitchResult(ok: false, message: "SSID invalido");
     }
 
-    // Em alguns dispositivos (ex.: Xiaomi/MIUI), a troca automática pode
-    // cair em rede "fictícia"/sem rota. Forçamos conexão manual pelo Android.
-    await openAndroidWifiSettings();
+    // Abre o seletor nativo de Wi‑Fi (Settings.Panel no Android 10+).
+    await WifiGuard.openWifiSelector();
     return WifiSwitchResult(
       ok: true,
       message:
-          "Abra a lista de Wi-Fi e conecte manualmente na rede '$target'.",
+          "Selecione a rede '$target' na lista de Wi‑Fi.",
       usedSettingsFallback: true,
     );
   }
 
   Future<void> openAndroidWifiSettings() async {
-    try {
-      await AppSettings.openAppSettings(type: AppSettingsType.wifi);
-    } catch (e) {
-      debugPrint("[WIFI] erro abrindo settings: $e");
-    }
+    await WifiGuard.openWifiSelector();
   }
 }

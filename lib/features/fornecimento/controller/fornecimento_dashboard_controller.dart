@@ -5,6 +5,7 @@ import "package:flutter/foundation.dart";
 import "../../../helpers/scale_comm.dart";
 import "../../../helpers/rfid_comm.dart";
 import "../data/fornecimento_repo.dart";
+import "../domain/fornecimento_models.dart";
 import "../../../services/session_service.dart";
 
 class FornecimentoHeaderVM {
@@ -269,12 +270,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
   String? _linhaFiltro;
   String? get linhaFiltro => _linhaFiltro;
 
-  String? _toLinhaStr(dynamic v) {
-    if (v == null) return null;
-    final s = v.toString().trim();
-    return s.isEmpty ? null : s;
-  }
-
   List<String> get linhasDisponiveis {
     final set = <String>{};
     for (final c in _curraisAll) {
@@ -296,7 +291,10 @@ class FornecimentoDashboardController extends ChangeNotifier {
   List<CurralCardVM> get curraisFiltrados {
     final lf = (_linhaFiltro ?? "").trim();
     if (lf.isEmpty) return _curraisAll;
-    return _curraisAll.where((c) => (c.linha ?? "").trim() == lf).toList();
+    final lfUp = lf.toUpperCase();
+    return _curraisAll
+        .where((c) => (c.linha ?? "").trim().toUpperCase() == lfUp)
+        .toList();
   }
 
   void setLinhaFiltro(String? linha) {
@@ -344,6 +342,13 @@ class FornecimentoDashboardController extends ChangeNotifier {
     if (v == null) return 0;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+  }
+
+  static String _ymd(DateTime d) {
+    final y = d.year.toString().padLeft(4, "0");
+    final m = d.month.toString().padLeft(2, "0");
+    final dd = d.day.toString().padLeft(2, "0");
+    return "$y-$m-$dd";
   }
 
   bool _equalsIgnoreCase(String a, String b) =>
@@ -413,6 +418,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
       if (racaoFinal.isEmpty) {
         throw Exception("Carregamento em aberto sem ID_DIETA (ração).");
       }
+
+      await _repo.assertFabricacaoParaFornecimento(data: data);
 
       final racaoNome = await _repo.getDietaNomeById(racaoFinal);
 
@@ -716,31 +723,55 @@ class FornecimentoDashboardController extends ChangeNotifier {
     final h = _header;
     if (h == null) return;
 
-    final idRacao = (h.racaoId ?? "").trim();
+    final ymd = _ymd(h.data);
+    final racaoId = (h.racaoId ?? "").trim();
 
-    final rows = await _repo.listCurraisPrevistosHoje(
-      data: h.data,
-      trato: h.trato,
+    // Mesma base da lista (Previstos): carrega trato/dia e filtra ração em memória.
+    var rows = await _repo.listPrevisaoByYmd(
       idFazenda: idFazenda,
-      idRacao: idRacao.isNotEmpty ? idRacao : null,
+      dataYYYYMMDD: ymd,
+      trato: h.trato,
     );
+
+    if (racaoId.isNotEmpty) {
+      final norm = racaoId.toUpperCase().replaceAll(RegExp(r"\s+"), "");
+      final filtered = rows.where((r) {
+        final id = (r.idRacao ?? r.idDieta ?? "")
+            .trim()
+            .toUpperCase()
+            .replaceAll(RegExp(r"\s+"), "");
+        return id == norm;
+      }).toList();
+
+      final comPrevisto =
+          filtered.where((r) => r.previstoKg > 0).length;
+      if (filtered.isNotEmpty &&
+          comPrevisto >= (filtered.length * 0.5).ceil()) {
+        rows = filtered;
+      }
+    }
 
     final cards = rows.map((r) {
       final idForne = (r.idFornecimento ?? "").toString().trim();
       final idBaia = r.idBaia.trim();
 
       final nome = (r.nomeLocal ?? "").toString().trim();
+      final idBaiaTxt = idBaia.isEmpty ? "?" : idBaia;
 
       // normaliza EPC do mapa também
       final rfidRaw = (r.rfid ?? "").toString().trim();
       final rfid = rfidRaw.isEmpty ? null : _normalizeEpc(rfidRaw);
 
-      final linha = _toLinhaStr(r.linha);
+      final linhaRaw = resolveLinhaCurral(
+        linhaDb: r.linha,
+        nomeLocal: nome.isEmpty ? r.nomeLocal : nome,
+      );
+      final linha = linhaRaw.isEmpty ? null : linhaRaw;
 
       return CurralCardVM(
         idFornecimento: idForne.isEmpty ? "?" : idForne,
         idBaia: idBaia.isEmpty ? "?" : idBaia,
-        curralNome: nome.isEmpty ? "(sem nome)" : nome,
+        curralNome: nome.isEmpty ? "Baia $idBaiaTxt" : nome,
         linha: linha,
         orderTrato: r.ordemFornecimento ?? 0,
         previstoKg: _toD(r.previstoKg),
@@ -782,9 +813,12 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     _curraisAll = cards;
 
-    // se filtro linha não existe mais, limpa
-    if (_linhaFiltro != null && !linhasDisponiveis.contains(_linhaFiltro)) {
-      _linhaFiltro = null;
+    // se filtro linha não existe mais, limpa (comparação case-insensitive)
+    if (_linhaFiltro != null) {
+      final lfUp = _linhaFiltro!.trim().toUpperCase();
+      final ok = linhasDisponiveis
+          .any((l) => l.trim().toUpperCase() == lfUp);
+      if (!ok) _linhaFiltro = null;
     }
 
     // mantém seleção se existir

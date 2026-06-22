@@ -26,6 +26,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   bool _loading = false;
   List<FabricacaoHeader> _items = [];
   int? _tipoTrabalho;
+  bool _modoHibrido = false;
 
   // ---------- filtros ----------
   late DateTime _filterDate; // data do dia (padrão: hoje)
@@ -55,7 +56,25 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     );
 
     _load();
-    _loadTipoTrabalho();
+    _loadOperacaoFlags();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _loadOperacaoFlags();
+  }
+
+  Future<void> _loadOperacaoFlags() async {
+    try {
+      final t = await _cfgRepo.getTipoTrabalho();
+      final h = await _cfgRepo.getModoHibrido();
+      if (!mounted) return;
+      setState(() {
+        _tipoTrabalho = t;
+        _modoHibrido = h;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -75,14 +94,6 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _loadTipoTrabalho() async {
-    try {
-      final t = await _cfgRepo.getTipoTrabalho();
-      if (!mounted) return;
-      setState(() => _tipoTrabalho = t);
-    } catch (_) {}
   }
 
   void _rebuildFilterOptions() {
@@ -165,8 +176,17 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   }
 
   Future<void> _openAddFlow() async {
-    if (_tipoTrabalho == 2) {
-      if (!mounted) return;
+    final tipo = await _cfgRepo.getTipoTrabalho();
+    final hibrido = await _cfgRepo.getModoHibrido();
+    if (!mounted) return;
+
+    setState(() {
+      _tipoTrabalho = tipo;
+      _modoHibrido = hibrido;
+    });
+
+    // Só redireciona para receber carregamento quando é distribuidor **sem** híbrido.
+    if (tipo == 2 && !hibrido) {
       Navigator.pushNamed(context, "/carregamento-estacionario");
       return;
     }
@@ -758,6 +778,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   Widget build(BuildContext context) {
     final list = _filtered;
     final isDistribuidor = _tipoTrabalho == 2;
+    final mostrarNovaFabricacao = !isDistribuidor || _modoHibrido;
 
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
@@ -790,12 +811,31 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
             ),
         ],
       ),
-      floatingActionButton: isDistribuidor
+      bottomNavigationBar: !mostrarNovaFabricacao
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _openAddFlow,
-              icon: const Icon(Icons.add),
-              label: const Text("Nova"),
+          : SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: SizedBox(
+                  height: 54,
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: _openAddFlow,
+                    icon: const Icon(Icons.add),
+                    label: const Text(
+                      "Nova Fabricação",
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+              ),
             ),
       body: Column(
         children: [

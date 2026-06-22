@@ -1022,7 +1022,8 @@ xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBui
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
+&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win32'">
@@ -1030,7 +1031,8 @@ xcopy /Y /Q "$(PROJECTDIR)..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></PostBui
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
+&amp;&amp;xcopy /Y /Q &quot;$(PROJECTDIR)..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

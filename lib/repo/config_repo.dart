@@ -2,6 +2,7 @@ import "package:sqflite/sqflite.dart";
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../services/config_disk_backup.dart";
+import "../utils/station_bridge_url.dart";
 
 class ConfigRepo {
   Future<Database> get _db async => AppDb.instance.db;
@@ -53,6 +54,7 @@ class ConfigRepo {
       await addIfMissing("host_estacionario", "HOST_ESTACIONARIO TEXT");
       await addIfMissing("porta_estacionario", "PORTA_ESTACIONARIO INTEGER");
       await addIfMissing("flow_mode", "FLOW_MODE INTEGER DEFAULT 0");
+      await addIfMissing("modo_hibrido", "MODO_HIBRIDO INTEGER DEFAULT 0");
       await addIfMissing("station_wifi_ssid", "STATION_WIFI_SSID TEXT");
       await addIfMissing(
           "station_wifi_password", "STATION_WIFI_PASSWORD TEXT");
@@ -183,6 +185,9 @@ class ConfigRepo {
   // -------------------------
   Future<int> getTipoTrabalho() async =>
       _toInt(await _getField("TIPO_TRABALHO"), def: 0);
+
+  Future<bool> getModoHibrido() async =>
+      _toInt(await _getField("MODO_HIBRIDO"), def: 0) == 1;
 
     Future<int> getBackend() async =>
       _toInt(await _getField("BACKEND"), def: 0);
@@ -397,8 +402,17 @@ class ConfigRepo {
   Future<String> getStationWifiPassword() async =>
       _toStr(await _getField("STATION_WIFI_PASSWORD"), def: "").trim();
 
-  Future<String> getStationBaseUrl() async =>
-      _toStr(await _getField("STATION_BASE_URL"), def: "").trim();
+  Future<String> getStationBaseUrl() async {
+    var raw = _toStr(await _getField("STATION_BASE_URL"), def: "").trim();
+    if (raw.isEmpty) {
+      final host = _toStr(await _getField("HOST_ESTACIONARIO"), def: "").trim();
+      if (host.isNotEmpty) {
+        final port = await getPortaEstacionario();
+        raw = "http://$host:$port";
+      }
+    }
+    return normalizeStationBridgeUrl(raw);
+  }
 
   Future<void> setOperacaoEstacionarioConfig({
     required FabricacaoFlowMode flowMode,
@@ -424,6 +438,6 @@ class ConfigRepo {
     final uri = Uri.tryParse(baseUrl.trim());
     if (uri == null || uri.host.trim().isEmpty) return null;
     if (uri.hasPort) return uri.port;
-    return uri.scheme.toLowerCase() == "https" ? 443 : 80;
+    return uri.scheme.toLowerCase() == "https" ? 443 : 8080;
   }
 }

@@ -1,15 +1,20 @@
+import "dart:async";
+import "dart:io";
+
 import "package:flutter/material.dart";
-import "package:flutter/foundation.dart";
 import "package:package_info_plus/package_info_plus.dart";
-import "package:dio/dio.dart";
+import "package:permission_handler/permission_handler.dart";
 
 import "../../../repo/config_repo.dart";
 import "../../../services/session_service.dart";
+import "../../../services/wifi_guard.dart";
 import "../data/carregamento_estacionario_api.dart";
 import "../data/importador_fabricacao_estacionario.dart";
 import "../domain/carregamento_payload.dart";
-import "../services/wifi_switcher.dart";
+import "../../fabricacao/data/fabricacao_repo.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
+import "../../fabricacao/ui/fabricacao_carregamento_vagao_page.dart";
+import "../../fabricacao/ui/fabricacao_recebimento_peso_caminhao_page.dart";
 
 class CarregamentoEstacionarioPage extends StatefulWidget {
   const CarregamentoEstacionarioPage({super.key});
@@ -20,9 +25,8 @@ class CarregamentoEstacionarioPage extends StatefulWidget {
 }
 
 class _CarregamentoEstacionarioPageState
-    extends State<CarregamentoEstacionarioPage> {
+    extends State<CarregamentoEstacionarioPage> with WidgetsBindingObserver {
   final _cfgRepo = ConfigRepo();
-  final _wifiSwitcher = WifiSwitcher();
   final _importador = ImportadorFabricacaoEstacionario();
 
   List<CarregamentoResumoDto> _itens = const [];
@@ -30,15 +34,30 @@ class _CarregamentoEstacionarioPageState
   bool _loading = false;
   bool _modoDistribuidor = false;
   bool _healthOk = false;
+  bool _buscarAoRetornarDoWifi = false;
 
   String _stationSsid = "";
-  String _stationSenha = "";
   String _stationBaseUrl = "";
+  String _alvoBridge = "";
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _boot();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (!_buscarAoRetornarDoWifi || _loading) return;
+    unawaited(_tentarBuscarSeNaRedeBeatBox());
   }
 
   void _msg(String text) {
@@ -46,72 +65,226 @@ class _CarregamentoEstacionarioPageState
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
+  Future<String?> _readSsidWithGate() async {
+    if (!Platform.isAndroid) return "";
+
+    final granted = await WifiGuard.requestLocationPermissionIfNeeded();
+    if (!mounted) return null;
+    if (!granted) {
+      final abrir = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Permissão necessária"),
+              content: const Text(
+                "Para verificar o nome da rede Wi‑Fi, permita a localização do app nas configurações.",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text("Cancelar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text("Abrir permissões"),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (abrir) await openAppSettings();
+      return null;
+    }
+
+    var ssid = await WifiGuard.getCurrentSsid();
+    if (!mounted) return null;
+    if (ssid.isEmpty) {
+      final locOn = await WifiGuard.isLocationServiceEnabled();
+      if (!mounted) return null;
+      if (!locOn) {
+        final abrirLoc = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text("Ative a localização"),
+                content: const Text(
+                  "Ative a localização para o app conseguir ler o nome da rede Wi‑Fi.",
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text("Cancelar"),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text("Abrir localização"),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+        if (abrirLoc) await WifiGuard.openLocationSettings();
+        return null;
+      }
+    }
+    return ssid;
+  }
+
+  /// Passo 1: Wi‑Fi BeatBox / estacionário.
+  Future<bool> _ensureOnStationNetwork({bool abrirWifi = true}) async {
+    final expected = _stationSsid.trim();
+    if (expected.isEmpty) {
+      _msg("Configure o SSID da rede BeatBox/estacionário em Configuração.");
+      return false;
+    }
+    if (!Platform.isAndroid) return true;
+
+    final ssid = await _readSsidWithGate();
+    if (ssid == null) return false;
+    if (WifiGuard.ssidMatchesExpected(ssid, expected)) return true;
+    if (!mounted) return false;
+
+    if (abrirWifi) {
+      await WifiGuard.openWifiSelector();
+      _msg("Conecte na rede $expected (BeatBox) e aguarde.");
+    }
+    return false;
+  }
+
+  /// Passo 4: obriga sair da rede BeatBox/estacionário (SSID diferente do config).
+  Future<bool> _ensureRedeVagaoAposRecebimento() async {
+    if (!Platform.isAndroid) return true;
+
+    final station = _stationSsid.trim();
+    if (station.isEmpty) {
+      _msg(
+        "Configure o SSID da rede estacionária em Configuração para o app "
+        "validar a troca de rede após o recebimento.",
+      );
+      return false;
+    }
+
+    for (;;) {
+      if (!mounted) return false;
+      final ssid = await _readSsidWithGate();
+      if (ssid == null) return false;
+
+      if (WifiGuard.isVagaoNetworkAfterCarregamento(
+        current: ssid,
+        stationSsid: station,
+      )) {
+        return true;
+      }
+
+      if (!mounted) return false;
+
+      final aindaNaEstacao = WifiGuard.ssidMatchesExpected(ssid, station);
+      await WifiGuard.openWifiSelector();
+
+      final action = await showDialog<String>(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Troque para a rede do vagão"),
+              content: Text(
+                aindaNaEstacao
+                    ? "Você ainda está na rede do estacionário:\n\n"
+                        "• Rede atual: $ssid\n"
+                        "• Rede estacionária (config): $station\n\n"
+                        "Conecte em uma rede diferente — a Wi‑Fi do vagão/balança — "
+                        "para pesar e completar o carregamento."
+                    : "Não foi possível confirmar a rede do vagão.\n\n"
+                        "Rede atual: ${ssid.isEmpty ? "não identificada" : ssid}\n"
+                        "Rede estacionária (config): $station\n\n"
+                        "Conecte na Wi‑Fi do vagão (SSID diferente de $station) "
+                        "e toque em Verificar.",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop("back"),
+                  child: const Text("Cancelar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop("wifi"),
+                  child: const Text("Abrir Wi‑Fi"),
+                ),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(ctx).pop("recheck"),
+                  child: const Text("Verificar"),
+                ),
+              ],
+            ),
+          ) ??
+          "back";
+
+      if (action == "back") return false;
+      if (action == "wifi") await WifiGuard.openWifiSelector();
+    }
+  }
+
   Future<void> _boot() async {
     final tipo = await _cfgRepo.getTipoTrabalho();
-    final permitido = tipo == 2;
     if (!mounted) return;
-    if (!permitido) {
-      _msg("Tela de carregamento disponivel apenas no modo distribuidor.");
+    if (tipo != 2) {
+      _msg("Tela de carregamento disponível apenas no modo distribuidor.");
       Navigator.of(context).pop();
       return;
     }
 
     final ssid = await _cfgRepo.getStationWifiSsid();
-    final senha = await _cfgRepo.getStationWifiPassword();
     final base = await _cfgRepo.getStationBaseUrl();
+    final alvo = CarregamentoEstacionarioApi.tryParseHostPort(base);
 
     if (!mounted) return;
     setState(() {
       _modoDistribuidor = true;
       _stationSsid = ssid.trim();
-      _stationSenha = senha;
       _stationBaseUrl = base.trim();
+      _alvoBridge =
+          alvo == null ? "-" : "http://${alvo.host}:${alvo.port} (bridge)";
     });
+
+    await _iniciarFluxoEntrada();
   }
 
-  CarregamentoEstacionarioApi? _apiFromConfig() {
-    final uri = Uri.tryParse(_stationBaseUrl);
-    if (uri == null || uri.host.trim().isEmpty) {
-      debugPrint("[CARREG_UI] baseUrl invalida: '$_stationBaseUrl'");
-      return null;
-    }
-    final port = uri.hasPort
-        ? uri.port
-        : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
-    debugPrint(
-      "[CARREG_UI] api configurada host=${uri.host.trim()} port=$port baseUrl=$_stationBaseUrl",
-    );
-    return CarregamentoEstacionarioApi(host: uri.host.trim(), port: port);
-  }
-
-  Future<void> _conectarRede() async {
+  /// Passos 1–2: abrir Wi‑Fi BeatBox e listar carregamentos.
+  Future<void> _iniciarFluxoEntrada() async {
     if (_stationSsid.isEmpty) {
-      _msg("SSID nao configurado. Ajuste em Configuracao.");
+      _msg("Configure o SSID da rede BeatBox em Configuração.");
       return;
     }
 
-    setState(() => _loading = true);
-    try {
-      final res = await _wifiSwitcher.connect(
-          ssid: _stationSsid, password: _stationSenha);
-      _msg(res.message);
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    final jaNaRede = await _ensureOnStationNetwork(abrirWifi: false);
+    if (jaNaRede) {
+      await _buscarCarregamentos(silencioso: true);
+      return;
     }
+
+    _buscarAoRetornarDoWifi = true;
+    await WifiGuard.openWifiSelector();
+    _msg("Selecione a rede $_stationSsid (BeatBox). A lista carregará ao voltar.");
+  }
+
+  Future<void> _tentarBuscarSeNaRedeBeatBox() async {
+    if (!await _ensureOnStationNetwork(abrirWifi: false)) return;
+    _buscarAoRetornarDoWifi = false;
+    await _buscarCarregamentos(silencioso: true);
+  }
+
+  CarregamentoEstacionarioApi? _apiFromConfig() {
+    return CarregamentoEstacionarioApi.tryFromBaseUrl(_stationBaseUrl);
   }
 
   Future<void> _testarConexao() async {
     final api = _apiFromConfig();
     if (api == null) {
-      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
+      _msg("Base URL do estacionário inválida. Ajuste em Configuração.");
       return;
     }
 
     setState(() => _loading = true);
     try {
-      final ok = await api.health();
-      if (mounted) setState(() => _healthOk = ok);
-      _msg(ok ? "Conexao OK" : "Falha ao conectar no estacionario");
+      final r = await api.tryHealth();
+      if (mounted) setState(() => _healthOk = r.ok);
+      _msg(r.ok ? r.message : "Falha: ${r.message}");
     } catch (e) {
       _msg("Erro no teste: $e");
     } finally {
@@ -119,30 +292,36 @@ class _CarregamentoEstacionarioPageState
     }
   }
 
-  Future<void> _buscarCarregamentos() async {
+  Future<void> _buscarCarregamentos({bool silencioso = false}) async {
+    if (!await _ensureOnStationNetwork()) {
+      _buscarAoRetornarDoWifi = true;
+      return;
+    }
+
     final api = _apiFromConfig();
     if (api == null) {
-      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
+      _msg("Base URL do estacionário inválida. Ajuste em Configuração.");
       return;
     }
 
     setState(() => _loading = true);
     try {
       final itens = await api.listCarregamentos();
-      debugPrint("[CARREG_UI] carregamentos recebidos qtd=${itens.length}");
       if (!mounted) return;
-      setState(() => _itens = itens);
-    } catch (e) {
-      if (e is DioException) {
-        debugPrint(
-          "[CARREG_UI] erro Dio type=${e.type} status=${e.response?.statusCode} "
-          "data=${e.response?.data} msg=${e.message} error=${e.error}",
-        );
-        debugPrint("[CARREG_UI] stack=${e.stackTrace}");
-      } else {
-        debugPrint("[CARREG_UI] erro buscar carregamentos=$e");
+      setState(() {
+        _itens = itens;
+        _healthOk = true;
+      });
+      if (!silencioso) {
+        _msg(itens.isEmpty
+            ? "Nenhum carregamento pendente no estacionário."
+            : "${itens.length} carregamento(s) disponível(is).");
       }
-      _msg("Erro ao buscar carregamentos: $e");
+    } catch (e) {
+      _msg(
+        "Erro ao buscar carregamentos ($_alvoBridge): "
+        "${CarregamentoEstacionarioApi.mensagemErroDio(e)}",
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -171,10 +350,11 @@ class _CarregamentoEstacionarioPageState
         false;
 
     if (!ok) return;
+    if (!await _ensureOnStationNetwork()) return;
 
     final api = _apiFromConfig();
     if (api == null) {
-      _msg("Base URL do estacionario invalida. Ajuste em Configuracao.");
+      _msg("Base URL do estacionário inválida.");
       return;
     }
 
@@ -187,57 +367,77 @@ class _CarregamentoEstacionarioPageState
 
       if (idUsuario.isEmpty || idFazenda.isEmpty) {
         throw Exception(
-          "Usuario/Fazenda nao configurados no tablet do caminhao.",
+          "Usuário/Fazenda não configurados no tablet do caminhão.",
         );
       }
 
-      await _importador.importar(
+      final imp = await _importador.importar(
         payload: detalhe,
         idUsuario: idUsuario,
         idFazenda: idFazenda,
       );
+      final novoIdFab = imp.idFabricacaoLocal;
 
       final info = await PackageInfo.fromPlatform();
-      await api.ack(
-        id: item.idLocal,
-        device: "CAMINHAO",
-        appVersion: info.version,
-      );
+      var ackOk = false;
+      for (var attempt = 0; attempt < 3; attempt++) {
+        ackOk = await api.ack(
+          id: item.idLocal,
+          device: "CAMINHAO",
+          appVersion: info.version,
+        );
+        if (ackOk) break;
+        await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
+      }
 
-      _msg("Carregamento recebido com sucesso.");
-      if (!mounted) return;
-      if (detalhe.fabricacao.status == FabricacaoStatus.pendenteCaminhao) {
-        final goFab = await showDialog<bool>(
-              context: context,
-              builder: (_) => AlertDialog(
-                title: const Text("Completar fabricação"),
-                content: const Text(
-                  "Carregamento importado como pendente. Deseja abrir a Fabricação para completar?",
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: const Text("Depois"),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text("Completar agora"),
-                  ),
-                ],
-              ),
-            ) ??
-            false;
-
-        if (goFab) {
-          Navigator.pushReplacementNamed(context, "/fabricacao");
-        }
+      if (!ackOk) {
+        _msg(
+          imp.inserido
+              ? "Lote gravado, mas o estacionário não confirmou. Verifique Wi‑Fi/bridge e toque Receber de novo."
+              : "Não foi possível confirmar no estacionário. Verifique Wi‑Fi/bridge.",
+        );
         return;
       }
 
-      Navigator.pushNamed(context, "/fornecimento", arguments: {
-        "idFazenda": idFazenda,
-        "autoOpenNovoFornecimento": false,
+      if (!mounted) return;
+      setState(() {
+        _itens = _itens.where((x) => x.idLocal != item.idLocal).toList();
       });
+
+      _msg(imp.inserido
+          ? "Carregamento recebido. Conecte na rede do vagão."
+          : "Carregamento já existia — estacionário atualizado.");
+
+      // Passo 4: Wi‑Fi vagão (SSID ≠ estacionário)
+      if (!await _ensureRedeVagaoAposRecebimento()) return;
+      if (!mounted) return;
+
+      final fabRepo = FabricacaoRepo();
+
+      // Passos 5–11: balança TCP + tela de carregamento da ração
+      if (detalhe.fabricacao.status == FabricacaoStatus.pendenteCaminhao) {
+        await Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => FabricacaoRecebimentoPesoCaminhaoPage(
+              repo: fabRepo,
+              idFabricacao: novoIdFab,
+              autoConectarBalanca: true,
+            ),
+          ),
+        );
+        return;
+      }
+
+      await Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => FabricacaoCarregamentoVagaoPage(
+            repo: fabRepo,
+            idFabricacao: novoIdFab,
+          ),
+        ),
+      );
     } catch (e) {
       _msg("Falha ao receber: $e");
     } finally {
@@ -254,7 +454,7 @@ class _CarregamentoEstacionarioPageState
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Carregamento (Estacionario)")),
+      appBar: AppBar(title: const Text("Carregamento")),
       body: Column(
         children: [
           Padding(
@@ -263,15 +463,10 @@ class _CarregamentoEstacionarioPageState
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "Dados vindos da Configuracao",
+                  "Rede BeatBox: ${_stationSsid.isEmpty ? "-" : _stationSsid}",
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
-                const SizedBox(height: 8),
-                SelectableText(
-                    "SSID: ${_stationSsid.isEmpty ? "-" : _stationSsid}"),
-                SelectableText(
-                  "Base URL: ${_stationBaseUrl.isEmpty ? "-" : _stationBaseUrl}",
-                ),
+                SelectableText("Bridge: $_alvoBridge"),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -279,29 +474,27 @@ class _CarregamentoEstacionarioPageState
                   children: [
                     Chip(
                       label: Text(
-                        _healthOk
-                            ? "Conectado ao estacionario"
-                            : "Nao conectado",
+                        _healthOk ? "Conectado ao estacionário" : "Aguardando rede",
                       ),
                       avatar: Icon(
-                        _healthOk ? Icons.check_circle : Icons.error_outline,
+                        _healthOk ? Icons.check_circle : Icons.wifi_find,
                         size: 18,
                       ),
                     ),
                     OutlinedButton.icon(
-                      onPressed: _loading ? null : _conectarRede,
-                      icon: const Icon(Icons.wifi_find),
-                      label: const Text("Conectar"),
+                      onPressed: _loading ? null : () => _ensureOnStationNetwork(),
+                      icon: const Icon(Icons.wifi),
+                      label: const Text("Wi‑Fi BeatBox"),
                     ),
                     OutlinedButton.icon(
                       onPressed: _loading ? null : _testarConexao,
                       icon: const Icon(Icons.health_and_safety_outlined),
-                      label: const Text("Testar conexao"),
+                      label: const Text("Testar"),
                     ),
                     FilledButton.icon(
-                      onPressed: _loading ? null : _buscarCarregamentos,
-                      icon: const Icon(Icons.download),
-                      label: const Text("Buscar carregamentos"),
+                      onPressed: _loading ? null : () => _buscarCarregamentos(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Atualizar lista"),
                     ),
                   ],
                 ),
@@ -313,8 +506,16 @@ class _CarregamentoEstacionarioPageState
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _itens.isEmpty
-                    ? const Center(
-                        child: Text("Nenhum carregamento disponivel."),
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            _buscarAoRetornarDoWifi
+                                ? "Conecte na rede BeatBox ($_stationSsid) para listar os carregamentos."
+                                : "Nenhum carregamento pendente disponível.",
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
                       )
                     : ListView.separated(
                         itemCount: _itens.length,
@@ -324,7 +525,8 @@ class _CarregamentoEstacionarioPageState
                           return ListTile(
                             title: Text(it.nomeRacao),
                             subtitle: Text(
-                              "${it.data} ${it.hora}  |  ${it.totalFabricadoKg.toStringAsFixed(3)} KG  |  ${it.statusApi}",
+                              "${it.data} ${it.hora}  |  "
+                              "${it.totalFabricadoKg.toStringAsFixed(0)} kg",
                             ),
                             trailing: FilledButton(
                               onPressed: _loading ? null : () => _receber(it),

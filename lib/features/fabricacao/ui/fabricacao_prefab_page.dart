@@ -119,9 +119,11 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
     if (mounted) setState(() => _loadingResumo = true);
     try {
+      final idFazenda = await _cfg.getIdFazendaSelecionada();
       final rows = await widget.repo.listResumoPorDietaDataTrato(
         idDieta: id,
         trato: _tratoSelecionado,
+        idFazenda: idFazenda,
       );
       final list = rows.map(_ResumoTrato.fromMap).toList();
       if (!mounted) return;
@@ -182,6 +184,14 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     }
 
     _kgCtrl.text = total.toStringAsFixed(0).replaceAll(".", ",");
+  }
+
+  /// Canal segue o tipo de operação — sem diálogo (Fabricação e Carregamento são entradas separadas no menu).
+  Future<FabricacaoCanalCarga> _resolveCanalCarga() async {
+    final tt = await _cfg.getTipoTrabalho();
+    // 0 = misto no caminhão (pá), 2 = distribuidor/vagão → Rotormix; 1 = estacionário
+    if (tt == 0 || tt == 2) return FabricacaoCanalCarga.rotormix;
+    return FabricacaoCanalCarga.estacionario;
   }
 
   Future<void> _onFabricar() async {
@@ -249,6 +259,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       }
 
       final service = FabricacaoCreateService();
+      final canal = await _resolveCanalCarga();
       await service.criarFabricacao(
         idDieta: _dietaId!,
         idOperador: _operadorId!,
@@ -256,6 +267,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         idFazenda: idFazenda,
         trato: trato,
         totalKg: kg,
+        canalCarga: canal,
       );
 
       if (!mounted) return;
@@ -421,10 +433,17 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       const Text(
-                                        "Resumo por trato",
+                                        "Resumo por trato (mesma base do mapa de fornecimento)",
                                         style: TextStyle(
                                           fontWeight: FontWeight.w800,
                                         ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        "Prev = soma do mapa. O botao Selecionar preenche a Falta (prev - real).",
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
                                       ),
                                       const SizedBox(height: 8),
                                       ..._resumos.map((r) {
@@ -472,7 +491,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                                           r.trato);
                                                   await _applyPrevisto(falta);
                                                 },
-                                                child: const Text("Selecionar"),
+                                                child: const Text("Usar falta"),
                                               ),
                                             ],
                                           ),

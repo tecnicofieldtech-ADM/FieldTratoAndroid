@@ -48,7 +48,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
   DateTime _date = DateTime.now();
   _StatusFiltro _status = _StatusFiltro.todos;
-  _SyncFiltroLocal _syncFiltro = _SyncFiltroLocal.todos;
+  _SyncFiltroLocal _syncFiltro = _SyncFiltroLocal.pendente;
 
   int? _trato; // null = todos
   String? _racao; // filtro texto (nome da racao) - mantido (nao filtra por id)
@@ -602,6 +602,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
   int get _qtdRealizadosLocal => _realizados.length;
   int get _qtdRealizadosPendentesSync =>
       _realizados.where((r) => !r.syncOk).length;
+  int get _qtdPendentesFabNaoSync =>
+      _realizados.where((r) => r.bloqueadoPorFab).length;
   int get _qtdFiltradosSyncHabilitavel {
     final keys = <String>{};
     for (final c in _items) {
@@ -615,23 +617,12 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
   String _money(num v) => v.toStringAsFixed(2).replaceAll(".", ",");
 
-  String _linhaFromCurral(String? nomeLocal) {
-    final s = (nomeLocal ?? "").trim();
-    if (s.isEmpty) return "-";
-    final compact = s.replaceAll(" ", "");
-    final idx = compact.indexOf("-");
-    final left = (idx > 0) ? compact.substring(0, idx) : compact;
-    final out = left.trim();
-    if (out.isEmpty) return "-";
-    return out.toUpperCase();
-  }
-
   String _resolveLinha(CurralPrev c) {
-    final raw = (c.linha ?? "").toString().trim();
-    if (raw.isNotEmpty && raw.toLowerCase() != "null") {
-      return raw.toUpperCase();
-    }
-    return _linhaFromCurral(c.nomeLocal);
+    final resolved = resolveLinhaCurral(
+      linhaDb: c.linha,
+      nomeLocal: c.nomeLocal,
+    );
+    return resolved.isEmpty ? "-" : resolved;
   }
 
   Widget _pill({
@@ -951,6 +942,18 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
   Widget _realizadoItemCard(FornecimentoLocalRow r) {
     final linhaTxt = (r.linha ?? "").trim().isEmpty ? "-" : r.linha!.trim();
+    final fabId = (r.idFabricacao ?? "").trim();
+    final fabRacao = (r.fabRacaoNome ?? "").trim();
+    final fabData = (r.fabDataIso ?? "").trim();
+    final fabHora = (r.fabHoraInicio ?? "").trim();
+    final fabPrev = r.fabKgPrevisto;
+    final fabReal = r.fabKgRealizado;
+
+    String fabRacaoTxt = fabRacao.isNotEmpty
+        ? fabRacao
+        : ((r.fabRacaoNome ?? "").trim().isNotEmpty
+            ? r.fabRacaoNome!.trim()
+            : r.racaoDisplay);
 
     return Card(
       elevation: 0,
@@ -1047,6 +1050,92 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
                 ),
               ],
             ),
+            if (fabId.isNotEmpty || r.bloqueadoPorFab) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: (r.fabSyncPendente ? Colors.orange : Colors.blueGrey)
+                      .withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: (r.fabSyncPendente ? Colors.orange : Colors.blueGrey)
+                        .withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          r.fabSyncPendente
+                              ? Icons.factory_outlined
+                              : Icons.check_circle_outline,
+                          size: 16,
+                          color: r.fabSyncPendente
+                              ? Colors.orange.shade900
+                              : Colors.green.shade800,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            r.fabSyncPendente
+                                ? "Fabricação não sincronizada no servidor"
+                                : "Fabricação sincronizada",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                              color: r.fabSyncPendente
+                                  ? Colors.orange.shade900
+                                  : Colors.green.shade800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      fabId.isEmpty
+                          ? "Sem fabricação vinculada"
+                          : "Fab: ${fabId.length > 12 ? "${fabId.substring(0, 12)}…" : fabId}",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (fabData.isNotEmpty || fabHora.isNotEmpty)
+                      Text(
+                        "Data fab: ${fabData.isNotEmpty ? _fmtDataIso(fabData) : "-"}"
+                        "${fabHora.isNotEmpty ? " · $fabHora" : ""}",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    Text(
+                      "Ração carregada: $fabRacaoTxt",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.black.withValues(alpha: 0.72),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (fabPrev != null || fabReal != null)
+                      Text(
+                        "Kg fab: prev ${fabPrev?.toStringAsFixed(0) ?? "-"} · "
+                        "real ${fabReal?.toStringAsFixed(0) ?? "-"}",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withValues(alpha: 0.72),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1233,17 +1322,46 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     }
 
     if (!_isPrevistos) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        child: Row(
-          children: [
-            box("Registros", "$_qtdRealizadosLocal"),
-            const SizedBox(width: 8),
-            box("Total realizado", _money(_totalReal)),
-            const SizedBox(width: 8),
-            box("Pend. sync", "$_qtdRealizadosPendentesSync"),
-          ],
-        ),
+      return Column(
+        children: [
+          if (_qtdRealizadosPendentesSync > 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: MaterialBanner(
+                backgroundColor: Colors.orange.withValues(alpha: 0.12),
+                content: Text(
+                  _qtdPendentesFabNaoSync > 0
+                      ? "$_qtdRealizadosPendentesSync fornecimento(s) pendente(s) de sync. "
+                          "$_qtdPendentesFabNaoSync aguardam fabricação no CGPec — "
+                          "sincronize a fabricação primeiro."
+                      : "$_qtdRealizadosPendentesSync fornecimento(s) pendente(s) de sync.",
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                leading: const Icon(Icons.cloud_upload, color: Colors.orange),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _syncFiltro = _SyncFiltroLocal.pendente);
+                      _buscar();
+                    },
+                    child: const Text("Ver pendentes"),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Row(
+              children: [
+                box("Registros", "$_qtdRealizadosLocal"),
+                const SizedBox(width: 8),
+                box("Total realizado", _money(_totalReal)),
+                const SizedBox(width: 8),
+                box("Pend. sync", "$_qtdRealizadosPendentesSync"),
+              ],
+            ),
+          ),
+        ],
       );
     }
 

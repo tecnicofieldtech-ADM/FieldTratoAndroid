@@ -212,6 +212,51 @@ class FabricacaoController extends ChangeNotifier {
           return;
         }
 
+        if (t == "pre_pesado_confirm" || t == "prepesado_confirm") {
+          unawaited(() async {
+            try {
+              final idDet = (msg["idDet"] ?? "").toString().trim();
+              final realizadoRaw = msg["realizadoKg"] ?? msg["realizado"] ?? 0;
+              final realizadoKg = (realizadoRaw is num)
+                  ? realizadoRaw.toInt()
+                  : int.tryParse("$realizadoRaw") ?? 0;
+
+              if (idDet.isEmpty || realizadoKg < 0) {
+                _sendMirrorEvent("command_ack", {
+                  "cmd": "pre_pesado_confirm",
+                  "ok": 0,
+                  "error": "payload inválido",
+                });
+                return;
+              }
+
+              final ok = await confirmarIngredientePrePesadoById(
+                idDet,
+                realizadoKg,
+              );
+
+              _sendMirrorEvent("command_ack", {
+                "cmd": "pre_pesado_confirm",
+                "idDet": idDet,
+                "realizadoKg": realizadoKg,
+                "ok": ok ? 1 : 0,
+              });
+              _sendMirrorState(force: true);
+            } catch (e) {
+              if (kDebugMode) {
+                debugPrint("[MIRROR] pre_pesado_confirm falhou: $e");
+              }
+              _sendMirrorEvent("command_ack", {
+                "cmd": "pre_pesado_confirm",
+                "ok": 0,
+                "error": "$e",
+              });
+              _sendMirrorState(force: true);
+            }
+          }());
+          return;
+        }
+
         if (t == "finish" || t == "finalizar" || t == "finalize") {
           final now = DateTime.now();
           if (_lastRemoteNavCmd == "finish" &&
@@ -296,6 +341,34 @@ class FabricacaoController extends ChangeNotifier {
     }, force: force);
   }
 
+  void sendFinalizadaEventForMirror({String? msg, bool parcial = false}) {
+    if (_closed) return;
+    final defaultMsg = parcial
+        ? "Carregamento enviado para o caminhão completar"
+        : "Fabricação finalizada ✅";
+    _sendMirrorEvent("finalizada", {
+      "msg": msg ?? defaultMsg,
+      if (parcial) "parcial": 1,
+    });
+    _sendMirrorState(force: true);
+  }
+
+  Future<void> finalizeMirrorAndStop({
+    String? msg,
+    bool parcial = false,
+  }) async {
+    if (_closed) return;
+    try {
+      sendFinalizadaEventForMirror(msg: msg, parcial: parcial);
+    } catch (_) {}
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    } catch (_) {}
+    try {
+      await stopMirror();
+    } catch (_) {}
+  }
+
   // =========================
   // ✅ STATE ENXUTO
   // =========================
@@ -339,6 +412,7 @@ class FabricacaoController extends ChangeNotifier {
         "raw": lastRaw,
       },
       "atual": {
+        "idDet": a.idDet,
         "nome": a.insumoNome,
         "prev": prev,
         "real": real,
@@ -398,7 +472,6 @@ class FabricacaoController extends ChangeNotifier {
   String _lastDetId = "";
   bool _baseDefinida = false;
   bool _baselinePending = false;
-  bool _contabilizarPrimeiroPacotePositivo = false;
   int _pesoInicialPrimeiro = 0;
   int _realizadoAcumBanco = 0;
   bool _pesoPausado = false;
@@ -453,13 +526,6 @@ class FabricacaoController extends ChangeNotifier {
 
     _cancelAutoPulo();
     _resetRealizadoStateForCurrent(baselinePending: true);
-    if (preferFirstZero &&
-        ingredientes.isNotEmpty &&
-        idx >= 0 &&
-        idx < ingredientes.length &&
-        ingredientes[idx].realizadoKg <= 0) {
-      _contabilizarPrimeiroPacotePositivo = true;
-    }
 
     notifyListeners();
     _sendMirrorState(force: true);
@@ -704,7 +770,6 @@ class FabricacaoController extends ChangeNotifier {
 
     _baseDefinida = false;
     _baselinePending = baselinePending;
-    _contabilizarPrimeiroPacotePositivo = false;
     _pesoInicialPrimeiro = 0;
     _pesoPausado = false;
     _pesoPausadoKg = 0;
@@ -743,19 +808,11 @@ class FabricacaoController extends ChangeNotifier {
     if (_pesoPausado) return;
 
     if (_baselinePending) {
-      if (_contabilizarPrimeiroPacotePositivo &&
-          _realizadoAcumBanco <= 0 &&
-          pesoAtualInt > 0) {
-        _pesoInicialPrimeiro = 0;
-        _baseDefinida = true;
-        _baselinePending = false;
-        _contabilizarPrimeiroPacotePositivo = false;
-      } else {
-        _pesoInicialPrimeiro = pesoAtualInt;
-        _baseDefinida = true;
-        _baselinePending = false;
-        return;
-      }
+      // Primeiro pacote após retomar: grava baseline (peso já na balança não entra no insumo).
+      _pesoInicialPrimeiro = pesoAtualInt;
+      _baseDefinida = true;
+      _baselinePending = false;
+      return;
     }
 
     if (!_baseDefinida) {
@@ -911,10 +968,60 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   // PRÉ-PESADO
   // =========================================================
+  /// Confirma pré-pesado pelo [idDet] (comando remoto da Pá).
+  Future<bool> confirmarIngredientePrePesadoById(
+    String idDet,
+    int realizadoKg,
+  ) async {
+    final head = header;
+    if (head == null) return false;
+    if (ingredientes.isEmpty) return false;
+
+    final ingIdx = ingredientes.indexWhere((e) => e.idDet == idDet);
+    if (ingIdx < 0) return false;
+
+    final ing = ingredientes[ingIdx];
+    if (!ing.isPrePesado) return false;
+    if (ing.realizadoKg > 0) return false;
+
+    if (ingIdx == idx) {
+      try {
+        await confirmarIngredientePrePesado(realizadoKg);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    final agora = DateTime.now();
+    String fmt(DateTime d) =>
+        "${d.hour.toString().padLeft(2, "0")}:${d.minute.toString().padLeft(2, "0")}:${d.second.toString().padLeft(2, "0")}";
+    final hora = fmt(agora);
+
+    final updated = await repo.updateIngredienteFabricacaoRobusto(
+      idDet: ing.idDet,
+      idFabricacao: head.id,
+      idInsumo: ing.idInsumo,
+      ordem: ing.ordem,
+      qtdRealizada: realizadoKg.toDouble(),
+      horaInicio: hora,
+      horaFim: hora,
+    );
+    if (updated <= 0) return false;
+
+    await repo.updateFabricacaoParcial(head.id);
+    ingredientes[ingIdx] = ing.copyWith(realizadoKg: realizadoKg);
+    _sendMirrorState(force: true);
+    notifyListeners();
+    return true;
+  }
+
   Future<void> confirmarIngredientePrePesado(int realizadoKg) async {
     final ing = atual;
     final head = header;
     if (ing == null || head == null) return;
+    if (!ing.isPrePesado) return;
+    if (ing.realizadoKg > 0) return;
 
     final agora = DateTime.now();
     String fmt(DateTime d) =>
@@ -1347,6 +1454,7 @@ class FabricacaoController extends ChangeNotifier {
     await loadConfigFabricacao();
     await startMirrorFromConfig();
     await startScaleFromConfig();
+    _primeBaselineFromCurrentWeightIfPossible();
 
     _sendMirrorState(force: true);
     return true;

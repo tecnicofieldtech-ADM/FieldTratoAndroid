@@ -24,6 +24,7 @@ class _MenuPageState extends State<MenuPage> {
   final _netInfo = NetworkInfo();
 
   int? _tipoTrabalho;
+  bool _modoHibrido = false;
   String _wifiIp = "--";
   Timer? _ipTimer;
 
@@ -44,6 +45,12 @@ class _MenuPageState extends State<MenuPage> {
     super.dispose();
   }
 
+  @override
+  void activate() {
+    super.activate();
+    _loadTipoTrabalho();
+  }
+
   Future<void> _refreshWifiIp() async {
     try {
       final ip = (await _netInfo.getWifiIP())?.trim() ?? "";
@@ -58,7 +65,8 @@ class _MenuPageState extends State<MenuPage> {
   Future<void> _loadTipoTrabalho() async {
     try {
       final t = await _cfgRepo.getTipoTrabalho();
-      debugPrint("[MENU] tipoTrabalho=$t");
+      final hibrido = await _cfgRepo.getModoHibrido();
+      debugPrint("[MENU] tipoTrabalho=$t modoHibrido=$hibrido");
       if (t == 1) {
         final port = await _cfgRepo.getPortaEstacionario();
         debugPrint("[MENU] tentando ligar bridge na porta $port");
@@ -68,7 +76,10 @@ class _MenuPageState extends State<MenuPage> {
         await CarregamentoBridgeServer.instance.stop();
       }
       if (!mounted) return;
-      setState(() => _tipoTrabalho = t);
+      setState(() {
+        _tipoTrabalho = t;
+        _modoHibrido = hibrido;
+      });
     } catch (e, st) {
       debugPrint("[MENU] erro ao iniciar/parar bridge: $e");
       debugPrint("$st");
@@ -292,9 +303,10 @@ class _MenuPageState extends State<MenuPage> {
                   final tileH = (w * 0.18).clamp(66.0, 86.0);
 
                   final t = _tipoTrabalho;
+                  final hibrido = _modoHibrido;
                   final podeFabricar = (t == null) || t == 0 || t == 1 || t == 2;
                   final podeFornecer = (t == null) || t == 0 || t == 2;
-                  final podeCarregamento = t == 2;
+                  final podeCarregamento = t == 2 || (t == 1 && hibrido);
 
                   return Column(
                     children: [

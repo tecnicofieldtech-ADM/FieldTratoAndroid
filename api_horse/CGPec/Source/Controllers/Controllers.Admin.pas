@@ -707,6 +707,30 @@ begin
   Result := StartsText('fornecimento_full_', S) and EndsText('.json', LowerCase(S));
 end;
 
+function IsSafeAuditFabricacaoFileName(const S: string): Boolean;
+begin
+  Result := (Trim(S) <> '') and (Length(S) <= 255);
+  if not Result then
+    Exit;
+  if (Pos('\', S) > 0) or (Pos('/', S) > 0) or (Pos('..', S) > 0) then
+    Exit(False);
+  Result := StartsText('fabricacao_full_', S) and EndsText('.json', LowerCase(S));
+end;
+
+function GetAuditFabricacaoBaseDir: string;
+var
+  Env: string;
+begin
+  Env := Trim(GetEnvironmentVariable('RFEED_AUDIT_DIR'));
+  if Env <> '' then
+    Exit(IncludeTrailingPathDelimiter(Env));
+
+  Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+  Result := TPath.Combine(Result, 'audit');
+  Result := TPath.Combine(Result, 'fabricacao');
+  Result := IncludeTrailingPathDelimiter(Result);
+end;
+
 function ResolveAuditFornecimentoFile(const DeviceId, FileName: string): string;
 var
   LBase, LDir, LPath: string;
@@ -717,6 +741,28 @@ begin
     raise Exception.Create('nome de arquivo invalido');
 
   LBase := TPath.GetFullPath(ExcludeTrailingPathDelimiter(GetAuditFornecimentoBaseDir));
+  LDir := TPath.GetFullPath(TPath.Combine(LBase, DeviceId));
+  if not SameText(TPath.GetDirectoryName(LDir), LBase) then
+    raise Exception.Create('caminho fora da pasta de auditoria');
+
+  LPath := TPath.GetFullPath(TPath.Combine(LDir, FileName));
+  if not SameText(TPath.GetDirectoryName(LPath), LDir) then
+    raise Exception.Create('arquivo fora da pasta do device');
+  if not TFile.Exists(LPath) then
+    raise Exception.Create('arquivo nao encontrado');
+  Result := LPath;
+end;
+
+function ResolveAuditFabricacaoFile(const DeviceId, FileName: string): string;
+var
+  LBase, LDir, LPath: string;
+begin
+  if not IsSafeAuditDeviceId(DeviceId) then
+    raise Exception.Create('device_id invalido');
+  if not IsSafeAuditFabricacaoFileName(FileName) then
+    raise Exception.Create('nome de arquivo invalido');
+
+  LBase := TPath.GetFullPath(ExcludeTrailingPathDelimiter(GetAuditFabricacaoBaseDir));
   LDir := TPath.GetFullPath(TPath.Combine(LBase, DeviceId));
   if not SameText(TPath.GetDirectoryName(LDir), LBase) then
     raise Exception.Create('caminho fora da pasta de auditoria');
@@ -841,6 +887,118 @@ begin
   end;
 end;
 
+procedure GetAuditFabricacaoPage(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+begin
+  SendHtml('audit-fabricacao.html', Res);
+end;
+
+procedure GetAuditFabricacaoListApi(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  LBase, LFilterDevice, LDeviceName, LFilePath: string;
+  LRoot, LItem: TJSONObject;
+  LAllFiles: TJSONArray;
+  LFileObj: TJSONObject;
+  LDeviceDirs, LFileNames: TArray<string>;
+  I, J: Integer;
+  LModified: TDateTime;
+begin
+  LRoot := TJSONObject.Create;
+  try
+    try
+      LBase := GetAuditFabricacaoBaseDir;
+      LRoot.AddPair('baseDir', LBase);
+      LRoot.AddPair('envOverride', TJSONBool.Create(Trim(GetEnvironmentVariable('RFEED_AUDIT_DIR')) <> ''));
+      LAllFiles := TJSONArray.Create;
+      LRoot.AddPair('files', LAllFiles);
+
+      LFilterDevice := Trim(Req.Query.Items['device']);
+      if (LFilterDevice <> '') and (not IsSafeAuditDeviceId(LFilterDevice)) then
+        raise Exception.Create('Filtro device invalido');
+
+      if TDirectory.Exists(LBase) then
+      begin
+        if LFilterDevice <> '' then
+          LDeviceDirs := [TPath.Combine(LBase, LFilterDevice)]
+        else
+          LDeviceDirs := TDirectory.GetDirectories(LBase);
+
+        for I := 0 to Length(LDeviceDirs) - 1 do
+        begin
+          if not TDirectory.Exists(LDeviceDirs[I]) then
+            Continue;
+
+          LDeviceName := ExtractFileName(ExcludeTrailingPathDelimiter(LDeviceDirs[I]));
+          if not IsSafeAuditDeviceId(LDeviceName) then
+            Continue;
+
+          LFileNames := TDirectory.GetFiles(LDeviceDirs[I], 'fabricacao_full_*.json');
+          for J := 0 to Length(LFileNames) - 1 do
+          begin
+            LFilePath := LFileNames[J];
+            LFileObj := TJSONObject.Create;
+            LFileObj.AddPair('device_id', LDeviceName);
+            LFileObj.AddPair('filename', ExtractFileName(LFilePath));
+            LFileObj.AddPair('bytes', TJSONNumber.Create(TFile.GetSize(LFilePath)));
+            LModified := TFile.GetLastWriteTime(LFilePath);
+            LFileObj.AddPair('modified', FormatDateTime('yyyy-mm-dd"T"hh:nn:ss', LModified));
+            LFileObj.AddPair('saved_path', LFilePath);
+            LAllFiles.AddElement(LFileObj);
+          end;
+        end;
+      end;
+
+      LRoot.AddPair('totalFiles', TJSONNumber.Create(LAllFiles.Count));
+      Res.Send(LRoot.ToJSON).ContentType('application/json; charset=utf-8').Status(200);
+    except
+      on E: Exception do
+      begin
+        LItem := TJSONObject.Create;
+        try
+          LItem.AddPair('erro', E.Message);
+          Res.Send(LItem.ToJSON).ContentType('application/json; charset=utf-8').Status(400);
+        finally
+          LItem.Free;
+        end;
+      end;
+    end;
+  finally
+    LRoot.Free;
+  end;
+end;
+
+procedure GetAuditFabricacaoFileApi(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+var
+  LDevice, LName, LInline, LPath, LContent: string;
+  LErr: TJSONObject;
+begin
+  try
+    LDevice := Trim(Req.Query.Items['device']);
+    LName := Trim(Req.Query.Items['name']);
+    if LDevice = '' then
+      LDevice := Trim(Req.Query.Items['device_id']);
+    if LName = '' then
+      LName := Trim(Req.Query.Items['filename']);
+
+    LPath := ResolveAuditFabricacaoFile(LDevice, LName);
+    LInline := LowerCase(Trim(Req.Query.Items['inline']));
+
+    if (LInline = '1') or (LInline = 'true') or (LInline = 'yes') then
+    begin
+      LContent := TFile.ReadAllText(LPath, TEncoding.UTF8);
+      Res.Send(LContent).ContentType('application/json; charset=utf-8').Status(200);
+    end
+    else
+      Res.Download(LPath, 'application/json; charset=utf-8');
+  except
+    on E: Exception do
+    begin
+      LErr := TJSONObject.Create;
+      LErr.AddPair('erro', E.Message);
+      Res.Send(LErr.ToJSON).ContentType('application/json; charset=utf-8').Status(404);
+    end;
+  end;
+end;
+
 procedure RegistraRotasAdmin;
 begin
   THorse.Get('/', GetRoot);
@@ -850,6 +1008,7 @@ begin
   THorse.Get('/monitor', GetMonitorPage);
   THorse.Get('/dashboard/fabricacao', GetDashboardFabricacaoPage);
   THorse.Get('/audit/fornecimento', GetAuditFornecimentoPage);
+  THorse.Get('/audit/fabricacao', GetAuditFabricacaoPage);
   THorse.Get('/audit', GetAuditFornecimentoPage);
   THorse.Get('/web-admin/request-monitor.js', GetRequestMonitorJs);
   THorse.Get('/web-admin/api-version.js', GetApiVersionJs);
@@ -857,6 +1016,8 @@ begin
   THorse.Delete('/api/request-logs', DeleteRequestLogsApi);
   THorse.Get('/api/audit/fornecimento', GetAuditFornecimentoListApi);
   THorse.Get('/api/audit/fornecimento/file', GetAuditFornecimentoFileApi);
+  THorse.Get('/api/audit/fabricacao', GetAuditFabricacaoListApi);
+  THorse.Get('/api/audit/fabricacao/file', GetAuditFabricacaoFileApi);
   THorse.Get('/api/version', GetApiVersion);
   THorse.Get('/api/config', GetApiConfig);
   THorse.Post('/api/config', PostApiConfig);

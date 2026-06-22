@@ -8,8 +8,8 @@ import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
 import "../services/bootstrap_sync.dart";
+import "../services/wifi_guard.dart";
 import "../features/estacionario/data/carregamento_estacionario_api.dart";
-import "../features/estacionario/services/wifi_switcher.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../constants/config_options.dart";
 
@@ -69,6 +69,9 @@ class _ConfigPageState extends State<ConfigPage> {
   int _modeloRfid = 0;
   FabricacaoFlowMode _flowMode = FabricacaoFlowMode.fullOnStation;
 
+  /// Estacionário: libera tile Carregamento no menu. Distribuidor: libera Nova fabricação na lista.
+  bool _modoHibrido = false;
+
   bool _puloAutomatico = true;
 
   String? _idVagao;
@@ -108,10 +111,40 @@ class _ConfigPageState extends State<ConfigPage> {
   StreamSubscription? _rfidTagSub;
   Timer? _rfidTestTimeout;
 
-  final _wifiSwitcher = WifiSwitcher();
   bool _testingStation = false;
   bool _connectingStationWifi = false;
   bool get _isDistribuidor => _operacao == 2;
+
+  List<Widget> _fabricacaoFlowModeRadioTiles() {
+    return [
+      RadioListTile<FabricacaoFlowMode>(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: FabricacaoFlowMode.fullOnStation,
+        groupValue: _flowMode,
+        title: const Text("Completo no estacionario"),
+        subtitle: const Text(
+          "Estacionario finaliza e sincroniza normalmente.",
+        ),
+        onChanged: (v) => setState(
+          () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
+        ),
+      ),
+      RadioListTile<FabricacaoFlowMode>(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: FabricacaoFlowMode.startStationFinishTruck,
+        groupValue: _flowMode,
+        title: const Text("Inicia no estacionario e finaliza no caminhao"),
+        subtitle: const Text(
+          "Estacionario exporta parcial; caminhao completa e sincroniza.",
+        ),
+        onChanged: (v) => setState(
+          () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
+        ),
+      ),
+    ];
+  }
 
   String? _backupPath;
 
@@ -260,6 +293,7 @@ class _ConfigPageState extends State<ConfigPage> {
       _stationWifiPasswordCtrl.text = _asStr(cfg["STATION_WIFI_PASSWORD"]);
       _stationBaseUrlCtrl.text = _asStr(cfg["STATION_BASE_URL"]);
       _flowMode = fabricacaoFlowModeFromDb(cfg["FLOW_MODE"]);
+      _modoHibrido = _asInt(cfg["MODO_HIBRIDO"], 0) == 1;
 
       _idVagao = _asStr(cfg["ID_VAGAO"]).trim().isEmpty
           ? null
@@ -289,8 +323,13 @@ class _ConfigPageState extends State<ConfigPage> {
       if (_stationBaseUrlCtrl.text.trim().isEmpty &&
           _hostEstacionarioCtrl.text.trim().isNotEmpty) {
         final p = int.tryParse(_portaEstacionarioCtrl.text.trim()) ?? 8080;
-        _stationBaseUrlCtrl.text =
-            "http://${_hostEstacionarioCtrl.text.trim()}:$p";
+        _stationBaseUrlCtrl.text = CarregamentoEstacionarioApi.normalizeBaseUrl(
+          "http://${_hostEstacionarioCtrl.text.trim()}:$p",
+        );
+      } else if (_stationBaseUrlCtrl.text.trim().isNotEmpty) {
+        _stationBaseUrlCtrl.text = CarregamentoEstacionarioApi.normalizeBaseUrl(
+          _stationBaseUrlCtrl.text.trim(),
+        );
       }
     } else {
       _puloAutomatico = true;
@@ -301,6 +340,7 @@ class _ConfigPageState extends State<ConfigPage> {
       _toleranciaCarregCtrl.text = "0.000";
       _portaEstacionarioCtrl.text = "8080";
       _flowMode = FabricacaoFlowMode.fullOnStation;
+      _modoHibrido = false;
     }
 
     await _reloadCombos();
@@ -362,16 +402,26 @@ class _ConfigPageState extends State<ConfigPage> {
     final tolerTxt = _toleranciaCarregCtrl.text.trim();
     final tolerPct = double.tryParse(tolerTxt.replaceAll(",", ".")) ?? 0.0;
 
-    final stationBaseUrl = _stationBaseUrlCtrl.text.trim();
+    var stationBaseUrl = _stationBaseUrlCtrl.text.trim();
     String hostEst = _hostEstacionarioCtrl.text.trim();
     int portaEst = int.tryParse(_portaEstacionarioCtrl.text.trim()) ?? 8080;
     if (_isDistribuidor) {
-      final uri = Uri.tryParse(stationBaseUrl);
+      final uri = Uri.tryParse(
+        stationBaseUrl.contains("://")
+            ? stationBaseUrl
+            : "http://$stationBaseUrl",
+      );
       if (uri != null && uri.host.trim().isNotEmpty) {
         hostEst = uri.host.trim();
         portaEst = uri.hasPort
             ? uri.port
-            : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
+            : (uri.scheme.toLowerCase() == "https" ? 443 : 8080);
+        if (portaEst == 80 || (portaEst < 1024 && uri.scheme.toLowerCase() == "http")) {
+          portaEst = 8080;
+        }
+        stationBaseUrl = CarregamentoEstacionarioApi.normalizeBaseUrl(
+          uri.hasPort ? stationBaseUrl : "http://$hostEst",
+        );
       }
     }
 
@@ -403,6 +453,7 @@ class _ConfigPageState extends State<ConfigPage> {
       // ✅ FABRICAÇÃO (AJUSTADO)
       "TEMPO_MISTURA": tempoMisturaMin, // minutos
       "TOLERANCIA_CARREGAMENTO": tolerPct, // %
+      "MODO_HIBRIDO": _modoHibrido ? 1 : 0,
     };
   }
 
@@ -455,10 +506,9 @@ class _ConfigPageState extends State<ConfigPage> {
         _toast("Informe o baseUrl do estacionario.");
         return false;
       }
-      final uri = Uri.tryParse(base);
-      if (uri == null || uri.host.trim().isEmpty) {
+      if (CarregamentoEstacionarioApi.tryParseHostPort(base) == null) {
         _toast(
-            "baseUrl do estacionario invalido. Ex.: http://192.168.1.10:8080");
+            "Base URL invalida. Ex.: http://IP_DO_TABLET:8080 (porta do bridge).");
         return false;
       }
       if (ssid.isEmpty) {
@@ -721,28 +771,21 @@ class _ConfigPageState extends State<ConfigPage> {
   }
 
   CarregamentoEstacionarioApi? _stationApiFromBaseUrl() {
-    final raw = _stationBaseUrlCtrl.text.trim();
-    if (raw.isEmpty) return null;
-    final uri = Uri.tryParse(raw);
-    if (uri == null || uri.host.trim().isEmpty) return null;
-    final port = uri.hasPort
-        ? uri.port
-        : (uri.scheme.toLowerCase() == "https" ? 443 : 80);
-    return CarregamentoEstacionarioApi(host: uri.host.trim(), port: port);
+    return CarregamentoEstacionarioApi.tryFromBaseUrl(
+      _stationBaseUrlCtrl.text.trim(),
+    );
   }
 
   Future<void> _onTestarEstacionario() async {
     final api = _stationApiFromBaseUrl();
     if (api == null) {
-      _toast("BaseUrl do estacionario invalido.");
+      _toast("BaseUrl do estacionario invalido. Ex.: http://IP:8080");
       return;
     }
     setState(() => _testingStation = true);
     try {
-      final ok = await api.health();
-      _toast(ok
-          ? "Conexao OK com estacionario."
-          : "Falha no teste com estacionario.");
+      final r = await api.tryHealth();
+      _toast(r.ok ? r.message : "Falha: ${r.message}");
     } catch (e) {
       _toast("Erro no teste: $e");
     } finally {
@@ -758,11 +801,8 @@ class _ConfigPageState extends State<ConfigPage> {
     }
     setState(() => _connectingStationWifi = true);
     try {
-      final res = await _wifiSwitcher.connect(
-        ssid: ssid,
-        password: _stationWifiPasswordCtrl.text,
-      );
-      _toast(res.message);
+      await WifiGuard.openWifiSelector();
+      _toast("Selecione a rede '$ssid' na lista de Wi‑Fi.");
     } finally {
       if (mounted) setState(() => _connectingStationWifi = false);
     }
@@ -966,6 +1006,50 @@ class _ConfigPageState extends State<ConfigPage> {
                   ],
                 ),
                 const SizedBox(height: 16),
+
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: SwitchListTile(
+                    title: const Text("Modo híbrido"),
+                    subtitle: const Text(
+                      "No estacionário, habilita o tile Carregamento no menu. "
+                      "No distribuidor, habilita o botão Nova na lista de fabricações.",
+                    ),
+                    value: _modoHibrido,
+                    onChanged: (v) => setState(() => _modoHibrido = v),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                if (_operacao == 1) ...[
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            "Fluxo de fabricação",
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Use a mesma opção no tablet do caminhão. "
+                            "A opção parcial habilita finalizar no estacionário e completar no caminhão.",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          ..._fabricacaoFlowModeRadioTiles(),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
 
                 _sectionTitle("Identificação Vagão"),
                 LayoutBuilder(
@@ -1340,90 +1424,91 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 22),
 
                 if (_isDistribuidor) ...[
-                  _sectionTitle("Operacao do Estacionario"),
-                  RadioListTile<FabricacaoFlowMode>(
-                    dense: true,
-                    value: FabricacaoFlowMode.fullOnStation,
-                    groupValue: _flowMode,
-                    title: const Text("Completo no estacionario"),
-                    subtitle: const Text(
-                      "Estacionario finaliza e sincroniza normalmente.",
-                    ),
-                    onChanged: (v) => setState(
-                      () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
-                    ),
-                  ),
-                  RadioListTile<FabricacaoFlowMode>(
-                    dense: true,
-                    value: FabricacaoFlowMode.startStationFinishTruck,
-                    groupValue: _flowMode,
-                    title: const Text(
-                        "Inicia no estacionario e finaliza no caminhao"),
-                    subtitle: const Text(
-                      "Estacionario exporta; caminhao completa e sincroniza.",
-                    ),
-                    onChanged: (v) => setState(
-                      () => _flowMode = v ?? FabricacaoFlowMode.fullOnStation,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _stationWifiSsidCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "SSID do estacionario",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _stationWifiPasswordCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "Senha do Wi-Fi do estacionario",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _stationBaseUrlCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "Base URL do estacionario",
-                      helperText: "Ex: http://192.168.1.10:8080",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _connectingStationWifi
-                            ? null
-                            : _onConectarWifiEstacionario,
-                        icon: _connectingStationWifi
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.wifi),
-                        label: const Text("Conectar na rede do Estacionario"),
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            "Estacionário (rede)",
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Rede e URL do tablet no misturador.",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _stationWifiSsidCtrl,
+                            decoration: const InputDecoration(
+                              labelText: "SSID do estacionario",
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _stationWifiPasswordCtrl,
+                            decoration: const InputDecoration(
+                              labelText: "Senha do Wi-Fi do estacionario",
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _stationBaseUrlCtrl,
+                            decoration: const InputDecoration(
+                              labelText: "Base URL do estacionario",
+                              helperText:
+                                  "Ex.: http://192.168.1.10:8080",
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _connectingStationWifi
+                                    ? null
+                                    : _onConectarWifiEstacionario,
+                                icon: _connectingStationWifi
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.wifi),
+                                label: const Text(
+                                    "Conectar na rede do Estacionario"),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _testingStation
+                                    ? null
+                                    : _onTestarEstacionario,
+                                icon: _testingStation
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(
+                                        Icons.health_and_safety_outlined),
+                                label: const Text("Testar conexao"),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _testingStation ? null : _onTestarEstacionario,
-                        icon: _testingStation
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.health_and_safety_outlined),
-                        label: const Text("Testar conexao"),
-                      ),
-                    ],
+                    ),
                   ),
                   const SizedBox(height: 22),
                 ],
