@@ -46,6 +46,26 @@ class FornTables {
   static const String dbIdLote = "ID_LOTE";
   static const String dbIdFazenda = "ID_FAZENDA";
 
+  /// LINHA: banco (<=3 chars) ou ate 3 letras antes de '-'/'_' no nome.
+  static const int linhaCurralMaxLen = 3;
+
+  static String sqlLinhaResolvida(String nomeCol, String linhaCol) => """
+CASE
+  WHEN NULLIF(TRIM($linhaCol), '') IS NOT NULL
+       AND length(TRIM($linhaCol)) <= $linhaCurralMaxLen THEN
+    upper(TRIM($linhaCol))
+  ELSE upper(substr(
+    CASE
+      WHEN instr(replace($nomeCol, ' ', ''), '-') > 0 THEN
+        substr(replace($nomeCol, ' ', ''), 1, instr(replace($nomeCol, ' ', ''), '-') - 1)
+      WHEN instr(replace($nomeCol, ' ', ''), '_') > 0 THEN
+        substr(replace($nomeCol, ' ', ''), 1, instr(replace($nomeCol, ' ', ''), '_') - 1)
+      ELSE replace(trim($nomeCol), ' ', '')
+    END,
+    1, $linhaCurralMaxLen
+  ))
+END""";
+
   // =========================
   // CADASTRO_FORNECIMENTO (cols)
   //
@@ -74,7 +94,55 @@ class FornTables {
   static const String cfIdDieta = "ID_DIETA";
   static const String cfMapa = "MAPA";
 
-  
+  /// Soma dos realizados locais por baia+trato+data+dieta; se não houver linhas, usa PREVISAO.
+  static String sqlChaveCadastroMatchPrevisao(
+    String aliasPrevisao,
+    String aliasCadastro,
+  ) {
+    final a = aliasPrevisao;
+    final cf = aliasCadastro;
+    return """
+TRIM(COALESCE($cf.$cfIdBaia, '')) = TRIM(COALESCE($a.$pvIdBaia, ''))
+AND $cf.$cfTrato = $a.$pvTrato
+AND substr(COALESCE($cf.$cfData, ''), 1, 10) = substr(COALESCE($a.$pvData, ''), 1, 10)
+AND (
+  TRIM(COALESCE($cf.$cfIdDieta, '')) = TRIM(COALESCE($a.$pvIdRacao, ''))
+  OR (
+    TRIM(COALESCE($cf.$cfIdDieta, '')) = ''
+    AND TRIM(COALESCE($cf.$cfIdFornecimento, '')) = TRIM(COALESCE($a.$pvIdFornecimento, ''))
+  )
+)""";
+  }
+
+  static String sqlRealizadoKgLocal(String aliasPrevisao) {
+    final a = aliasPrevisao;
+    final match = sqlChaveCadastroMatchPrevisao(a, "cf");
+    return """
+CASE
+  WHEN (
+    SELECT COUNT(*)
+    FROM $cadastroFornecimento cf
+    WHERE $match
+  ) > 0 THEN (
+    SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
+    FROM $cadastroFornecimento cf
+    WHERE $match
+  )
+  ELSE COALESCE($a.$pvRealizadoKg, 0)
+END""";
+  }
+
+  static String sqlQtdSessoesLocal(String aliasPrevisao) {
+    final a = aliasPrevisao;
+    final match = sqlChaveCadastroMatchPrevisao(a, "cf2");
+    return """
+(
+  SELECT COUNT(*)
+  FROM $cadastroFornecimento cf2
+  WHERE $match
+    AND COALESCE(cf2.$cfRealizado, 0) > 0
+)""";
+  }
 }
 
 

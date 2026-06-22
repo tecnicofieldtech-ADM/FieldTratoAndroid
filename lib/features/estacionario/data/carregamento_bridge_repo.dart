@@ -20,9 +20,36 @@ class CarregamentoBridgeRepo {
       FROM CADASTRO_FABRICA_RACAO f
       LEFT JOIN DIETA d ON d.ID = f.ID_DIETA
       WHERE COALESCE(f.STATUS,1) = 1
-        AND COALESCE(f.FAB_STATUS,0) IN ($fabricacaoStatusPendenteCaminhao, $fabricacaoStatusFinalizada)
+        AND COALESCE(f.CARREGADA,0) = 0
+        AND COALESCE(f.FAB_STATUS,0) = $fabricacaoStatusPendenteCaminhao
       ORDER BY COALESCE(f.DATA_FABRICACAO,'') DESC, COALESCE(f.HORA_FIM, f.HORA_INICIO, '') DESC
     """);
+  }
+
+  /// Marca lote como recebido pelo caminhão (some da lista do bridge).
+  Future<bool> marcarRecebido(String idLocal) async {
+    final id = idLocal.trim();
+    if (id.isEmpty) return false;
+    final db = await _db;
+    final cur = await db.rawQuery(
+      "SELECT COALESCE(CARREGADA,0) AS c FROM CADASTRO_FABRICA_RACAO "
+      "WHERE TRIM(COALESCE(ID,'')) = TRIM(?) LIMIT 1",
+      [id],
+    );
+    if (cur.isEmpty) return false;
+    if ((_toInt(cur.first["c"]) ?? 0) == 1) return true;
+    final n = await db.rawUpdate(
+      "UPDATE CADASTRO_FABRICA_RACAO SET CARREGADA = 1 "
+      "WHERE TRIM(COALESCE(ID,'')) = TRIM(?)",
+      [id],
+    );
+    return n > 0;
+  }
+
+  int? _toInt(Object? v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    return int.tryParse(v.toString());
   }
 
   Future<Map<String, Object?>?> getByFabricacaoId(String idLocal) async {

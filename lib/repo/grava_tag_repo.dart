@@ -190,4 +190,42 @@ class GravaTagRepo {
       });
     });
   }
+
+  /// Remove o vínculo RFID do curral (local) para permitir gravar uma nova tag.
+  Future<String?> limparVinculo({required String idCurral}) async {
+    final db = await _db;
+    final curral = _s(idCurral);
+    if (curral.isEmpty) {
+      throw Exception("ID do curral e obrigatorio.");
+    }
+
+    String? tagRemovida;
+
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        "DETALHES_BAIAS",
+        columns: ["RFID"],
+        where: "TRIM(ID) = TRIM(?)",
+        whereArgs: [curral],
+        limit: 1,
+      );
+
+      if (rows.isEmpty) {
+        throw Exception("Curral nao encontrado.");
+      }
+
+      final atual = _s(rows.first["RFID"]);
+      if (atual.isEmpty) return;
+      tagRemovida = atual;
+
+      await txn.update(
+        "DETALHES_BAIAS",
+        {"RFID": ""},
+        where: "TRIM(ID) = TRIM(?)",
+        whereArgs: [curral],
+      );
+    });
+
+    return tagRemovida?.trim().isEmpty == true ? null : tagRemovida?.trim();
+  }
 }

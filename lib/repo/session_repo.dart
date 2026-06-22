@@ -5,6 +5,7 @@ class SessionRepo {
   static const _kUserId = "sess_user_id";
   static const _kUserNome = "sess_user_nome";
   static const _kUserLogin = "sess_user_login";
+  static const _kLastUserId = "last_user_id";
 
   Future<void> saveLogin({
     required String userId,
@@ -15,6 +16,15 @@ class SessionRepo {
     await sp.setString(_kUserId, userId);
     await sp.setString(_kUserNome, nome);
     await sp.setString(_kUserLogin, login);
+    await sp.setString(_kLastUserId, userId);
+  }
+
+  /// Último usuário logado (mantido após logout).
+  Future<String?> getLastUserId() async {
+    final sp = await SharedPreferences.getInstance();
+    final id = sp.getString(_kLastUserId);
+    if (id == null || id.trim().isEmpty) return null;
+    return id.trim();
   }
 
   Future<Map<String, String>?> getLogin() async {

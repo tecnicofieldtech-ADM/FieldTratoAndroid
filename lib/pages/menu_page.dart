@@ -5,9 +5,12 @@ import "package:flutter/material.dart";
 import "package:network_info_plus/network_info_plus.dart";
 import "package:permission_handler/permission_handler.dart";
 import "../repo/config_repo.dart";
+import "../repo/last_login_repo.dart";
+import "../services/session_service.dart";
 import "../services/carregamento_bridge.dart";
 import "../services/wifi_guard.dart";
 import "../widgets/app_logo.dart";
+import "../widgets/app_version_label.dart";
 
 class MenuPage extends StatefulWidget {
   const MenuPage({super.key});
@@ -21,6 +24,7 @@ class _MenuPageState extends State<MenuPage> {
   final _netInfo = NetworkInfo();
 
   int? _tipoTrabalho;
+  bool _modoHibrido = false;
   String _wifiIp = "--";
   Timer? _ipTimer;
 
@@ -41,6 +45,12 @@ class _MenuPageState extends State<MenuPage> {
     super.dispose();
   }
 
+  @override
+  void activate() {
+    super.activate();
+    _loadTipoTrabalho();
+  }
+
   Future<void> _refreshWifiIp() async {
     try {
       final ip = (await _netInfo.getWifiIP())?.trim() ?? "";
@@ -55,7 +65,8 @@ class _MenuPageState extends State<MenuPage> {
   Future<void> _loadTipoTrabalho() async {
     try {
       final t = await _cfgRepo.getTipoTrabalho();
-      debugPrint("[MENU] tipoTrabalho=$t");
+      final hibrido = await _cfgRepo.getModoHibrido();
+      debugPrint("[MENU] tipoTrabalho=$t modoHibrido=$hibrido");
       if (t == 1) {
         final port = await _cfgRepo.getPortaEstacionario();
         debugPrint("[MENU] tentando ligar bridge na porta $port");
@@ -65,7 +76,10 @@ class _MenuPageState extends State<MenuPage> {
         await CarregamentoBridgeServer.instance.stop();
       }
       if (!mounted) return;
-      setState(() => _tipoTrabalho = t);
+      setState(() {
+        _tipoTrabalho = t;
+        _modoHibrido = hibrido;
+      });
     } catch (e, st) {
       debugPrint("[MENU] erro ao iniciar/parar bridge: $e");
       debugPrint("$st");
@@ -289,9 +303,10 @@ class _MenuPageState extends State<MenuPage> {
                   final tileH = (w * 0.18).clamp(66.0, 86.0);
 
                   final t = _tipoTrabalho;
+                  final hibrido = _modoHibrido;
                   final podeFabricar = (t == null) || t == 0 || t == 1 || t == 2;
                   final podeFornecer = (t == null) || t == 0 || t == 2;
-                  final podeCarregamento = t == 2;
+                  final podeCarregamento = t == 2 || (t == 1 && hibrido);
 
                   return Column(
                     children: [
@@ -359,7 +374,9 @@ class _MenuPageState extends State<MenuPage> {
                                     const Center(child: AppLogo(height: 230)),
                               ),
 
-                              const SizedBox(height: 14),
+                              const SizedBox(height: 6),
+                              const AppVersionLabel(),
+                              const SizedBox(height: 10),
 
                               // ===== LINHA 1 =====
                               Row(
@@ -547,8 +564,19 @@ class _MenuPageState extends State<MenuPage> {
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14)),
                           ),
-                          onPressed: () =>
-                              Navigator.pushReplacementNamed(context, "/login"),
+                          onPressed: () async {
+                            final user = SessionService.instance.current;
+                            if (user != null) {
+                              await LastLoginRepo().save(
+                                userId: user.id,
+                                nome: user.nome,
+                                login: user.login,
+                              );
+                            }
+                            await SessionService.instance.logout();
+                            if (!context.mounted) return;
+                            Navigator.pushReplacementNamed(context, "/login");
+                          },
                           icon: const Icon(Icons.logout),
                           label: const Text(
                             "Sair",

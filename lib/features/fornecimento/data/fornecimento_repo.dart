@@ -227,6 +227,53 @@ class FornecimentoRepo {
     return car != null;
   }
 
+  /// Exige carregamento aberto + fabricação vinculada com QTD_REALIZADA > 0.
+  Future<FabricacaoFornecimentoGate> assertFabricacaoParaFornecimento({
+    DateTime? data,
+  }) async {
+    final ref = data ?? DateTime.now();
+    final car = await getCarregamentoAberto(data: ref);
+    if (car == null || car.status != 0) {
+      throw Exception(
+        "Não existe carregamento aberto. Finalize a fabricação e gere o "
+        "carregamento antes de fornecer.",
+      );
+    }
+
+    var fabId = (car.idFabricacao ?? "").trim();
+    if (fabId.isEmpty) {
+      fabId = ((await _dao.getFabricacaoEmAbertoId(data: ref)) ?? "").trim();
+    }
+    if (fabId.isEmpty) {
+      throw Exception(
+        "Carregamento aberto sem fabricação vinculada. "
+        "Receba o carregamento da BeatBox ou finalize a fabricação com peso "
+        "realizado no caminhão.",
+      );
+    }
+
+    final resumo = await _dao.getFabricacaoResumo(fabId);
+    if (resumo == null) {
+      throw Exception("Fabricação $fabId não encontrada no tablet.");
+    }
+
+    final qtdReal = _toDouble(resumo["qtd_realizada"]);
+    if (qtdReal <= 0) {
+      throw Exception(
+        "Fabricação sem peso realizado (> 0 kg). Conclua a pesagem na "
+        "BeatBox/caminhão antes de iniciar o fornecimento.",
+      );
+    }
+
+    return FabricacaoFornecimentoGate.fromMap(resumo);
+  }
+
+  double _toDouble(Object? v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+  }
+
   Future<bool> tryImportCarregamentoFromEstacionario({
     DateTime? data,
   }) async {
@@ -286,6 +333,33 @@ class FornecimentoRepo {
   // ===========================
   // PREVISÃO (Mapa / Hoje)
   // ===========================
+  static String _normalizeRacaoId(String? raw) {
+    return (raw ?? "").replaceAll(RegExp(r"\s+"), "").trim().toUpperCase();
+  }
+
+  static double _toDoubleLocal(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().trim().replaceAll(",", ".")) ?? 0;
+  }
+
+  bool _mapaRowFraco(Map<String, Object?> r) {
+    final nome = (r["nomeLocal"] ?? r["nome_local"] ?? "").toString().trim();
+    final nomeDb = (r["nomeLocalRaw"] ?? "").toString().trim();
+    final prev = _toDoubleLocal(r["previstoKg"] ?? r["previsto"] ?? 0);
+    final hasNome = (nome.isNotEmpty && nome != "(sem nome)") || nomeDb.isNotEmpty;
+    return !hasNome || prev <= 0;
+  }
+
+  bool _mapaRowsSemDadosUteis(List<Map<String, Object?>> rows) {
+    if (rows.isEmpty) return false;
+    var fracos = 0;
+    for (final r in rows) {
+      if (_mapaRowFraco(r)) fracos++;
+    }
+    return fracos >= (rows.length * 0.5).ceil();
+  }
+
   Future<List<CurralPrev>> listCurraisPrevistosHoje({
     DateTime? data,
     int? trato,
@@ -306,42 +380,62 @@ class FornecimentoRepo {
     // ✅ mantém idRacaoAtual consistente
     if (racaoFinal != null) setIdRacaoAtual(racaoFinal);
 
-    var rows = await _listPrevRaw(
-      dataYYYYMMDD: ymd,
-      trato: t,
-      idFazenda: fazendaFiltro,
-      idRacao: racaoFinal,
-    );
+    Future<List<Map<String, Object?>>> load({
+      String? idRacaoFiltro,
+      String? idFazendaFiltro,
+    }) {
+      return _listPrevRaw(
+        dataYYYYMMDD: ymd,
+        trato: t,
+        idFazenda: idFazendaFiltro ?? fazendaFiltro,
+        idRacao: idRacaoFiltro,
+      );
+    }
+
+    var rows = await load(idRacaoFiltro: racaoFinal);
+
+    if (rows.isEmpty && racaoFinal != null) {
+      final racaoNorm = _normalizeRacaoId(racaoFinal);
+      if (racaoNorm.isNotEmpty && racaoNorm != racaoFinal) {
+        rows = await load(idRacaoFiltro: racaoNorm);
+      }
+    }
 
     if (isFieldpec && rows.isEmpty && racaoFinal != null) {
       final racaoInt = int.tryParse(racaoFinal)?.toString();
       if (racaoInt != null && racaoInt != racaoFinal) {
-        rows = await _listPrevRaw(
-          dataYYYYMMDD: ymd,
-          trato: t,
-          idFazenda: null,
-          idRacao: racaoInt,
-        );
+        rows = await load(idRacaoFiltro: racaoInt, idFazendaFiltro: null);
       }
     }
 
-    if (isFieldpec && rows.isEmpty && racaoFinal != null) {
+    if (rows.isEmpty && racaoFinal != null) {
       if (kDebugMode) {
         debugPrint(
-          "[FORN_MAPA] Fieldpec sem mapa com idRacao='$racaoFinal'. Recarregando sem filtro de ração.",
+          "[FORN_MAPA] Sem mapa com idRacao='$racaoFinal'. Recarregando sem filtro de ração.",
         );
       }
-      rows = await _listPrevRaw(
-        dataYYYYMMDD: ymd,
-        trato: t,
-        idFazenda: null,
-        idRacao: null,
-      );
+      rows = await load(idRacaoFiltro: null, idFazendaFiltro: isFieldpec ? null : fazendaFiltro);
+    }
+
+    if (rows.isNotEmpty &&
+        racaoFinal != null &&
+        _mapaRowsSemDadosUteis(rows)) {
+      final semRacao = await load(idRacaoFiltro: null, idFazendaFiltro: isFieldpec ? null : fazendaFiltro);
+      if (semRacao.isNotEmpty && !_mapaRowsSemDadosUteis(semRacao)) {
+        if (kDebugMode) {
+          debugPrint(
+            "[FORN_MAPA] Mapa com idRacao='$racaoFinal' veio sem nomes/previstos. "
+            "Usando ${semRacao.length} currais sem filtro de ração.",
+          );
+        }
+        rows = semRacao;
+      }
     }
 
     if (kDebugMode) {
       debugPrint(
-        "[FORN_MAPA] backend=$backend isFieldpec=$isFieldpec data=$ymd trato=$t fazendaFiltro='${fazendaFiltro ?? ""}' idRacao='${racaoFinal ?? ""}' rows=${rows.length}",
+        "[FORN_MAPA] backend=$backend isFieldpec=$isFieldpec data=$ymd trato=$t "
+        "fazendaFiltro='${fazendaFiltro ?? ""}' idRacao='${racaoFinal ?? ""}' rows=${rows.length}",
       );
     }
 
@@ -383,16 +477,14 @@ class FornecimentoRepo {
   // FORNECIMENTO (NOVO FLUXO)
   // ===========================
 
-  /// ✅ Agora NÃO existe “cadastro aberto” no SQLite.
-  /// Esta função só valida pré-condições e devolve um ID de sessão (local),
-  /// se você quiser usar na UI (não grava no banco).
+  /// Abre CADASTRO_FORNECIMENTO na sessão (HORA_INICIO) ou reutiliza registro aberto.
   Future<String> iniciarCadastroFornecimento({
     required String idFornecimento,
     required String idCurral,
     required DateTime data,
     required int trato,
     required double previstoKg,
-    required double pesoInicio, // mantido por compat com sua UI, mas NÃO grava
+    required double pesoInicio,
     required String idUsuario,
   }) async {
     final user = idUsuario.trim();
@@ -409,20 +501,66 @@ class FornecimentoRepo {
       );
     }
 
-    // ✅ id apenas para controle da UI (não salva em tabela)
-    final sessionId = _dao.newId40();
+    final aberto = await _dao.getFornecimentoAberto(
+      idFornecimento: idFornecimento,
+      idBaia: idCurral,
+      data: data,
+      trato: trato,
+    );
+    if (aberto != null) {
+      await assertFabricacaoParaFornecimento(data: data);
+      if (kDebugMode) {
+        debugPrint(
+          "🟦 iniciarCadastroFornecimento: reutiliza aberto id=${aberto.idCadastro}",
+        );
+      }
+      return aberto.idCadastro;
+    }
 
-    if (kDebugMode) {
-      debugPrint(
-        "🟦 iniciarCadastroFornecimento (SEM INSERT) sessionId=$sessionId "
-        "idFornecimento=$idFornecimento idCurral=$idCurral trato=$trato data=${_ymd(data)} previsto=$previstoKg",
+    final car = await getCarregamentoAberto(data: data);
+    if (car == null || car.status != 0) {
+      throw Exception(
+        "Não existe CARREGAMENTO aberto. Abra um carregamento antes de fornecer.",
       );
     }
 
-    return sessionId;
+    final gate = await assertFabricacaoParaFornecimento(data: data);
+    final fab = gate.idFabricacao;
+
+    final idDieta = (car.idDieta ?? idRacaoAtual)?.trim();
+    final idDietaFinal =
+        (idDieta != null && idDieta.isNotEmpty) ? idDieta : gate.idDieta;
+
+    final newId = _dao.newId40();
+    await _dao.abrir(
+      id: newId,
+      idFornecimento: idFornecimento,
+      idFabricacao: fab,
+      idBaia: idCurral,
+      data: data,
+      pesoInicio: pesoInicio,
+      previsto: previstoKg,
+      trato: trato,
+      idUsuario: user,
+      idDieta: idDietaFinal.isNotEmpty ? idDietaFinal : null,
+    );
+
+    if (kDebugMode) {
+      debugPrint(
+        "🟦 iniciarCadastroFornecimento OK id=$newId "
+        "idFornecimento=$idFornecimento idCurral=$idCurral trato=$trato data=${_ymd(data)}",
+      );
+    }
+
+    return newId;
   }
 
-  /// ✅ SALVA FINALIZADO: ÚNICO ponto onde insere no CADASTRO_FORNECIMENTO
+  Future<void> cancelarCadastroFornecimentoAberto({
+    required String idCadastro,
+  }) =>
+      _dao.cancelarCadastroAberto(idCadastro);
+
+  /// Finaliza registro aberto (HORA_FIM) ou insere linha completa se id ausente.
   Future<String> salvarCadastroFinalizado({
     required String idFornecimento,
     required String idCurral,
@@ -433,6 +571,7 @@ class FornecimentoRepo {
     required double realizadoKg,
     required String idUsuario,
     int origemMapa = 0,
+    String? idCadastroAberto,
   }) async {
     final user = idUsuario.trim();
     if (user.isEmpty) {
@@ -449,27 +588,34 @@ class FornecimentoRepo {
       );
     }
 
+    final gate = await assertFabricacaoParaFornecimento(data: data);
+    final fab = gate.idFabricacao;
+
     // ✅ ID_DIETA == ID_RACAO
     final idDieta = (car.idDieta ?? idRacaoAtual)?.trim();
-    if (idDieta == null || idDieta.isEmpty) {
-      // não impede salvar, mas é bom avisar
-      if (kDebugMode) {
-        debugPrint("⚠️ salvarCadastroFinalizado: idDieta/idRacaoAtual vazio.");
-      }
+    final idDietaFinal =
+        (idDieta != null && idDieta.isNotEmpty) ? idDieta : gate.idDieta;
+    if (idDietaFinal.isEmpty && kDebugMode) {
+      debugPrint("⚠️ salvarCadastroFinalizado: idDieta/idRacaoAtual vazio.");
     }
 
-    // fabricação: prioriza do carregamento; se não tiver, pega “em aberto”
-    final idFabricacao = (car.idFabricacao ?? "").trim();
-    final fab = idFabricacao.isNotEmpty
-        ? idFabricacao
-        : ((await _dao.getFabricacaoEmAbertoId(data: data)) ?? "").trim();
+    final idAberto = (idCadastroAberto ?? "").trim();
+    if (idAberto.isNotEmpty) {
+      await _dao.finalizarCadastro(
+        id: idAberto,
+        pesoFim: pesoFim,
+        realizado: realizadoKg,
+      );
 
-    if (fab.isEmpty) {
-      // dependendo da sua regra, aqui você pode BLOQUEAR. Por ora, apenas avisa.
       if (kDebugMode) {
         debugPrint(
-            "⚠️ salvarCadastroFinalizado: ID_FABRICACAO vazio (vai salvar mesmo assim).");
+          "✅ FINALIZADO id=$idAberto data=${_ymd(data)} trato=$trato "
+          "realizado=$realizadoKg (HORA_FIM gravada)",
+        );
+        await _dao.debugDumpCadastroFornecimento(limit: 5);
       }
+
+      return idAberto;
     }
 
     final idCadastro = _dao.newId40();
@@ -482,7 +628,7 @@ class FornecimentoRepo {
       data: data,
       trato: trato,
       idUsuario: user,
-      idDieta: (idDieta != null && idDieta.isNotEmpty) ? idDieta : null,
+      idDieta: idDietaFinal.isNotEmpty ? idDietaFinal : null,
       pesoFim: pesoFim,
       realizado: realizadoKg,
       previsto: previstoKg,
@@ -498,6 +644,18 @@ class FornecimentoRepo {
     }
 
     return idCadastro;
+  }
+
+  Future<List<Map<String, Object?>>> listSessoesCurral(CurralPrev c) async {
+    final dataYmd = c.dataIso.length >= 10 ? c.dataIso.substring(0, 10) : c.dataIso;
+    final idRacao = (c.idRacao ?? c.idDieta ?? "").trim();
+    return _dao.listSessoesPorChave(
+      dataYmd: dataYmd,
+      trato: c.trato,
+      idBaia: c.idBaia,
+      idRacao: idRacao,
+      idFornecimento: c.idFornecimento,
+    );
   }
 
   // ===========================
@@ -539,6 +697,8 @@ class FornecimentoRepo {
 
   Future<void> marcarSyncOk(String id) => _dao.marcarSyncOk(id);
 
+  /// Reabilita sync local (FLAG_SYNC=0). Com FornecimentoAcumulativo=1 na API,
+  /// o operador deve zerar REALIZADO no CG Pec antes de sincronizar de novo.
   Future<int> reabilitarSyncFiltrados({
     required DateTime data,
     required List<CurralPrev> itens,
@@ -656,6 +816,175 @@ class FornecimentoRepo {
     return rows.map((m) => CurralPrev.fromMap(m)).toList();
   }
 
+  // ===========================
+  // UI: listRealizadosLocal (CADASTRO_FORNECIMENTO)
+  // ===========================
+  Future<List<FornecimentoLocalRow>> listRealizadosLocal({
+    required DateTime data,
+    int? trato,
+    String? racaoNome,
+    String? linha,
+    String? curralNome,
+    bool? syncOk,
+  }) async {
+    final rows = await _listRealizadosLocalRaw(
+      dataYYYYMMDD: _ymd(data),
+      trato: trato,
+      racaoNome: racaoNome,
+      linha: linha,
+      curralNome: curralNome,
+      syncOk: syncOk,
+    );
+    return rows.map((m) => FornecimentoLocalRow.fromMap(m)).toList();
+  }
+
+  Future<List<Map<String, Object?>>> _listRealizadosLocalRaw({
+    required String dataYYYYMMDD,
+    int? trato,
+    String? racaoNome,
+    String? linha,
+    String? curralNome,
+    bool? syncOk,
+  }) async {
+    final args = <Object?>[dataYYYYMMDD];
+    final where = StringBuffer("""
+      substr(COALESCE(F.${FornTables.cfData}, ''), 1, 10) = ?
+      AND COALESCE(F.${FornTables.cfRealizado}, 0) > 0
+    """);
+
+    if (trato != null) {
+      where.write(" AND F.${FornTables.cfTrato} = ? ");
+      args.add(trato);
+    }
+
+    final curral = (curralNome ?? "").trim();
+    if (curral.isNotEmpty) {
+      where.write(
+        " AND UPPER(COALESCE(B.${FornTables.dbNomeLocal}, '')) LIKE UPPER(?) ",
+      );
+      args.add("%$curral%");
+    }
+
+    final linhaTxt = (linha ?? "").trim();
+    if (linhaTxt.isNotEmpty) {
+      where.write(" AND TRIM(COALESCE(B.${FornTables.dbLinha}, '')) = TRIM(?) ");
+      args.add(linhaTxt);
+    }
+
+    if (syncOk == true) {
+      where.write(" AND COALESCE(F.${FornTables.cfFlagSync}, 0) = 1 ");
+    } else if (syncOk == false) {
+      where.write(" AND COALESCE(F.${FornTables.cfFlagSync}, 0) = 0 ");
+    }
+
+    final hasDieta = await _hasTable("DIETA");
+    if (hasDieta) {
+      final rn = (racaoNome ?? "").trim();
+      if (rn.isNotEmpty) {
+        where.write(" AND UPPER(COALESCE(d.NOME, '')) LIKE UPPER(?) ");
+        args.add("%$rn%");
+      }
+    }
+
+    final joinOn = """
+      TRIM(CAST(B.${FornTables.dbId} AS TEXT)) =
+      TRIM(CAST(F.${FornTables.cfIdBaia} AS TEXT))
+    """;
+
+    const fabJoin = """
+      LEFT JOIN ${FornTables.cadastroFabrica} FAB
+        ON TRIM(CAST(FAB.ID AS TEXT)) = TRIM(CAST(F.${FornTables.cfIdFabricacao} AS TEXT))
+    """;
+
+    const fabCols = """
+        TRIM(COALESCE(F.${FornTables.cfIdFabricacao}, '')) AS id_fabricacao,
+        substr(COALESCE(FAB.DATA_FABRICACAO, ''), 1, 10) AS fab_data_iso,
+        COALESCE(FAB.HORA_INICIO, '') AS fab_hora_inicio,
+        COALESCE(FAB.QTD_PREVISTA, 0) AS fab_qtd_prevista,
+        COALESCE(FAB.QTD_REALIZADA, 0) AS fab_qtd_realizada,
+        COALESCE(FAB.FLAG_SYNC, 0) AS fab_flag_sync,
+        COALESCE(FAB.HANDOFF_ID, '') AS fab_handoff_id""";
+
+    final sql = hasDieta
+        ? """
+      SELECT
+        F.${FornTables.cfId}              AS id,
+        substr(COALESCE(F.${FornTables.cfData}, ''), 1, 10) AS data_iso,
+        COALESCE(F.${FornTables.cfHoraInicio}, '') AS hora_inicio,
+        COALESCE(F.${FornTables.cfHoraFim}, '')    AS hora_fim,
+        F.${FornTables.cfIdBaia}          AS id_baia,
+        COALESCE(B.${FornTables.dbNomeLocal}, '')   AS nome_baia,
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') AS linha,
+        F.${FornTables.cfTrato}           AS trato,
+        COALESCE(F.${FornTables.cfIdDieta}, '')     AS id_dieta,
+        COALESCE(d.NOME, '')              AS racao_nome,
+        COALESCE(F.${FornTables.cfPrevisto}, 0)     AS previsto,
+        COALESCE(F.${FornTables.cfRealizado}, 0)    AS realizado,
+        COALESCE(F.${FornTables.cfFlagSync}, 0)     AS flag_sync,
+        $fabCols,
+        COALESCE(FAB_D.NOME, FAB.ID_DIETA, '') AS fab_racao_nome
+      FROM ${FornTables.cadastroFornecimento} F
+      LEFT JOIN ${FornTables.detalhesBaias} B ON $joinOn
+      $fabJoin
+      LEFT JOIN DIETA FAB_D
+        ON TRIM(CAST(FAB_D.ID AS TEXT)) = TRIM(CAST(FAB.ID_DIETA AS TEXT))
+      LEFT JOIN DIETA d
+        ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(F.${FornTables.cfIdDieta} AS TEXT))
+      WHERE ${where.toString()}
+      ORDER BY
+        F.${FornTables.cfTrato},
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), ''),
+        COALESCE(B.${FornTables.dbOrderTrato}, 0),
+        COALESCE(B.${FornTables.dbNomeLocal}, ''),
+        COALESCE(F.${FornTables.cfHoraInicio}, ''),
+        F.${FornTables.cfId}
+    """
+        : """
+      SELECT
+        F.${FornTables.cfId}              AS id,
+        substr(COALESCE(F.${FornTables.cfData}, ''), 1, 10) AS data_iso,
+        COALESCE(F.${FornTables.cfHoraInicio}, '') AS hora_inicio,
+        COALESCE(F.${FornTables.cfHoraFim}, '')    AS hora_fim,
+        F.${FornTables.cfIdBaia}          AS id_baia,
+        COALESCE(B.${FornTables.dbNomeLocal}, '')   AS nome_baia,
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') AS linha,
+        F.${FornTables.cfTrato}           AS trato,
+        COALESCE(F.${FornTables.cfIdDieta}, '')     AS id_dieta,
+        COALESCE(F.${FornTables.cfIdDieta}, '')     AS racao_nome,
+        COALESCE(F.${FornTables.cfPrevisto}, 0)     AS previsto,
+        COALESCE(F.${FornTables.cfRealizado}, 0)    AS realizado,
+        COALESCE(F.${FornTables.cfFlagSync}, 0)     AS flag_sync,
+        $fabCols,
+        COALESCE(FAB.ID_DIETA, '') AS fab_racao_nome
+      FROM ${FornTables.cadastroFornecimento} F
+      LEFT JOIN ${FornTables.detalhesBaias} B ON $joinOn
+      $fabJoin
+      WHERE ${where.toString()}
+      ORDER BY
+        F.${FornTables.cfTrato},
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), ''),
+        COALESCE(B.${FornTables.dbOrderTrato}, 0),
+        COALESCE(B.${FornTables.dbNomeLocal}, ''),
+        COALESCE(F.${FornTables.cfHoraInicio}, ''),
+        F.${FornTables.cfId}
+    """;
+
+    if (!hasDieta) {
+      final rn = (racaoNome ?? "").trim();
+      if (rn.isNotEmpty) {
+        final filtered = (await _dao.rawQuery(sql, args))
+            .where((m) {
+              final id = (m["id_dieta"] ?? "").toString().trim();
+              return id.toUpperCase().contains(rn.toUpperCase());
+            })
+            .toList();
+        return filtered;
+      }
+    }
+
+    return _dao.rawQuery(sql, args);
+  }
+
   Future<ReplicarPrevisaoResult> replicarPrevisaoDoDiaAnterior({
     required DateTime dataDestino,
     required String idFazenda,
@@ -730,10 +1059,12 @@ class FornecimentoRepo {
 
     final racaoId = (idRacao ?? "").trim();
     if (racaoId.isNotEmpty) {
+      final racaoNorm = _normalizeRacaoId(racaoId);
       where.write(
-        " AND TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT)) = TRIM(CAST(? AS TEXT)) ",
+        " AND REPLACE(UPPER(TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT))), ' ', '') "
+        "= REPLACE(UPPER(TRIM(CAST(? AS TEXT))), ' ', '') ",
       );
-      args.add(racaoId);
+      args.add(racaoNorm);
     }
 
     final curral = (curralNome ?? "").trim();
@@ -744,14 +1075,19 @@ class FornecimentoRepo {
 
     final linhaTxt = (linha ?? "").trim();
     if (linhaTxt.isNotEmpty) {
-      where.write(" AND TRIM(db.${FornTables.dbLinha}) = TRIM(?) ");
+      final linhaExpr = FornTables.sqlLinhaResolvida(
+        "db.${FornTables.dbNomeLocal}",
+        "db.${FornTables.dbLinha}",
+      );
+      where.write(" AND upper(trim($linhaExpr)) = upper(trim(?)) ");
       args.add(linhaTxt);
     }
 
+    final realizadoExpr = FornTables.sqlRealizadoKgLocal("a");
     if (realizadoMaiorZero == true) {
-      where.write(" AND COALESCE(a.${FornTables.pvRealizadoKg},0) > 0 ");
+      where.write(" AND $realizadoExpr > 0 ");
     } else if (realizadoMaiorZero == false) {
-      where.write(" AND COALESCE(a.${FornTables.pvRealizadoKg},0) = 0 ");
+      where.write(" AND $realizadoExpr = 0 ");
     }
 
     final hasDieta = await _hasTable("DIETA");
@@ -769,30 +1105,44 @@ class FornecimentoRepo {
       TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT))
     """;
 
-    String linhaText(String expr) => "COALESCE(CAST($expr AS TEXT), '')";
+    final nomeLocalExpr = """
+      COALESCE(
+        NULLIF(TRIM(db.${FornTables.dbNomeLocal}), ''),
+        NULLIF(TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT)), ''),
+        '(sem nome)'
+      )
+    """;
+
+    final linhaExpr = FornTables.sqlLinhaResolvida(
+      "db.${FornTables.dbNomeLocal}",
+      "db.${FornTables.dbLinha}",
+    );
 
     final sql = hasDieta
         ? '''
       SELECT
         COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
         a.${FornTables.pvIdFornecimento}           AS idFornecimento,
-        ${linhaText("db.${FornTables.dbLinha}")}   AS linha,
+        $linhaExpr                                 AS linha,
         CASE
           WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
             substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
           ELSE
             '1'
         END AS numero,
-        db.${FornTables.dbNomeLocal}              AS nomeLocal,
+        db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
+        $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
-        COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizadoKg,
+        ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
+        ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,
+        substr(COALESCE(a.${FornTables.pvData}, ''), 1, 10) AS dataIso,
         COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,
         a.${FornTables.pvIdBaia}                  AS idBaia,
         a.${FornTables.pvTrato}                   AS trato,
         COALESCE(d.NOME, '')                      AS racaoNome
       FROM ${FornTables.previsao} a
-      JOIN ${FornTables.detalhesBaias} db
+      LEFT JOIN ${FornTables.detalhesBaias} db
         ON $joinOn
       LEFT JOIN DIETA d
         ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT))
@@ -800,37 +1150,40 @@ class FornecimentoRepo {
       ORDER BY
         a.${FornTables.pvTrato},
         COALESCE(db.${FornTables.dbOrderTrato}, 0),
-        ${linhaText("db.${FornTables.dbLinha}")},
-        db.${FornTables.dbNomeLocal}
+        $linhaExpr,
+        $nomeLocalExpr
       '''
         : '''
       SELECT
         COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
         a.${FornTables.pvIdFornecimento}           AS idFornecimento,
-        ${linhaText("db.${FornTables.dbLinha}")}   AS linha,
+        $linhaExpr                                 AS linha,
         CASE
           WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
             substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
           ELSE
             '1'
         END AS numero,
-        db.${FornTables.dbNomeLocal}              AS nomeLocal,
+        db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
+        $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
-        COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizadoKg,
+        ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
+        ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,
+        substr(COALESCE(a.${FornTables.pvData}, ''), 1, 10) AS dataIso,
         COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,
         a.${FornTables.pvIdBaia}                  AS idBaia,
         a.${FornTables.pvTrato}                   AS trato,
         ''                                        AS racaoNome
       FROM ${FornTables.previsao} a
-      JOIN ${FornTables.detalhesBaias} db
+      LEFT JOIN ${FornTables.detalhesBaias} db
         ON $joinOn
       ${where.toString()}
       ORDER BY
         a.${FornTables.pvTrato},
         COALESCE(db.${FornTables.dbOrderTrato}, 0),
-        ${linhaText("db.${FornTables.dbLinha}")},
-        db.${FornTables.dbNomeLocal}
+        $linhaExpr,
+        $nomeLocalExpr
       ''';
 
     if (kDebugMode) {

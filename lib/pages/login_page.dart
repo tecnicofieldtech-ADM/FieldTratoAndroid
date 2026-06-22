@@ -1,10 +1,9 @@
 import "package:flutter/material.dart";
 import "../repo/user_repo.dart";
 import "../widgets/app_logo.dart";
+import "../widgets/app_version_label.dart";
+import "../repo/last_login_repo.dart";
 import "../services/session_service.dart";
-
-import "../db/app_db.dart";
-import "../features/fornecimento/data/fornecimento_tables.dart";
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -15,6 +14,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _userRepo = UserRepo();
+  final _lastLoginRepo = LastLoginRepo();
   final _senhaCtrl = TextEditingController();
 
   List<Map<String, Object?>> _users = [];
@@ -43,15 +43,23 @@ class _LoginPageState extends State<LoginPage> {
 
     if (!mounted) return;
 
+    final lastUserId = await _lastLoginRepo.getLastUserId();
     final firstId =
         filtered.isNotEmpty ? (filtered.first["ID"]?.toString()) : null;
+
+    String? preferredId = lastUserId;
+    if (preferredId != null &&
+        !filtered.any((u) => (u["ID"] ?? "").toString() == preferredId)) {
+      preferredId = null;
+    }
 
     final stillValid = (_selectedUserId != null) &&
         filtered.any((u) => (u["ID"] ?? "").toString() == _selectedUserId);
 
     setState(() {
       _users = filtered;
-      _selectedUserId = stillValid ? _selectedUserId : firstId;
+      _selectedUserId =
+          stillValid ? _selectedUserId : (preferredId ?? firstId);
       _loading = false;
     });
   }
@@ -90,6 +98,7 @@ class _LoginPageState extends State<LoginPage> {
       final nome = (row["NOME"] ?? "").toString();
       final login = (row["LOGIN"] ?? "").toString().trim();
       final senhaDb = (row["SENHA"] ?? "").toString();
+      final cargo = (row["CARGO"] ?? "").toString();
 
       if (id.isEmpty) {
         _toast("Usuário sem ID. Sincronize novamente.");
@@ -106,32 +115,14 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
 
-      // ? sessão global + persistência (sua)
       await SessionService.instance.setLogin(
         userId: id,
         nome: nome,
         login: login,
+        cargo: cargo,
       );
 
-      // =========================================================
-      // ??? GRAVA ULTIMO_LOGIN (pra getUsuarioAtualId funcionar)
-      // =========================================================
-      final db = await AppDb.instance.db;
-
-      // garante só 1 registro
-      await db.delete(FornTables.ultimoLogin);
-
-      // ?? ajuste os nomes das colunas conforme sua tabela ULTIMO_LOGIN
-      await db.insert(
-        FornTables.ultimoLogin,
-        {
-          "ID": id, // ou "ID_USUARIO" dependendo do seu schema
-          "NOME": nome,
-          "LOGIN": login,
-        },
-      );
-
-      debugPrint("? LOGADO userId=${SessionService.instance.userId}");
+      debugPrint("LOGADO userId=${SessionService.instance.userId}");
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, "/menu");
@@ -156,11 +147,6 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-
-    final validUserValue = (_selectedUserId != null &&
-            _users.any((u) => (u["ID"] ?? "").toString() == _selectedUserId))
-        ? _selectedUserId
-        : (_users.isNotEmpty ? (_users.first["ID"] ?? "").toString() : null);
 
     return Scaffold(
       body: Stack(
@@ -194,10 +180,18 @@ class _LoginPageState extends State<LoginPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 const AppLogo(height: 150),
-                                const SizedBox(height: 18),
+                                const SizedBox(height: 8),
+                                const AppVersionLabel(
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
                                 DropdownButtonFormField<String>(
-                                  key: ValueKey(validUserValue),
-                                  initialValue: validUserValue,
+                                  key: ValueKey(_selectedUserId),
+                                  initialValue: _selectedUserId,
                                   items: _users.map((u) {
                                     final id = (u["ID"] ?? "").toString();
                                     final login =

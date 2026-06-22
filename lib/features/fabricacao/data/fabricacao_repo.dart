@@ -3,6 +3,9 @@ import "dart:math";
 import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
+import "../../../utils/ms_percent.dart";
+import "../../fornecimento/data/carregamento_dao.dart";
+import "../../fornecimento/data/fornecimento_tables.dart";
 import "../domain/models.dart";
 import "../domain/fabricacao_flow.dart";
 
@@ -64,6 +67,7 @@ class FabricacaoRepo {
     required String idDieta,
     int? trato,
     DateTime? data,
+    String? idFazenda,
   }) async {
     const t = "PREVISAO";
     if (!await _hasTable(t)) return [];
@@ -71,10 +75,13 @@ class FabricacaoRepo {
     final where = <String>[];
     final args = <Object?>[];
 
-    final dieta = idDieta.trim();
-    if (dieta.isNotEmpty) {
-      where.add("TRIM(COALESCE(p.ID_RACAO,'')) = TRIM(?)");
-      args.add(dieta);
+    final dietaNorm =
+        idDieta.trim().replaceAll(RegExp(r"\s+"), "").toUpperCase();
+    if (dietaNorm.isNotEmpty) {
+      where.add(
+        "REPLACE(UPPER(TRIM(COALESCE(p.ID_RACAO,''))), ' ', '') = ?",
+      );
+      args.add(dietaNorm);
     }
 
     if (trato != null && trato > 0) {
@@ -90,14 +97,31 @@ class FabricacaoRepo {
     where.add("substr(COALESCE(p.DATA,''),1,10) = ?");
     args.add(ymd);
 
+    final faz = (idFazenda ?? "").trim();
+    final joinBaias =
+        faz.isNotEmpty && await _hasTable(FornTables.detalhesBaias);
+    if (joinBaias) {
+      where.add("TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)");
+      args.add(faz);
+    }
+
+    final joinSql = joinBaias
+        ? """
+      LEFT JOIN ${FornTables.detalhesBaias} db
+        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
+    """
+        : "";
+
     final sql = """
       SELECT
         COALESCE(p.ID_RACAO,'') AS id_dieta,
         substr(COALESCE(p.DATA,''),1,10) AS data_ymd,
         COALESCE(p.TRATO,0) AS trato,
         SUM(COALESCE(p.PREVISTO_KG,0)) AS previsto,
-        SUM(COALESCE(p.REALIZADO_KG,0)) AS realizado
+        SUM(${FornTables.sqlRealizadoKgLocal("p")}) AS realizado
       FROM PREVISAO p
+      $joinSql
       ${where.isEmpty ? "" : "WHERE ${where.join(" AND ")}"}
       GROUP BY id_dieta, data_ymd, trato
       ORDER BY data_ymd DESC, trato ASC
@@ -902,8 +926,35 @@ class FabricacaoRepo {
       }
     }
 
-    final msRealizada =
+    var msRealizada =
         (totalRealizado > 0) ? (totalMS / totalRealizado) * 100.0 : 0.0;
+
+    if (!MsPercent.isValid(msRealizada)) {
+      final headDietaCol =
+          await _pickCol(h, ["ID_DIETA", "IDDIETA", "ID_RACAO"]) ?? "ID_DIETA";
+      final headRow = await db.query(
+        h,
+        columns: [headDietaCol],
+        where: "ID = ?",
+        whereArgs: [idFabricacao],
+        limit: 1,
+      );
+      final idDieta = headRow.isNotEmpty
+          ? (headRow.first[headDietaCol] ?? "").toString().trim()
+          : "";
+      if (idDieta.isNotEmpty) {
+        final dietaRows = await db.rawQuery(
+          "SELECT COALESCE(MS, 0) AS ms FROM DIETA WHERE TRIM(ID) = TRIM(?) LIMIT 1",
+          [idDieta],
+        );
+        if (dietaRows.isNotEmpty) {
+          msRealizada = MsPercent.resolve(
+            msFabricacao: 0,
+            msDieta: (dietaRows.first["ms"] as num?)?.toDouble(),
+          );
+        }
+      }
+    }
 
     final headRealCol = await _pickCol(
             h, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG", "REALIZADO"]) ??
@@ -912,7 +963,9 @@ class FabricacaoRepo {
         await _pickCol(h, ["MS_REALIZADA", "MSREALIZADA", "MS_REAL"]);
 
     final values = <String, Object?>{headRealCol: totalRealizado};
-    if (headMsCol != null) values[headMsCol] = msRealizada;
+    if (headMsCol != null && MsPercent.isValid(msRealizada)) {
+      values[headMsCol] = msRealizada;
+    }
 
     await db.update(
       h,
@@ -1000,6 +1053,62 @@ class FabricacaoRepo {
     await db.update(h, values, where: "ID = ?", whereArgs: [idFabricacao]);
   }
 
+  /// Distribuidor: grava peso lido na balança do vagão em [CARREGAMENTO].
+  Future<void> registrarCarregamentoDistribuidorVagao({
+    required String idFabricacao,
+    required double pesoCarregadoKg,
+    required String idVagao,
+    required bool concluirFabricacaoNoVagao,
+  }) async {
+    final vag = idVagao.trim();
+    if (vag.isEmpty) {
+      throw Exception(
+        "Vagão não configurado. Selecione um vagão nas configurações.",
+      );
+    }
+    if (pesoCarregadoKg <= 0) {
+      throw Exception("Informe um peso carregado maior que zero.");
+    }
+
+    final dao = CarregamentoDao();
+    final n = await dao.updatePesoCarregadoAbertoPorFabricacao(
+      idFabricacao: idFabricacao,
+      pesoCarregado: pesoCarregadoKg,
+      idVagao: vag,
+    );
+    if (n <= 0) {
+      throw Exception(
+        "Não há carregamento aberto para esta fabricação. "
+        "Receba o lote do estacionário em Carregamento primeiro.",
+      );
+    }
+
+    await _marcarHeaderIntColumn(idFabricacao, "CARREGADA", 1);
+
+    if (concluirFabricacaoNoVagao) {
+      await marcarFinalizadaComOrigem(idFabricacao, "CAMINHAO");
+      await _marcarHeaderIntColumn(idFabricacao, "FINALIZADA", 1);
+    }
+  }
+
+  Future<void> _marcarHeaderIntColumn(
+    String idFab,
+    String colName,
+    int value,
+  ) async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    if (!await _hasTable(h)) return;
+    final col = await _pickCol(h, [colName]);
+    if (col == null) return;
+    final db = await _db;
+    await db.update(
+      h,
+      {col: value},
+      where: "ID = ?",
+      whereArgs: [idFab],
+    );
+  }
+
   Future<bool> isPendenteCaminhao(String idFabricacao) async {
     const h = "CADASTRO_FABRICA_RACAO";
     if (!await _hasTable(h)) return false;
@@ -1029,6 +1138,55 @@ class FabricacaoRepo {
   }
 
   // =========================================================
+  // ✅ CRIA / REUTILIZA CARREGAMENTO PARA UMA FABRICAÇÃO
+  // =========================================================
+  Future<String?> criarCarregamentoParaFabricacao({
+    required String idFabricacao,
+    String? idVagaoOverride,
+    int tipoTrabalho = 0,
+  }) async {
+    final id = idFabricacao.trim();
+    if (id.isEmpty) {
+      throw Exception("ID da fabricação inválido.");
+    }
+
+    final h = await getFabricacaoById(id);
+    if (h == null) {
+      throw Exception("Fabricação não encontrada.");
+    }
+
+    var idVagao = (idVagaoOverride ?? "").trim();
+    if (idVagao.isEmpty) {
+      idVagao = await getIdVagaoByFabricacaoId(id);
+    }
+    if (idVagao.isEmpty) {
+      throw Exception(
+        "Vagão não informado. Selecione um vagão nas configurações ou na fabricação.",
+      );
+    }
+
+    var totalReal = h.qtdRealizada;
+    if (totalReal <= 0) {
+      totalReal = await getTotalRealizadoFabricacao(id);
+    }
+    if (totalReal <= 0) {
+      throw Exception(
+        "Fabricação sem peso realizado. Não é possível gerar carregamento.",
+      );
+    }
+
+    final pesoCarregado = (tipoTrabalho == 0) ? totalReal : 0.0;
+
+    return ensureCarregamentoAberto(
+      idFabricacao: id,
+      idDieta: h.idDieta,
+      pesoFabricado: totalReal,
+      pesoCarregado: pesoCarregado,
+      idVagao: idVagao,
+    );
+  }
+
+  // =========================================================
   // ✅ BUSCA ID_VAGAO GRAVADO NA FABRICAÇÃO (HEADER)
   // =========================================================
   Future<String> getIdVagaoByFabricacaoId(String idFabricacao) async {
@@ -1046,5 +1204,69 @@ class FabricacaoRepo {
 
     if (rows.isEmpty) return "";
     return (rows.first["v"] ?? "").toString().trim();
+  }
+
+  /// Exportação completa para auditoria (POST /Post/FabricacaoAudit).
+  Future<List<Map<String, Object?>>> listAllForAudit() async {
+    const h = "CADASTRO_FABRICA_RACAO";
+    final db = await _db;
+
+    final hasDieta = await _hasTable("DIETA");
+    if (hasDieta) {
+      return db.rawQuery("""
+        SELECT
+          f.ID AS id,
+          f.ID_DIETA AS id_dieta,
+          COALESCE(d.NOME, f.ID_DIETA, '') AS racao_nome,
+          f.DATA_FABRICACAO AS data_fabricacao,
+          f.HORA_INICIO AS hora_inicio,
+          f.HORA_FIM AS hora_fim,
+          f.TRATO AS trato,
+          COALESCE(f.QTD_PREVISTA, 0) AS qtd_prevista,
+          COALESCE(f.QTD_REALIZADA, 0) AS qtd_realizada,
+          COALESCE(f.FINALIZADA, 0) AS finalizada,
+          COALESCE(f.FLAG_SYNC, 0) AS flag_sync,
+          COALESCE(f.FAB_STATUS, 0) AS fab_status,
+          COALESCE(f.HANDOFF_ID, '') AS handoff_id,
+          COALESCE(f.ORIGIN_DEVICE, '') AS origin_device,
+          COALESCE(f.ID_FAZENDA, '') AS id_fazenda,
+          COALESCE(f.ID_USUARIO, '') AS id_usuario,
+          COALESCE(f.ID_OPERADOR, '') AS id_operador,
+          COALESCE(f.MS_PREVISTA, 0) AS ms_prevista,
+          COALESCE(f.MS_REALIZADA, 0) AS ms_realizada,
+          COALESCE(f.CARREGADA, 0) AS carregada,
+          COALESCE(f.EXPORTADO_EM, '') AS exportado_em
+        FROM $h f
+        LEFT JOIN DIETA d ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(f.ID_DIETA AS TEXT))
+        ORDER BY f.DATA_FABRICACAO DESC, f.HORA_INICIO DESC, f.ID DESC
+      """);
+    }
+
+    return db.rawQuery("""
+      SELECT
+        f.ID AS id,
+        f.ID_DIETA AS id_dieta,
+        f.ID_DIETA AS racao_nome,
+        f.DATA_FABRICACAO AS data_fabricacao,
+        f.HORA_INICIO AS hora_inicio,
+        f.HORA_FIM AS hora_fim,
+        f.TRATO AS trato,
+        COALESCE(f.QTD_PREVISTA, 0) AS qtd_prevista,
+        COALESCE(f.QTD_REALIZADA, 0) AS qtd_realizada,
+        COALESCE(f.FINALIZADA, 0) AS finalizada,
+        COALESCE(f.FLAG_SYNC, 0) AS flag_sync,
+        COALESCE(f.FAB_STATUS, 0) AS fab_status,
+        COALESCE(f.HANDOFF_ID, '') AS handoff_id,
+        COALESCE(f.ORIGIN_DEVICE, '') AS origin_device,
+        COALESCE(f.ID_FAZENDA, '') AS id_fazenda,
+        COALESCE(f.ID_USUARIO, '') AS id_usuario,
+        COALESCE(f.ID_OPERADOR, '') AS id_operador,
+        COALESCE(f.MS_PREVISTA, 0) AS ms_prevista,
+        COALESCE(f.MS_REALIZADA, 0) AS ms_realizada,
+        COALESCE(f.CARREGADA, 0) AS carregada,
+        COALESCE(f.EXPORTADO_EM, '') AS exportado_em
+      FROM $h f
+      ORDER BY f.DATA_FABRICACAO DESC, f.HORA_INICIO DESC, f.ID DESC
+    """);
   }
 }

@@ -1,3 +1,4 @@
+import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../repo/config_repo.dart";
 import "api_service.dart";
@@ -44,6 +45,7 @@ class SyncOrchestrator {
     final outbox = OutboxSync(api: api);
 
     final today = _todayYmd();
+    final pendingDates = await _pendingFornecimentoDates(today);
 
     return [
       SyncStep(
@@ -85,6 +87,24 @@ class SyncOrchestrator {
         run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda),
       ),
       SyncStep(
+        title: "Baixando Previsao de Trato (pendentes)",
+        run: () async {
+          if (pendingDates.isEmpty) {
+            log("Nenhuma data pendente de fornecimento para baixar previsao.");
+            return;
+          }
+          for (final d in pendingDates) {
+            log("Baixando previsao do dia $d (fornecimento pendente)...");
+            await bootstrap.baixarPrevisaoTrato(
+              cfg,
+              idFazenda,
+              d,
+              log: log,
+            );
+          }
+        },
+      ),
+      SyncStep(
         title: "Baixando Previsao de Trato (hoje)",
         run: () => bootstrap.baixarPrevisaoTrato(
           cfg,
@@ -94,6 +114,27 @@ class SyncOrchestrator {
         ),
       ),
     ];
+  }
+
+  /// Datas com fornecimento local ainda nao sincronizado (exceto hoje).
+  static Future<List<String>> _pendingFornecimentoDates(String todayYmd) async {
+    final db = await AppDb.instance.db;
+    final rows = await db.rawQuery("""
+      SELECT DISTINCT substr(COALESCE(DATA, ''), 1, 10) AS d
+      FROM CADASTRO_FORNECIMENTO
+      WHERE COALESCE(REALIZADO, 0) > 0
+        AND IFNULL(FLAG_SYNC, 0) = 0
+        AND length(substr(COALESCE(DATA, ''), 1, 10)) = 10
+      ORDER BY d
+    """);
+
+    final out = <String>[];
+    for (final r in rows) {
+      final d = (r["d"] ?? "").toString().trim();
+      if (d.isEmpty || d == todayYmd) continue;
+      out.add(d);
+    }
+    return out;
   }
 
   static String _todayYmd() {

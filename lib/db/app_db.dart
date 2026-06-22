@@ -18,7 +18,7 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 9, // flow estacionario/caminhao + handoff
+      version: 10, // MODO_HIBRIDO (estacionário + distribuidor híbrido)
       onConfigure: (db) async {
         await db.execute("PRAGMA foreign_keys = ON;");
       },
@@ -73,13 +73,17 @@ class AppDb {
       TEMPO_MISTURA INTEGER,
       TOLERANCIA_CARREGAMENTO NUMERIC DEFAULT 0,
       FLOW_MODE INTEGER DEFAULT 0,
+      MODO_HIBRIDO INTEGER DEFAULT 0,
       STATION_WIFI_SSID TEXT,
       STATION_WIFI_PASSWORD TEXT,
       STATION_BASE_URL TEXT,
       STATION_BASE_URL_LEGACY TEXT,
 
       -- ✅ NOVO: tolerância em KG (ConfigRepo já garante, mas aqui nasce certo)
-      TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0
+      TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0,
+
+      -- Mínimo (kg) para gravar fornecimento no tablet (0 = aceita qualquer > 0)
+      PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50
     );
     """);
 
@@ -435,6 +439,7 @@ class AppDb {
         "TOLERANCIA_CARREGAMENTO": 0,
         "TOLERANCIA_CARREGAMENTO_KG": 0,
         "FLOW_MODE": 0,
+        "MODO_HIBRIDO": 0,
         "STATION_WIFI_SSID": null,
         "STATION_WIFI_PASSWORD": null,
         "STATION_BASE_URL": null,
@@ -647,6 +652,10 @@ class AppDb {
       ON CADASTRO_FABRICA_RACAO (HANDOFF_ID)
       WHERE HANDOFF_ID IS NOT NULL AND TRIM(HANDOFF_ID) <> '';
       """);
+    }
+
+    if (oldV < 10) {
+      await _addColumnIgnore(db, "CONFIG", "MODO_HIBRIDO INTEGER DEFAULT 0");
     }
   }
 }

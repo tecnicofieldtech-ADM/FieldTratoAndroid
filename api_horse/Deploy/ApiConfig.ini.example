@@ -1,0 +1,36 @@
+[API]
+ActiveClient=cgpec
+; Porta HTTP da API Horse (EXE e servico Windows usam o mesmo ApiConfig.ini).
+Port=3001
+; 1 = soma realizado por fabricação no POST /Post/Fornecimento (next-api). 0 = substitui (último vence).
+FornecimentoAcumulativo=1
+; Mínimo (kg) para gravar no CG Pec via POST /Post/Fornecimento apenas.
+; Abaixo disso a API confirma sync sem atualizar o banco. Nao se aplica a /Post/Fabricacao. 0 = desliga.
+PontoCorteFornecimentoKg=50
+
+[CGPEC]
+Server=127.0.0.1
+User=SYSDBA
+Password=masterkey
+Port=3055
+DB=C:\caminho\para\CGP_4.FDB
+
+[FIELDPEC]
+Server=127.0.0.1
+User=SYSDBA
+Password=masterkey
+Port=3050
+DB=C:\caminho\para\FIELDPEC.FDB
+
+[POSTGRES]
+Host=127.0.0.1
+Port=5432
+Database=rfeed_web
+User=postgres
+Password=postgres
+Enabled=1
+
+[MIRROR]
+Enabled=1
+NextApiBase=http://127.0.0.1:3000
+Url=http://127.0.0.1:3000/api/mirror/event

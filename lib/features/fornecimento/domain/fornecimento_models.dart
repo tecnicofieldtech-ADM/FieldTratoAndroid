@@ -59,6 +59,46 @@ bool _toBool(dynamic v) {
 
 double _clamp0(double v) => v < 0 ? 0 : v;
 
+/// Máximo de caracteres da linha (regra legado CG Pec / Delphi).
+const int kLinhaCurralMaxLen = FornTables.linhaCurralMaxLen;
+
+String _limitLinha(String raw) {
+  final t = raw.trim().toUpperCase();
+  if (t.isEmpty) return "";
+  return t.length <= kLinhaCurralMaxLen
+      ? t
+      : t.substring(0, kLinhaCurralMaxLen);
+}
+
+String _prefixoAntesSeparador(String compact, String sep) {
+  final idx = compact.indexOf(sep);
+  if (idx <= 0) return "";
+  return compact.substring(0, idx);
+}
+
+/// Deriva linha do nome: até 3 letras antes de '-' ou '_'; senão, 3 primeiras.
+String linhaFromNomeLocal(String? nomeLocal) {
+  final s = (nomeLocal ?? "").trim();
+  if (s.isEmpty) return "";
+
+  final compact = s.replaceAll(" ", "").toUpperCase();
+  var prefix = _prefixoAntesSeparador(compact, "-");
+  if (prefix.isEmpty) prefix = _prefixoAntesSeparador(compact, "_");
+  if (prefix.isEmpty) prefix = compact;
+
+  return _limitLinha(prefix);
+}
+
+/// Linha do curral: LINHA do banco (se curta) ou derivada do NOME_LOCAL.
+String resolveLinhaCurral({String? linhaDb, String? nomeLocal}) {
+  final raw = (linhaDb ?? "").trim();
+  if (raw.isNotEmpty && raw.toLowerCase() != "null") {
+    final up = raw.toUpperCase();
+    if (up.length <= kLinhaCurralMaxLen) return up;
+  }
+  return linhaFromNomeLocal(nomeLocal);
+}
+
 // =========================================================
 // CURRAL PREV (card do curral / previsto do trato)
 // =========================================================
@@ -81,6 +121,7 @@ class CurralPrev {
     this.racao,
     this.idFornecimento,
     this.idDieta,
+    this.qtdSessoes = 0,
   });
 
   final String idBaia;
@@ -114,6 +155,9 @@ class CurralPrev {
 
   final String? idDieta;
 
+  /// Quantidade de linhas em CADASTRO_FORNECIMENTO (realizado > 0) na chave.
+  final int qtdSessoes;
+
   CurralPrev copyWith({
     double? realizadoKg,
     double? faltaKg,
@@ -125,6 +169,7 @@ class CurralPrev {
     String? linha,
     int? ordemFornecimento,
     String? numero,
+    int? qtdSessoes,
   }) {
     return CurralPrev(
       idBaia: idBaia,
@@ -144,6 +189,7 @@ class CurralPrev {
       racao: racao ?? this.racao,
       idFornecimento: idFornecimento ?? this.idFornecimento,
       idDieta: idDieta,
+      qtdSessoes: qtdSessoes ?? this.qtdSessoes,
     );
   }
 
@@ -227,6 +273,7 @@ class CurralPrev {
       idFornecimento:
           snAny(["idFornecimento", "id_fornecimento", "ID_FORNECIMENTO"]),
       idDieta: snAny(["idDieta", "id_dieta", "ID_DIETA"]),
+      qtdSessoes: iAny(["qtdSessoes", "qtd_sessoes", "QTD_SESSOES"], def: 0),
     );
   }
 }
@@ -374,6 +421,173 @@ class FornecimentoRow {
         FornTables.cfPrevisto: previstoKg,
         FornTables.cfRealizado: realizadoKg,
       };
+}
+
+// =========================================================
+// FABRICAÇÃO VINCULADA AO FORNECIMENTO (gate operacional)
+// =========================================================
+class FabricacaoFornecimentoGate {
+  FabricacaoFornecimentoGate({
+    required this.idFabricacao,
+    required this.idDieta,
+    required this.qtdPrevista,
+    required this.qtdRealizada,
+    required this.syncOk,
+    this.dataFabricacao,
+    this.horaInicio,
+    this.racaoNome,
+    this.handoffId,
+    this.originDevice,
+  });
+
+  final String idFabricacao;
+  final String idDieta;
+  final double qtdPrevista;
+  final double qtdRealizada;
+  final bool syncOk;
+  final String? dataFabricacao;
+  final String? horaInicio;
+  final String? racaoNome;
+  final String? handoffId;
+  final String? originDevice;
+
+  factory FabricacaoFornecimentoGate.fromMap(Map<String, Object?> m) {
+    return FabricacaoFornecimentoGate(
+      idFabricacao: _s(m["id"]),
+      idDieta: _s(m["id_dieta"]),
+      qtdPrevista: _toDouble(m["qtd_prevista"]),
+      qtdRealizada: _toDouble(m["qtd_realizada"]),
+      syncOk: _toInt(m["flag_sync"]) == 1,
+      dataFabricacao: _s(m["data_fabricacao"]),
+      horaInicio: _s(m["hora_inicio"]),
+      racaoNome: _s(m["racao_nome"]),
+      handoffId: _s(m["handoff_id"]),
+      originDevice: _s(m["origin_device"]),
+    );
+  }
+
+  String get racaoDisplay {
+    final nome = (racaoNome ?? "").trim();
+    if (nome.isNotEmpty) return nome;
+    final id = idDieta.trim();
+    return id.isEmpty ? "-" : id;
+  }
+}
+
+// =========================================================
+// LINHA LOCAL (CADASTRO_FORNECIMENTO no tablet)
+// =========================================================
+class FornecimentoLocalRow {
+  FornecimentoLocalRow({
+    required this.id,
+    required this.dataIso,
+    required this.horaInicio,
+    required this.horaFim,
+    required this.idBaia,
+    this.nomeBaia,
+    this.linha,
+    required this.trato,
+    required this.idDieta,
+    this.racaoNome,
+    required this.previstoKg,
+    required this.realizadoKg,
+    required this.syncOk,
+    this.idFabricacao,
+    this.fabDataIso,
+    this.fabHoraInicio,
+    this.fabRacaoNome,
+    this.fabKgPrevisto,
+    this.fabKgRealizado,
+    this.fabSyncOk,
+    this.fabHandoffId,
+  });
+
+  final String id;
+  final String dataIso;
+  final String horaInicio;
+  final String horaFim;
+  final String idBaia;
+  final String? nomeBaia;
+  final String? linha;
+  final int trato;
+  final String idDieta;
+  final String? racaoNome;
+  final double previstoKg;
+  final double realizadoKg;
+  final bool syncOk;
+  final String? idFabricacao;
+  final String? fabDataIso;
+  final String? fabHoraInicio;
+  final String? fabRacaoNome;
+  final double? fabKgPrevisto;
+  final double? fabKgRealizado;
+  final bool? fabSyncOk;
+  final String? fabHandoffId;
+
+  bool get fabSyncPendente => fabSyncOk == false;
+  bool get bloqueadoPorFab =>
+      !syncOk && (fabSyncOk == false || (idFabricacao ?? "").trim().isEmpty);
+
+  String get racaoDisplay {
+    final nome = (racaoNome ?? "").trim();
+    if (nome.isNotEmpty) return nome;
+    final id = idDieta.trim();
+    return id.isEmpty ? "-" : id;
+  }
+
+  String get baiaDisplay {
+    final nome = (nomeBaia ?? "").trim();
+    if (nome.isNotEmpty) return nome;
+    final id = idBaia.trim();
+    return id.isEmpty ? "-" : id;
+  }
+
+  static FornecimentoLocalRow fromMap(Map<String, Object?> m) {
+    Object? pick(List<String> keys) {
+      for (final k in keys) {
+        if (m.containsKey(k)) return m[k];
+      }
+      return null;
+    }
+
+    String sKeys(List<String> keys) => _s(pick(keys));
+    int iKeys(List<String> keys) => _toInt(pick(keys));
+    double dKeys(List<String> keys) => _toDouble(pick(keys));
+
+    final flagSync = iKeys(["flag_sync", "FLAG_SYNC", "flagSync"]);
+    final dataRaw = sKeys(["dataIso", "data_iso", "DATA", "data"]);
+    final dataIso = dataRaw.length >= 10 ? dataRaw.substring(0, 10) : dataRaw;
+
+    final fabFlag = iKeys(["fab_flag_sync", "FAB_FLAG_SYNC"]);
+    final fabPrev = pick(["fab_qtd_prevista", "fab_kg_previsto"]);
+    final fabReal = pick(["fab_qtd_realizada", "fab_kg_realizado"]);
+
+    return FornecimentoLocalRow(
+      id: sKeys(["id", "ID"]),
+      dataIso: dataIso,
+      horaInicio: sKeys(["horaInicio", "hora_inicio", "HORA_INICIO"]),
+      horaFim: sKeys(["horaFim", "hora_fim", "HORA_FIM"]),
+      idBaia: sKeys(["idBaia", "id_baia", "ID_BAIA"]),
+      nomeBaia: sKeys(["nomeBaia", "nome_baia", "nome_local", "NOME_LOCAL"]),
+      linha: sKeys(["linha", "LINHA"]),
+      trato: iKeys(["trato", "TRATO"]),
+      idDieta: sKeys(["idDieta", "id_dieta", "ID_DIETA"]),
+      racaoNome: sKeys(["racaoNome", "racao_nome", "NOME_RACAO"]),
+      previstoKg: dKeys(["previstoKg", "previsto", "PREVISTO"]),
+      realizadoKg: dKeys(["realizadoKg", "realizado", "REALIZADO"]),
+      syncOk: flagSync == 1,
+      idFabricacao: sKeys(["idFabricacao", "id_fabricacao", "ID_FABRICACAO"]),
+      fabDataIso: sKeys(["fab_data_iso", "fab_data", "FAB_DATA"]),
+      fabHoraInicio: sKeys(["fab_hora_inicio", "FAB_HORA_INICIO"]),
+      fabRacaoNome: sKeys(["fab_racao_nome", "FAB_RACAO_NOME"]),
+      fabKgPrevisto: fabPrev == null ? null : _toDouble(fabPrev),
+      fabKgRealizado: fabReal == null ? null : _toDouble(fabReal),
+      fabSyncOk: fabFlag == 0 && pick(["fab_flag_sync"]) == null
+          ? null
+          : fabFlag == 1,
+      fabHandoffId: sKeys(["fab_handoff_id", "FAB_HANDOFF_ID"]),
+    );
+  }
 }
 
 // =========================================================

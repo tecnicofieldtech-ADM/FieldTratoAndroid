@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RFeed API Horse — Bancos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-full bg-gradient-to-b from-slate-50 via-teal-50/30 to-slate-50 text-slate-900">
+  <div class="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
+    <header class="mb-8 overflow-hidden rounded-2xl bg-slate-900 text-white shadow-lg">
+      <div class="relative px-6 py-8 sm:px-10 sm:py-10">
+        <p class="text-xs font-semibold uppercase tracking-widest text-teal-300">API Horse · RFeed</p>
+        <h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Bancos de dados</h1>
+        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300">
+          Firebird (<strong>CGPec</strong> ou <strong>FieldPec</strong>) e PostgreSQL (armazém BI / importação por planilha) são gravados em
+          <code class="rounded bg-slate-800 px-1">ApiConfig.ini</code> na pasta do executável.
+          O espelho BI envia eventos para a next-api, que grava nas tabelas <code class="rounded bg-slate-800 px-1">imp_*</code>.
+        </p>
+      </div>
+    </header>
+
+    <nav class="mb-6 flex flex-wrap gap-1 rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200">
+      <a href="/config" data-admin-nav="config"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Configuração</a>
+      <a href="/dashboard/fabricacao" data-admin-nav="dashfab"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
+      <a href="/monitor" data-admin-nav="monitor"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
+      <a href="/health" data-admin-nav="health"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
+    </nav>
+
+    <div id="banner" class="mb-6 hidden rounded-xl border px-4 py-3 text-sm"></div>
+
+    <div id="saveConfirm" class="mb-6 hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-5 shadow-sm">
+      <div class="flex items-start gap-3">
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-lg text-white" aria-hidden="true">✓</div>
+        <div class="min-w-0 flex-1">
+          <h3 class="text-base font-semibold text-emerald-950">Configuração salva</h3>
+          <p class="mt-1 text-sm text-emerald-900">
+            O arquivo <code class="rounded bg-white/80 px-1.5 py-0.5 font-mono text-xs">ApiConfig.ini</code> foi atualizado.
+          </p>
+          <pre id="saveConfirmIni" class="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white p-3 font-mono text-xs text-slate-800"></pre>
+          <p id="saveConfirmSync" class="mt-2 text-xs text-emerald-800"></p>
+          <p id="saveConfirmTime" class="mt-1 text-xs text-emerald-800"></p>
+        </div>
+        <button type="button" id="btnDismissConfirm" class="shrink-0 rounded-lg px-2 py-1 text-sm text-emerald-800 hover:bg-emerald-100" title="Fechar">✕</button>
+      </div>
+    </div>
+
+    <section class="mb-8 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm sm:p-8">
+      <h2 class="text-lg font-semibold">Cliente Firebird ativo</h2>
+      <p class="mt-1 text-sm text-slate-600">Escolha qual ERP Firebird a API Horse expõe nas rotas REST. <strong>Reinicie a API Horse</strong> após trocar o cliente.</p>
+      <div class="mt-4">
+        <label class="text-xs font-semibold uppercase text-slate-500">Cliente ativo</label>
+        <select id="active-client" class="mt-1.5 w-full max-w-md rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          <option value="cgpec">CGPec (Firebird)</option>
+          <option value="fieldpec">FieldPec (Firebird)</option>
+        </select>
+      </div>
+      <p id="activeClientNote" class="mt-2 text-xs text-amber-700"></p>
+    </section>
+
+    <section class="mb-8 rounded-2xl border border-amber-200/80 bg-white p-6 shadow-sm sm:p-8">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-900">Fornecimento — realizado acumulativo</h2>
+          <p class="mt-1 max-w-2xl text-sm text-slate-600">
+            Quando o espelho BI aponta para a <strong>next-api</strong>, esta opção controla o
+            <code class="rounded bg-slate-100 px-1 text-xs">POST /Post/Fornecimento</code>.
+            Desmarque para substituir o kg realizado (último vence) em vez de somar fabricações no mesmo trato.
+          </p>
+        </div>
+        <span id="fornAcumBadge" class="inline-flex shrink-0 rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800 ring-1 ring-teal-100">
+          Modo: acumulativo
+        </span>
+      </div>
+      <div class="mt-5 flex flex-col gap-4 rounded-xl border border-slate-100 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <label for="forn-acumulativo" class="cursor-pointer text-sm text-slate-700">
+          <span class="font-semibold text-slate-900">Somar realizado na sincronização</span>
+          <span id="fornAcumHint" class="mt-1 block text-slate-600">
+            Ativo — vários caminhões/fabricações somam no mesmo trato (data + ração + curral).
+          </span>
+        </label>
+        <input id="forn-acumulativo" type="checkbox" checked
+          class="h-5 w-5 shrink-0 rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
+      </div>
+      <p class="mt-3 text-xs text-slate-500">
+        Salve com o botão <strong>Salvar configuração</strong> abaixo. A next-api precisa estar em execução para receber a sincronização.
+      </p>
+    </section>
+
+    <section id="section-cgpec" class="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold">CGPec — Firebird</h2>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2">
+          <label class="text-xs font-semibold uppercase text-slate-500">Host</label>
+          <input id="cg-host" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Porta Firebird</label>
+          <input id="cg-port" type="number" min="1" max="65535" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Database (caminho .FDB)</label>
+          <input id="cg-database" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Usuário</label>
+          <input id="cg-user" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="off" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Senha</label>
+          <input id="cg-password" type="password" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="new-password" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Role (opcional)</label>
+          <input id="cg-role" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div id="testCgMsg" class="mt-4 hidden rounded-lg border px-3 py-2 text-sm"></div>
+      <button id="btnTestCg" type="button" class="mt-4 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-50">
+        Testar Firebird (CGPec)
+      </button>
+    </section>
+
+    <section id="section-fieldpec" class="mt-8 rounded-2xl border border-amber-200/80 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold text-amber-950">FieldPec — Firebird</h2>
+      <p class="mt-1 text-sm text-slate-600">Conexão alternativa Firebird (seção <code class="text-xs">[FIELDPEC]</code> no ini). Usada quando o cliente ativo é FieldPec.</p>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2">
+          <label class="text-xs font-semibold uppercase text-slate-500">Host</label>
+          <input id="fp-host" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Porta Firebird</label>
+          <input id="fp-port" type="number" min="1" max="65535" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Database (caminho .FDB)</label>
+          <input id="fp-database" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Usuário</label>
+          <input id="fp-user" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="off" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Senha</label>
+          <input id="fp-password" type="password" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="new-password" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Role (opcional)</label>
+          <input id="fp-role" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div id="testFpMsg" class="mt-4 hidden rounded-lg border px-3 py-2 text-sm"></div>
+      <button id="btnTestFp" type="button" class="mt-4 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-950 hover:bg-amber-100">
+        Testar Firebird (FieldPec)
+      </button>
+    </section>
+
+    <section class="mt-8 rounded-2xl border border-violet-200/80 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold text-violet-950">Importação de planilha — PostgreSQL</h2>
+      <p class="mt-1 text-sm text-slate-600">
+        Banco do armazém BI (<code class="text-xs">imp_*</code>). Usado pela next-api no espelho e na importação de planilhas.
+      </p>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2 flex items-center gap-2">
+          <input id="pg-enabled" type="checkbox" class="h-4 w-4 rounded border-slate-300" checked />
+          <label for="pg-enabled" class="text-sm text-slate-700">PostgreSQL ativo (espelho BI)</label>
+        </div>
+        <div class="sm:col-span-2">
+          <label class="text-xs font-semibold uppercase text-slate-500">Host</label>
+          <input id="pg-host" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="127.0.0.1" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Porta</label>
+          <input id="pg-port" type="number" min="1" max="65535" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Database</label>
+          <input id="pg-database" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="rfeed_web" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Usuário</label>
+          <input id="pg-user" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="off" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Senha</label>
+          <input id="pg-password" type="password" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="new-password" />
+        </div>
+      </div>
+      <div id="testPgMsg" class="mt-4 hidden rounded-lg border px-3 py-2 text-sm"></div>
+      <div class="mt-4 flex flex-col gap-3 sm:flex-row">
+        <button id="btnTestPg" type="button" class="flex-1 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-900 hover:bg-violet-100">
+          Testar PostgreSQL
+        </button>
+        <button id="btnSavePg" type="button" class="flex-1 rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800">
+          Salvar PostgreSQL
+        </button>
+      </div>
+      <p class="mt-2 text-xs text-slate-500">Teste direto no banco (psql). Salvar grava a seção [POSTGRES] no ApiConfig.ini.</p>
+    </section>
+
+    <section class="mt-8 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold">Espelho BI (next-api)</h2>
+      <p class="mt-1 text-sm text-slate-600">Eventos GET/POST da API Horse são enviados para a next-api, que grava no PostgreSQL.</p>
+      <div class="mt-4 flex items-center gap-2">
+        <input id="mirror-enabled" type="checkbox" class="h-4 w-4 rounded border-slate-300" />
+        <label for="mirror-enabled" class="text-sm text-slate-700">Espelho ativo</label>
+      </div>
+      <div class="mt-4">
+        <label class="text-xs font-semibold uppercase text-slate-500">URL base da next-api</label>
+        <input id="mirror-next-api-base" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono text-xs" placeholder="http://127.0.0.1:3000" />
+        <p class="mt-1 text-xs text-slate-500">A API Horse usa a porta <strong>3001</strong>. A next-api deve rodar em <strong>outra porta</strong> (ex.: 3000).</p>
+      </div>
+      <div class="mt-4">
+        <label class="text-xs font-semibold uppercase text-slate-500">URL do espelho</label>
+        <input id="mirror-url" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono text-xs" placeholder="http://127.0.0.1:3000/api/mirror/event" />
+      </div>
+    </section>
+
+    <section id="monitor" class="mt-8 rounded-2xl border border-teal-200/80 bg-white p-6 shadow-sm sm:p-8">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-900">Monitor ao vivo — tablet</h2>
+          <p class="mt-1 text-sm text-slate-600">
+            Chamadas recebidas nesta API (sync, fornecimento, fabricação…). Atualiza a cada <strong>2 segundos</strong>.
+          </p>
+        </div>
+        <a href="/monitor" class="shrink-0 text-sm font-semibold text-teal-700 hover:underline">Tela cheia →</a>
+      </div>
+      <div class="mt-4 flex flex-wrap items-center gap-3">
+        <label class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-sm">
+          <input type="checkbox" id="mon-onlyErrors" />
+          Apenas erros
+        </label>
+        <span id="mon-countBadge" class="rounded-lg bg-slate-50 px-3 py-1.5 text-sm text-slate-600 ring-1 ring-slate-200">Carregando…</span>
+        <button type="button" id="mon-btnClear"
+          class="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50">
+          Limpar logs
+        </button>
+      </div>
+      <div class="mt-4 overflow-hidden rounded-xl border border-slate-200">
+        <div class="max-h-[50vh] overflow-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="sticky top-0 bg-slate-100 text-slate-700">
+              <tr>
+                <th class="px-3 py-2 font-semibold">Quando</th>
+                <th class="px-3 py-2 font-semibold">Método</th>
+                <th class="px-3 py-2 font-semibold">Rota</th>
+                <th class="px-3 py-2 font-semibold">IP</th>
+                <th class="px-3 py-2 font-semibold">Status</th>
+                <th class="px-3 py-2 font-semibold">ms</th>
+                <th class="px-3 py-2 font-semibold">Request</th>
+                <th class="px-3 py-2 font-semibold">Erro</th>
+              </tr>
+            </thead>
+            <tbody id="mon-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <p id="mon-filePath" class="mt-3 font-mono text-xs text-slate-500"></p>
+    </section>
+
+    <section class="mt-8 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+      <button id="btnSave" type="button" class="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+        Salvar configuração
+      </button>
+      <p class="text-xs text-slate-500">Porta HTTP da API Horse: <strong>3001</strong></p>
+      <p id="iniPathInfo" class="w-full text-xs text-slate-500"></p>
+    </section>
+  </div>
+  <script>
+    const MASK = "********";
+    let activeClient = "cgpec";
+    let cgForm = { host: "", port: 3050, database: "", user: "SYSDBA", password: "", role: "" };
+    let fpForm = { host: "", port: 3050, database: "", user: "SYSDBA", password: "", role: "" };
+    let pgForm = { host: "127.0.0.1", port: 5432, database: "", user: "postgres", password: "", enabled: "1" };
+    let mirrorForm = { enabled: "0", nextApiBase: "http://127.0.0.1:3000", url: "http://127.0.0.1:3000/api/mirror/event" };
+    let fornAcumulativo = true;
+
+    function updateFornAcumUi() {
+      const on = document.getElementById("forn-acumulativo").checked;
+      fornAcumulativo = on;
+      const badge = document.getElementById("fornAcumBadge");
+      const hint = document.getElementById("fornAcumHint");
+      if (on) {
+        badge.textContent = "Modo: acumulativo";
+        badge.className = "inline-flex shrink-0 rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800 ring-1 ring-teal-100";
+        hint.textContent = "Ativo — vários caminhões/fabricações somam no mesmo trato (data + ração + curral).";
+      } else {
+        badge.textContent = "Modo: último vence";
+        badge.className = "inline-flex shrink-0 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200";
+        hint.textContent = "Desativado — cada POST grava o realizado informado (substitui o anterior).";
+      }
+    }
+
+    function getActiveClient() {
+      return document.getElementById("active-client").value || "cgpec";
+    }
+
+    function updateActiveClientUi() {
+      const client = getActiveClient();
+      activeClient = client;
+      const cg = document.getElementById("section-cgpec");
+      const fp = document.getElementById("section-fieldpec");
+      const note = document.getElementById("activeClientNote");
+      if (client === "fieldpec") {
+        cg.classList.remove("ring-2", "ring-teal-400");
+        fp.classList.add("ring-2", "ring-amber-400");
+        note.textContent = "FieldPec está ativo — reinicie a API Horse para carregar as rotas FieldPec.";
+      } else {
+        fp.classList.remove("ring-2", "ring-amber-400");
+        cg.classList.add("ring-2", "ring-teal-400");
+        note.textContent = "CGPec está ativo — reinicie a API Horse para carregar as rotas CGPec.";
+      }
+    }
+
+    function showBanner(type, text) {
+      const el = document.getElementById("banner");
+      el.className = "mb-6 rounded-xl border px-4 py-3 text-sm " +
+        (type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-900");
+      el.textContent = text;
+      el.classList.remove("hidden");
+    }
+
+    function maskPass(p) {
+      return p && p !== MASK ? p : "********";
+    }
+
+    function formatIniPreview() {
+      const client = getActiveClient();
+      const lines = [
+        "[API]",
+        "ActiveClient=" + client,
+        "FornecimentoAcumulativo=" + (document.getElementById("forn-acumulativo").checked ? "1" : "0"),
+        "",
+        "[CGPEC]",
+        "Server=" + cgForm.host,
+        "User=" + cgForm.user,
+        "Password=" + maskPass(cgForm.password),
+        "Port=" + cgForm.port,
+        "DB=" + cgForm.database,
+      ];
+      if (cgForm.role) lines.push("Role=" + cgForm.role);
+      lines.push("", "[FIELDPEC]",
+        "Server=" + fpForm.host,
+        "User=" + fpForm.user,
+        "Password=" + maskPass(fpForm.password),
+        "Port=" + fpForm.port,
+        "DB=" + fpForm.database
+      );
+      if (fpForm.role) lines.push("Role=" + fpForm.role);
+      lines.push("", "[POSTGRES]",
+        "Host=" + pgForm.host,
+        "Port=" + pgForm.port,
+        "Database=" + pgForm.database,
+        "User=" + pgForm.user,
+        "Password=" + maskPass(pgForm.password),
+        "Enabled=" + (document.getElementById("pg-enabled").checked ? "1" : "0"),
+        "", "[MIRROR]",
+        "Enabled=" + (document.getElementById("mirror-enabled").checked ? "1" : "0"),
+        "NextApiBase=" + document.getElementById("mirror-next-api-base").value.trim(),
+        "Url=" + document.getElementById("mirror-url").value.trim()
+      );
+      return lines.join("\n");
+    }
+
+    function showSaveConfirmation(syncNote) {
+      document.getElementById("saveConfirmIni").textContent = formatIniPreview();
+      document.getElementById("saveConfirmSync").textContent = syncNote || "";
+      document.getElementById("saveConfirmTime").textContent =
+        "Salvo em " + new Date().toLocaleString("pt-BR") + " — reinicie a API Horse se já estiver em uso.";
+      const panel = document.getElementById("saveConfirm");
+      panel.classList.remove("hidden");
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      showBanner("ok", "Configuração salva com sucesso.");
+    }
+
+    document.getElementById("btnDismissConfirm").addEventListener("click", () => {
+      document.getElementById("saveConfirm").classList.add("hidden");
+    });
+
+    function fillForm() {
+      document.getElementById("active-client").value = activeClient === "fieldpec" ? "fieldpec" : "cgpec";
+      document.getElementById("cg-host").value = cgForm.host;
+      document.getElementById("cg-port").value = cgForm.port;
+      document.getElementById("cg-database").value = cgForm.database;
+      document.getElementById("cg-user").value = cgForm.user;
+      document.getElementById("cg-password").value = cgForm.password;
+      document.getElementById("cg-role").value = cgForm.role || "";
+      document.getElementById("fp-host").value = fpForm.host;
+      document.getElementById("fp-port").value = fpForm.port;
+      document.getElementById("fp-database").value = fpForm.database;
+      document.getElementById("fp-user").value = fpForm.user;
+      document.getElementById("fp-password").value = fpForm.password;
+      document.getElementById("fp-role").value = fpForm.role || "";
+      document.getElementById("pg-host").value = pgForm.host;
+      document.getElementById("pg-port").value = pgForm.port;
+      document.getElementById("pg-database").value = pgForm.database;
+      document.getElementById("pg-user").value = pgForm.user;
+      document.getElementById("pg-password").value = pgForm.password;
+      document.getElementById("pg-enabled").checked = pgForm.enabled !== "0";
+      document.getElementById("mirror-enabled").checked = mirrorForm.enabled === "1";
+      document.getElementById("mirror-next-api-base").value = mirrorForm.nextApiBase || "http://127.0.0.1:3000";
+      document.getElementById("mirror-url").value = mirrorForm.url;
+      document.getElementById("forn-acumulativo").checked = fornAcumulativo !== false;
+      updateFornAcumUi();
+      updateActiveClientUi();
+    }
+
+    function readFp() {
+      return {
+        host: document.getElementById("fp-host").value.trim(),
+        port: Number(document.getElementById("fp-port").value) || 3050,
+        database: document.getElementById("fp-database").value.trim(),
+        user: document.getElementById("fp-user").value.trim(),
+        password: document.getElementById("fp-password").value,
+        role: document.getElementById("fp-role").value.trim(),
+      };
+    }
+
+    function readCg() {
+      return {
+        host: document.getElementById("cg-host").value.trim(),
+        port: Number(document.getElementById("cg-port").value) || 3050,
+        database: document.getElementById("cg-database").value.trim(),
+        user: document.getElementById("cg-user").value.trim(),
+        password: document.getElementById("cg-password").value,
+        role: document.getElementById("cg-role").value.trim(),
+      };
+    }
+
+    function readPg() {
+      return {
+        host: document.getElementById("pg-host").value.trim() || "127.0.0.1",
+        port: Number(document.getElementById("pg-port").value) || 5432,
+        database: document.getElementById("pg-database").value.trim(),
+        user: document.getElementById("pg-user").value.trim() || "postgres",
+        password: document.getElementById("pg-password").value,
+        enabled: document.getElementById("pg-enabled").checked ? "1" : "0",
+      };
+    }
+
+    function readMirror() {
+      const base = document.getElementById("mirror-next-api-base").value.trim() || "http://127.0.0.1:3000";
+      const url = document.getElementById("mirror-url").value.trim() || (base + "/api/mirror/event");
+      return {
+        enabled: document.getElementById("mirror-enabled").checked ? "1" : "0",
+        nextApiBase: base,
+        url: url,
+      };
+    }
+
+    function buildPayload() {
+      return {
+        activeClient: getActiveClient(),
+        backends: {
+          cgpec: readCg(),
+          fieldpec: readFp(),
+          spreadsheet_import: readPg(),
+        },
+        mirror: readMirror(),
+        fornecimentoAcumulativo: document.getElementById("forn-acumulativo").checked,
+      };
+    }
+
+    async function loadConfig() {
+      const res = await fetch("/api/config");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.erro || "Falha ao carregar configuração.");
+      const c = data.backends.cgpec;
+      const f = data.backends.fieldpec || {};
+      const p = data.backends.spreadsheet_import;
+      const m = data.mirror || {};
+      activeClient = data.activeClient === "fieldpec" ? "fieldpec" : "cgpec";
+      fornAcumulativo = data.fornecimentoAcumulativo !== false;
+      cgForm = {
+        host: c.host || "",
+        port: c.port || 3050,
+        database: c.database || "",
+        user: c.user || "",
+        password: c.password || "",
+        role: c.role || "",
+      };
+      fpForm = {
+        host: f.host || "",
+        port: f.port || 3050,
+        database: f.database || "",
+        user: f.user || "SYSDBA",
+        password: f.password || "",
+        role: f.role || "",
+      };
+      pgForm = {
+        host: p.host || "127.0.0.1",
+        port: p.port || 5432,
+        database: p.database || "",
+        user: p.user || "postgres",
+        password: p.password || "",
+        enabled: p.enabled !== undefined ? String(p.enabled) : "1",
+      };
+      mirrorForm = {
+        enabled: String(m.enabled ?? "0"),
+        nextApiBase: m.nextApiBase || data.nextApiBaseUrl || "http://127.0.0.1:3000",
+        url: m.url || (m.nextApiBase || "http://127.0.0.1:3000") + "/api/mirror/event",
+      };
+      fillForm();
+      const iniPath = data.iniPath || "";
+      const exePath = data.exePath || "";
+      const nextBase = data.nextApiBaseUrl || "";
+      document.getElementById("iniPathInfo").textContent = [
+        iniPath ? "Arquivo: " + iniPath : "",
+        exePath ? "exe: " + exePath : "",
+        nextBase ? "next-api: " + nextBase : "",
+      ].filter(Boolean).join(" · ");
+    }
+
+    async function runTest(kind, readFn, msgId, client) {
+      const b = readFn();
+      const msg = document.getElementById(msgId);
+      msg.className = "mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700";
+      msg.textContent = "Testando conexão…";
+      msg.classList.remove("hidden");
+      const payload = { kind, ...b };
+      if (kind === "firebird" && client) payload.client = client;
+      try {
+        const res = await fetch("/api/config/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.erro || "Falha ao conectar.");
+        msg.className = "mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900";
+        if (kind === "postgres") {
+          msg.textContent = "Conexão PostgreSQL OK.";
+        } else if (client === "fieldpec") {
+          msg.textContent = "Conexão Firebird OK (FieldPec).";
+        } else {
+          msg.textContent = "Conexão Firebird OK (CGPec).";
+        }
+      } catch (e) {
+        msg.className = "mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900";
+        msg.textContent = e.message || String(e);
+      }
+    }
+
+    document.getElementById("active-client").addEventListener("change", updateActiveClientUi);
+    document.getElementById("forn-acumulativo").addEventListener("change", updateFornAcumUi);
+    document.getElementById("btnTestCg").addEventListener("click", () => runTest("firebird", readCg, "testCgMsg", "cgpec"));
+    document.getElementById("btnTestFp").addEventListener("click", () => runTest("firebird", readFp, "testFpMsg", "fieldpec"));
+    document.getElementById("btnTestPg").addEventListener("click", () => runTest("postgres", readPg, "testPgMsg"));
+
+    document.getElementById("btnSavePg").addEventListener("click", async () => {
+      const pg = readPg();
+      if (!pg.database || !pg.user) {
+        showBanner("err", "Preencha database e usuário do PostgreSQL.");
+        return;
+      }
+      if (!pg.password) {
+        showBanner("err", "Informe a senha do PostgreSQL para salvar.");
+        return;
+      }
+      const btn = document.getElementById("btnSavePg");
+      btn.disabled = true;
+      btn.textContent = "Salvando…";
+      try {
+        const res = await fetch("/api/config/postgres", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backends: { spreadsheet_import: pg } }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.erro || "Falha ao salvar PostgreSQL.");
+        pgForm = { ...readPg(), password: pg.password };
+        const saved = data.backends?.spreadsheet_import;
+        if (saved?.password === MASK) {
+          document.getElementById("pg-password").value = pg.password;
+        }
+        fillForm();
+        showSaveConfirmation(data.syncNote || "PostgreSQL salvo no ApiConfig.ini.");
+      } catch (e) {
+        showBanner("err", e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Salvar PostgreSQL";
+      }
+    });
+
+    document.getElementById("btnSave").addEventListener("click", async () => {
+      const cg = readCg();
+      const fp = readFp();
+      const pg = readPg();
+      const client = getActiveClient();
+      const activeFb = client === "fieldpec" ? fp : cg;
+      const activeLabel = client === "fieldpec" ? "FieldPec" : "CGPec";
+      if (!activeFb.host || !activeFb.database || !activeFb.user) {
+        showBanner("err", "Preencha host, database e usuário do Firebird (" + activeLabel + ").");
+        return;
+      }
+      if (!pg.database || !pg.user) {
+        showBanner("err", "Preencha database e usuário do PostgreSQL.");
+        return;
+      }
+      if (!pg.password && pgForm.password !== MASK && !pgForm.password) {
+        showBanner("err", "Informe a senha do PostgreSQL para salvar.");
+        return;
+      }
+      if (!confirm("Salvar " + activeLabel + ", PostgreSQL e espelho BI no ApiConfig.ini?\n\nCliente ativo: " + client + ". Reinicie a API Horse após salvar.\n\nAs credenciais PostgreSQL também serão enviadas à next-api (se estiver em execução).")) {
+        return;
+      }
+      const btn = document.getElementById("btnSave");
+      btn.disabled = true;
+      btn.textContent = "Salvando…";
+      document.getElementById("saveConfirm").classList.add("hidden");
+      try {
+        const res = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildPayload()),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.erro || "Falha ao salvar.");
+        cgForm.password = data.backends.cgpec.password || "";
+        if (cgForm.password === MASK) cgForm.password = cg.password;
+        fpForm.password = data.backends.fieldpec?.password || "";
+        if (fpForm.password === MASK) fpForm.password = fp.password;
+        pgForm.password = data.backends.spreadsheet_import.password || "";
+        if (pgForm.password === MASK) pgForm.password = pg.password;
+        activeClient = data.activeClient === "fieldpec" ? "fieldpec" : "cgpec";
+        cgForm = { ...readCg(), password: cgForm.password !== MASK ? cgForm.password : cg.password };
+        fpForm = { ...readFp(), password: fpForm.password !== MASK ? fpForm.password : fp.password };
+        pgForm = { ...readPg(), password: pgForm.password !== MASK ? pgForm.password : pg.password };
+        mirrorForm = readMirror();
+        fornAcumulativo = data.fornecimentoAcumulativo !== false;
+        fillForm();
+        showSaveConfirmation(data.syncNote || "");
+      } catch (e) {
+        showBanner("err", e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Salvar configuração";
+      }
+    });
+
+    loadConfig().catch((e) => showBanner("err", e.message || String(e)));
+  </script>
+  <script src="/web-admin/request-monitor.js"></script>
+  <script>
+    RFeedRequestMonitor.initNav("config");
+    RFeedRequestMonitor.init({ prefix: "mon" });
+    if (location.hash === "#monitor") {
+      document.getElementById("monitor")?.scrollIntoView({ behavior: "smooth" });
+    }
+  </script>
+</body>
+</html>

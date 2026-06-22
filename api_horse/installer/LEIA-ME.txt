@@ -1,0 +1,32 @@
+RFeed — API Horse (serviço Windows)
+===================================
+
+Após instalar:
+  • Painel web: http://127.0.0.1:3001/config
+  • Monitor:    http://127.0.0.1:3001/monitor
+  • Health:     http://127.0.0.1:3001/health
+
+Configuração
+  • Edite ApiConfig.ini na pasta de instalação (Firebird CGPec / FieldPec, PostgreSQL, espelho BI).
+  • Ou use o painel /config e clique em Salvar.
+
+Firebird
+  • Copie fbclient.dll (mesma pasta do ApiRFeedWindows.exe) da instalação do Firebird do cliente,
+    se o instalador não tiver incluído automaticamente.
+
+Serviço Windows
+  • Nome interno: ApiRFeed
+  • Gerenciar: services.msc → "RFeed API Horse"
+  • Se o instalador não iniciar o serviço: veja install-service.log na pasta de instalação
+
+Instalação manual do serviço (administrador):
+  cd "C:\Program Files\RSistemas\RFeed\ApiHorse"
+  .\install-service.ps1 -InstallDir .
+
+Logs de requisições (tablet)
+  • %ProgramData%\RFeed\logs\api-monitor\
+
+Reinstalar / atualizar
+  • Execute o instalador novamente; ApiConfig.ini existente é preservado.
+
+Suporte RSistemas

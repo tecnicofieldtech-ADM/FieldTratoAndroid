@@ -1,6 +1,7 @@
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../services/api_service.dart";
+import "../utils/ms_percent.dart";
 
 class OutboxSync {
   final ApiService api;
@@ -43,6 +44,57 @@ class OutboxSync {
     final d = _toDouble(v);
     if (d == 0) return "0";
     return d.toStringAsFixed(2).replaceAll(".", ",");
+  }
+
+  /// MS fornecimento: fabricação (MS_REALIZADA) → dieta (DIETA.MS); 0 < MS <= 100.
+  static const String _sqlMsFornecResolved = """
+    CASE
+      WHEN COALESCE(cfr.MS_REALIZADA, 0) > 0 AND COALESCE(cfr.MS_REALIZADA, 0) <= 100
+        THEN cfr.MS_REALIZADA
+      WHEN COALESCE(d.MS, 0) > 0 AND COALESCE(d.MS, 0) <= 100
+        THEN d.MS
+      ELSE 0
+    END""";
+
+  /// Fornecimento so sobe apos a fabricacao vinculada ter FLAG_SYNC=1 no tablet.
+  static const String _sqlFornecFabSyncGate = """
+    (
+      TRIM(COALESCE(cf.ID_FABRICACAO, '')) = ''
+      OR EXISTS (
+        SELECT 1 FROM CADASTRO_FABRICA_RACAO cfr_gate
+        WHERE TRIM(cfr_gate.ID) = TRIM(cf.ID_FABRICACAO)
+          AND IFNULL(cfr_gate.FLAG_SYNC, 0) = 1
+      )
+    )""";
+
+  Future<void> _marcarFornecimentoSyncOk(dynamic db, String idCadastro) async {
+    final id = idCadastro.trim();
+    if (id.isEmpty) return;
+    await db.update(
+      "CADASTRO_FORNECIMENTO",
+      {"FLAG_SYNC": 1},
+      where: "ID = ?",
+      whereArgs: [id],
+    );
+  }
+
+  Future<double> _fetchDietaMs(dynamic db, String idDieta) async {
+    final id = idDieta.trim();
+    if (id.isEmpty) return 0;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE(MS, 0) AS ms FROM DIETA WHERE TRIM(ID) = TRIM(?) LIMIT 1",
+      [id],
+    );
+    if (rows.isEmpty) return 0;
+    final v = _toDouble(rows.first["ms"]);
+    return MsPercent.isValid(v) ? v : 0;
+  }
+
+  double _resolveMsPayload({
+    required double msFabricacao,
+    required double msDieta,
+  }) {
+    return MsPercent.resolve(msFabricacao: msFabricacao, msDieta: msDieta);
   }
 
   String _toBrDate(dynamic v) {
@@ -191,6 +243,11 @@ class OutboxSync {
         continue;
       }
 
+      final msFabResolved = _resolveMsPayload(
+        msFabricacao: _toDouble(f["MS_REALIZADA"]),
+        msDieta: await _fetchDietaMs(db, _s(f["ID_DIETA"])),
+      );
+
       final payloadFab = <String, dynamic>{
         "id": idFabricacao,
         "handoff_id": handoffId,
@@ -203,7 +260,7 @@ class OutboxSync {
         "qtde_prevista": _toBrIntStr(f["QTD_PREVISTA"]),
         "qtde_realizada": _toBrIntStr(f["QTD_REALIZADA"]),
         "ms_prevista": _br2(f["MS_PREVISTA"]),
-        "ms_realizada": _br2(f["MS_REALIZADA"]),
+        "ms_realizada": _br2(msFabResolved),
       };
 
       final payloadFabFixed =
@@ -252,10 +309,12 @@ class OutboxSync {
           MAX(cf.ID_USUARIO)                                          AS id_usuario_lancamento,
           MAX(cf.ID_USUARIO)                                          AS id_tratador,
           MAX(COALESCE(cfr.ID_DIETA, cf.ID_DIETA))                    AS id_dieta_realizada,
+          MAX(COALESCE(cf.ID_DIETA, cfr.ID_DIETA))                    AS id_racao,
           SUM(COALESCE(cf.REALIZADO,0))                               AS realizado,
-          AVG(COALESCE(cfr.MS_REALIZADA, 0))                          AS ms_dieta_realizada
+          AVG($_sqlMsFornecResolved)                                  AS ms_dieta_realizada
         FROM CADASTRO_FORNECIMENTO cf
         LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
+        LEFT JOIN DIETA d ON TRIM(d.ID) = TRIM(COALESCE(cf.ID_DIETA, cfr.ID_DIETA))
         WHERE TRIM(COALESCE(cf.ID_FABRICACAO,'')) = TRIM(?)
           AND COALESCE(cf.REALIZADO,0) > 0
           AND IFNULL(cf.FLAG_SYNC,0) = 0
@@ -268,19 +327,32 @@ class OutboxSync {
         final idPrev = _s(r["id_fornecimento"]);
         if (idPrev.isEmpty) continue;
 
+        final msForn = _toDouble(r["ms_dieta_realizada"]);
+        if (!MsPercent.isValid(msForn)) {
+          log(
+            "Fornecimento id=$idPrev fab=$idFabricacao: MS invalida "
+            "(fab/dieta; deve ser > 0 e <= 100). Pulando linha.",
+          );
+          continue;
+        }
+
         fornecimentos.add({
           "id": idPrev,
           "id_fabricacao": idFabricacao,
           "handoff_id_fabricacao": handoffId,
           "IDCURRAL": _s(r["id_curral"]),
+          "id_baia": _s(r["id_curral"]),
+          "id_racao": _s(r["id_racao"]),
           "HORA_FORN": _s(r["hora_forn"]),
           "DATA_FORN": _toBrDate(r["data_forn"]),
+          "data": _toBrDate(r["data_forn"]),
           "TRATO": _s(r["trato"]),
+          "trato": _s(r["trato"]),
           "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
           "id_tratador": _s(r["id_tratador"]),
           "id_dieta_realizada": _s(r["id_dieta_realizada"]),
           "realizado": _br3(r["realizado"]),
-          "ms_dieta_realizada": _br3(r["ms_dieta_realizada"]),
+          "ms_dieta_realizada": _br3(msForn),
         });
       }
 
@@ -307,18 +379,24 @@ class OutboxSync {
         }
 
         if (fornecimentos.isNotEmpty) {
-          final syncedIds = fornecimentos
-              .map((e) => _s(e["id"]))
+          final pendingRows = await db.rawQuery(
+            """
+            SELECT ID
+            FROM CADASTRO_FORNECIMENTO
+            WHERE TRIM(COALESCE(ID_FABRICACAO,'')) = TRIM(?)
+              AND COALESCE(REALIZADO,0) > 0
+              AND IFNULL(FLAG_SYNC,0) = 0
+              AND TRIM(COALESCE(ID_FORNECIMENTO,'')) <> ''
+            """,
+            [idFabricacao],
+          );
+          final syncedRowIds = pendingRows
+              .map((e) => _s(e["ID"]))
               .where((e) => e.isNotEmpty)
-              .toSet()
               .toList();
 
-          if (syncedIds.isNotEmpty) {
-            final inArgs = syncedIds.map((_) => "?").join(",");
-            await db.rawUpdate(
-              "UPDATE CADASTRO_FORNECIMENTO SET FLAG_SYNC=1 WHERE ID_FORNECIMENTO IN ($inArgs)",
-              syncedIds,
-            );
+          for (final idCad in syncedRowIds) {
+            await _marcarFornecimentoSyncOk(db, idCad);
           }
         }
       } else {
@@ -379,68 +457,132 @@ class OutboxSync {
         diag.isNotEmpty ? int.tryParse("${diag.first["qtd"]}") ?? 0 : 0;
     log("CADASTRO_FORNECIMENTO pendentes = $qtdPend");
 
+    final blockedFab = await db.rawQuery("""
+      SELECT COUNT(*) AS qtd
+      FROM CADASTRO_FORNECIMENTO cf
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND NOT $_sqlFornecFabSyncGate
+    """);
+    final qtdBlocked = blockedFab.isNotEmpty
+        ? int.tryParse("${blockedFab.first["qtd"]}") ?? 0
+        : 0;
+    if (qtdBlocked > 0) {
+      log(
+        "Fornecimento: $qtdBlocked registro(s) aguardando fabricacao (FLAG_SYNC fab=0). "
+        "Nao serao reenviados ate a fabricacao subir.",
+      );
+    }
+
     final rows = await db.rawQuery('''
       SELECT
+        cf.ID                                                       AS id_cadastro,
         cf.ID_FORNECIMENTO                                          AS id_fornecimento,
-
-        MAX(cfr.ID_FAZENDA)                                         AS id_fazenda,
-        MAX(cf.ID_FABRICACAO)                                       AS id_fabricacao,
-        MAX(cf.ID_USUARIO)                                          AS id_usuario_lancamento,
-        MAX(cf.ID_USUARIO)                                          AS id_tratador,
-
-        MAX(COALESCE(cfr.ID_DIETA, cf.ID_DIETA))                    AS id_dieta_realizada,
-
-        SUM(COALESCE(cf.REALIZADO,0))                               AS realizado,
-        AVG(COALESCE(cfr.MS_REALIZADA, 0))                          AS ms_dieta_realizada
+        cf.ID_BAIA                                                  AS id_baia,
+        cf.DATA                                                     AS data_forn,
+        cf.TRATO                                                    AS trato,
+        cf.ID_FABRICACAO                                            AS id_fabricacao,
+        cf.ID_USUARIO                                               AS id_usuario_lancamento,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_dieta_realizada,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_racao,
+        COALESCE(cf.REALIZADO, 0)                                   AS delta_sessao,
+        COALESCE(p.REALIZADO_KG, 0)                                 AS total_mapa,
+        $_sqlMsFornecResolved                                        AS ms_dieta_realizada
       FROM CADASTRO_FORNECIMENTO cf
       LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
-      WHERE COALESCE(cf.REALIZADO,0) > 0
-        AND IFNULL(cf.FLAG_SYNC,0) = 0
-        AND TRIM(COALESCE(cf.ID_FORNECIMENTO,'')) <> ''
-      GROUP BY cf.ID_FORNECIMENTO
+      LEFT JOIN DIETA d ON TRIM(d.ID) = TRIM(COALESCE(cf.ID_DIETA, cfr.ID_DIETA))
+      LEFT JOIN PREVISAO p
+        ON TRIM(p.ID_FORNECIMENTO) = TRIM(cf.ID_FORNECIMENTO)
+       AND TRIM(p.ID_BAIA) = TRIM(cf.ID_BAIA)
+       AND substr(p.DATA, 1, 10) = substr(cf.DATA, 1, 10)
+       AND p.TRATO = cf.TRATO
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND $_sqlFornecFabSyncGate
+      ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
     ''');
 
     if (rows.isEmpty) {
-      log("Nenhum fornecimento pendente para enviar.");
+      if (qtdBlocked > 0) {
+        log(
+          "Nenhum fornecimento elegivel agora (fabricacao pendente bloqueia envio).",
+        );
+      } else {
+        log("Nenhum fornecimento pendente para enviar.");
+      }
       return;
     }
 
-    final syncedIds = <String>{};
+    var syncedCount = 0;
 
+    // 1 linha CADASTRO_FORNECIMENTO = 1 POST (delta da sessao).
+    // API FornecimentoAcumulativo=1 soma; FLAG_SYNC deve subir logo apos cada OK.
     for (final r in rows) {
       final idPrev = _s(r["id_fornecimento"]);
-      if (idPrev.isEmpty) {
-        log("Fornecimento sem ID_FORNECIMENTO");
+      final idCad = _s(r["id_cadastro"]);
+      final idBaia = _s(r["id_baia"]);
+      final idRacao = _s(r["id_racao"]);
+      final trato = int.tryParse(_s(r["trato"])) ?? 0;
+      final dataRef = _toBrDate(r["data_forn"]);
+      final deltaSessao = _toDouble(r["delta_sessao"]);
+      if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) continue;
+      if (idBaia.isEmpty || idRacao.isEmpty || trato <= 0 || dataRef.isEmpty) {
+        log(
+          "Fornecimento chave natural incompleta: "
+          "cadastro=$idCad idFornecimento=$idPrev "
+          "baia=$idBaia racao=$idRacao trato=$trato data=$dataRef",
+        );
+        continue;
+      }
+
+      final msResolved = _toDouble(r["ms_dieta_realizada"]);
+      if (!MsPercent.isValid(msResolved)) {
+        log(
+          "Fornecimento cadastro=$idCad: MS invalida (fab/dieta). "
+          "Deve ser > 0 e <= 100. Sync abortada para esta linha.",
+        );
         continue;
       }
 
       final payload = <String, dynamic>{
+        // Chave natural primeiro na API; id e fallback se nao encontrar.
         "id": idPrev,
+        "id_cadastro": idCad,
+        "id_fornecimento": idPrev,
         "id_fabricacao": _s(r["id_fabricacao"]),
         "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
-        "id_tratador": _s(r["id_tratador"]),
+        "id_tratador": _s(r["id_usuario_lancamento"]),
         "id_dieta_realizada": _s(r["id_dieta_realizada"]),
-        "realizado": _br3(r["realizado"]),
-        "ms_dieta_realizada": _br3(r["ms_dieta_realizada"]),
+        "id_baia": idBaia,
+        "id_racao": idRacao,
+        "trato": trato.toString(),
+        "data": dataRef,
+        "realizado": _br3(deltaSessao),
+        "ms_dieta_realizada": _br3(msResolved),
       };
+
+      log(
+        "Fornecimento cadastro=$idCad chave=$idBaia|$idRacao|$dataRef|$trato "
+        "realizado=$deltaSessao mapa=${_toDouble(r["total_mapa"])}",
+      );
 
       final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
 
       final ok = await api.postFornecimento(payloadFixed, log: log);
       if (ok) {
-        syncedIds.add(idPrev);
+        await _marcarFornecimentoSyncOk(db, idCad);
+        syncedCount++;
       } else {
-        log("Falha Fornecimento id=$idPrev");
+        log(
+          "Falha Fornecimento cadastro=$idCad chave=$idBaia|$idRacao|$dataRef|$trato",
+        );
       }
     }
 
-    if (syncedIds.isNotEmpty) {
-      final inArgs = syncedIds.map((_) => "?").join(",");
-      await db.rawUpdate(
-        "UPDATE CADASTRO_FORNECIMENTO SET FLAG_SYNC=1 WHERE ID_FORNECIMENTO IN ($inArgs)",
-        syncedIds.toList(),
-      );
-      log("${syncedIds.length} fornecimento(s) marcado(s) FLAG_SYNC=1");
+    if (syncedCount > 0) {
+      log("$syncedCount registro(s) de fornecimento marcado(s) FLAG_SYNC=1");
     }
   }
 }

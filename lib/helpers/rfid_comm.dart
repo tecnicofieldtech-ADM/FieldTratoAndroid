@@ -72,6 +72,9 @@ class RfidComm {
   Stream<RfidStatusEvent> get statusStream => _statusCtrl.stream;
   Stream<RfidTagEvent> get tagStream => _tagCtrl.stream;
 
+  RfidStatus _lastStatus = RfidStatus.disconnected;
+  RfidStatus get lastStatus => _lastStatus;
+
   void configure({required String host, required int port}) {
     _host = host;
     _port = port;
@@ -82,10 +85,17 @@ class RfidComm {
     if (leituraAtiva) {
       _lastTag = "";
       _lastTagAt = DateTime.fromMillisecondsSinceEpoch(0);
+    } else {
+      _cancelReconnect();
     }
   }
 
   Future<void> connect() async {
+    if (!leituraAtiva) {
+      _debug("connect() ignorado: leitura inativa");
+      return;
+    }
+
     // ✅ RECONEXÃO MANUAL: destrava disconnect()
     _shuttingDown = false;
 
@@ -123,7 +133,9 @@ class RfidComm {
       _debug("connect error: $e");
       _emitStatus(RfidStatus.error, message: e.toString());
       await _safeCloseSocket();
-      if (_autoReconnect && !_shuttingDown) _scheduleReconnect();
+      if (_autoReconnect && !_shuttingDown && leituraAtiva) {
+        _scheduleReconnect();
+      }
     } finally {
       _connecting = false;
     }
@@ -197,7 +209,7 @@ class RfidComm {
     _emitStatus(RfidStatus.error, message: e.toString());
     _stopWatchdog();
     _safeCloseSocket();
-    if (_autoReconnect) _scheduleReconnect();
+    if (_autoReconnect && leituraAtiva) _scheduleReconnect();
   }
 
   void _onSocketDone() {
@@ -206,14 +218,15 @@ class RfidComm {
     _emitStatus(RfidStatus.disconnected);
     _stopWatchdog();
     _safeCloseSocket();
-    if (_autoReconnect) _scheduleReconnect();
+    if (_autoReconnect && leituraAtiva) _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
+    if (!leituraAtiva || _shuttingDown) return;
     if (_reconnectTimer?.isActive == true) return;
     _reconnectTimer = Timer(_reconnectDelay, () {
       _reconnectTimer = null;
-      if (_shuttingDown) return;
+      if (_shuttingDown || !leituraAtiva) return;
       _debug("reconnect timer fired");
       connect();
     });
@@ -239,6 +252,7 @@ class RfidComm {
   }
 
   void _emitStatus(RfidStatus s, {String? message}) {
+    _lastStatus = s;
     if (_statusCtrl.isClosed) return;
     _statusCtrl.add(RfidStatusEvent(s, message: message));
   }
@@ -268,7 +282,7 @@ class RfidComm {
           _socket?.destroy();
         } catch (_) {}
         _socket = null;
-        if (_autoReconnect) _scheduleReconnect();
+        if (_autoReconnect && leituraAtiva) _scheduleReconnect();
       }
     });
   }

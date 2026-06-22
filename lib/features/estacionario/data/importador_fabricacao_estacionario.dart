@@ -10,7 +10,8 @@ class ImportadorFabricacaoEstacionario {
   Future<Database> get _db async => AppDb.instance.db;
   final _uuid = const Uuid();
 
-  Future<String> importar({
+  /// [inserido] false = lote já existia neste tablet (mesmo handoff ou mesmo id da fabricação no estacionário).
+  Future<({String idFabricacaoLocal, bool inserido})> importar({
     required CarregamentoDetalheDto payload,
     required String idUsuario,
     required String idFazenda,
@@ -18,16 +19,46 @@ class ImportadorFabricacaoEstacionario {
     final db = await _db;
     final f = payload.fabricacao;
     final handoffId = f.handoffId.trim();
-    if (handoffId.isEmpty) {
-      throw Exception("Payload sem handoff_id");
+    final idOrigem = f.idOrigem.trim();
+    if (handoffId.isEmpty && idOrigem.isEmpty) {
+      throw Exception(
+        "Payload sem identificador (handoff_id ou id da fabricação no estacionário).",
+      );
     }
 
-    final existente = await db.rawQuery(
-      "SELECT ID FROM CADASTRO_FABRICA_RACAO WHERE TRIM(COALESCE(HANDOFF_ID,'')) = TRIM(?) LIMIT 1",
-      [handoffId],
-    );
-    if (existente.isNotEmpty) {
-      throw Exception("Esse carregamento ja foi recebido.");
+    String? idJaImportado;
+    if (handoffId.isNotEmpty) {
+      final r = await db.rawQuery(
+        """
+        SELECT ID FROM CADASTRO_FABRICA_RACAO
+        WHERE TRIM(COALESCE(HANDOFF_ID,'')) = TRIM(?)
+        LIMIT 1
+        """,
+        [handoffId],
+      );
+      if (r.isNotEmpty) {
+        idJaImportado = (r.first["ID"] ?? "").toString().trim();
+      }
+    }
+    if (idJaImportado == null && idOrigem.isNotEmpty) {
+      try {
+        final r = await db.rawQuery(
+          """
+          SELECT ID FROM CADASTRO_FABRICA_RACAO
+          WHERE TRIM(COALESCE(ID_ORIGEM_ESTACIONARIO,'')) = TRIM(?)
+          LIMIT 1
+          """,
+          [idOrigem],
+        );
+        if (r.isNotEmpty) {
+          idJaImportado = (r.first["ID"] ?? "").toString().trim();
+        }
+      } catch (_) {
+        // Base sem coluna ID_ORIGEM_ESTACIONARIO: dedupe só por HANDOFF_ID.
+      }
+    }
+    if (idJaImportado != null && idJaImportado.isNotEmpty) {
+      return (idFabricacaoLocal: idJaImportado, inserido: false);
     }
 
     final somaInsumos =
@@ -42,6 +73,17 @@ class ImportadorFabricacaoEstacionario {
     final novoIdFab = _uuid.v4();
 
     await db.transaction((txn) async {
+      try {
+        await _ensureDietaNomeParaJoin(
+          txn,
+          idDieta: f.idRacao,
+          nomeRacao: f.nomeRacao,
+          idFazenda: idFazenda,
+        );
+      } catch (e, st) {
+        debugPrint("[IMPORT_EST] DIETA ensure: $e\n$st");
+      }
+
       await txn.insert("CADASTRO_FABRICA_RACAO", {
         "ID": novoIdFab,
         "ID_DIETA": f.idRacao,
@@ -113,6 +155,50 @@ class ImportadorFabricacaoEstacionario {
       }
     });
 
-    return novoIdFab;
+    return (idFabricacaoLocal: novoIdFab, inserido: true);
+  }
+
+  /// Garante linha em [DIETA] para o [idDieta] do payload, pois [listFabricacoes]
+  /// resolve o nome via `LEFT JOIN DIETA`; no vagão o catálogo de dietas pode não
+  /// estar sincronizado. Não sobrescreve [NOME] já preenchido (dados vindos do sync).
+  Future<void> _ensureDietaNomeParaJoin(
+    Transaction txn, {
+    required String idDieta,
+    required String nomeRacao,
+    required String idFazenda,
+  }) async {
+    final id = idDieta.trim();
+    if (id.isEmpty) return;
+    final nome =
+        nomeRacao.trim().isNotEmpty ? nomeRacao.trim() : "Ração";
+
+    final existing = await txn.rawQuery(
+      """
+      SELECT TRIM(COALESCE(NOME,'')) AS n
+      FROM DIETA
+      WHERE ID = ?
+      LIMIT 1
+      """,
+      [id],
+    );
+    if (existing.isEmpty) {
+      await txn.insert("DIETA", {
+        "ID": id,
+        "NOME": nome,
+        "TIPO": "",
+        "MS": 0,
+        "ID_FAZENDA": idFazenda,
+      });
+      return;
+    }
+    final cur = (existing.first["n"] ?? "").toString();
+    if (cur.isEmpty) {
+      await txn.update(
+        "DIETA",
+        {"NOME": nome},
+        where: "ID = ?",
+        whereArgs: [id],
+      );
+    }
   }
 }
