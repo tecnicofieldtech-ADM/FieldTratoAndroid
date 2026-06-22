@@ -158,14 +158,14 @@ class _SyncPageState extends State<SyncPage> {
 
     final ssid = await WifiGuard.getCurrentSsid();
     if (!mounted) return;
-    if (WifiGuard.isRFeedSsid(ssid)) {
+    if (WifiGuard.isFieldTratoSsid(ssid)) {
       final trocar = await showDialog<bool>(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text("Rede para sincronizacao"),
               content: Text(
-                "Rede atual: ${ssid.isEmpty ? "RFeed" : ssid}.\n\n"
-                "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao RFeed*).",
+                "Rede atual: ${ssid.isEmpty ? "FieldTrato" : ssid}.\n\n"
+                "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao FieldTrato*).",
               ),
               actions: [
                 TextButton(

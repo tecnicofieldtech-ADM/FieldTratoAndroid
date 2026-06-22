@@ -84,10 +84,23 @@ class WifiGuard {
     await AppSettings.openAppSettings(type: AppSettingsType.wifi);
   }
 
-  static bool isRFeedSsid(String ssid) {
-    final normalized = ssid.trim().toLowerCase();
-    return normalized.startsWith("rfeed");
+  static String _normalizeSsid(String ssid) {
+    return ssid
+        .trim()
+        .toLowerCase()
+        .replaceAll('"', "")
+        .replaceAll(RegExp(r"[\s_-]+"), "");
   }
+
+  /// Rede do vagao/tablet (balanca, RFID). No Field Trato o prefixo e FieldTrato*.
+  static bool isFieldTratoSsid(String ssid) {
+    final normalized = _normalizeSsid(ssid);
+    if (normalized.isEmpty || normalized == "<unknownssid>") return false;
+    return normalized.startsWith("fieldtrato");
+  }
+
+  /// Alias legado no codigo Field Trato — preferir [isFieldTratoSsid].
+  static bool isRFeedSsid(String ssid) => isFieldTratoSsid(ssid);
 
   /// Compara SSID atual com o valor salvo na config (ex.: rede do estacionário).
   static bool ssidMatchesExpected(String current, String expected) {
@@ -111,7 +124,7 @@ class WifiGuard {
 
   static bool isBlockedSsid(String ssid) {
     if (ssid.trim().isEmpty) return true;
-    return isRFeedSsid(ssid);
+    return isFieldTratoSsid(ssid);
   }
 }
 

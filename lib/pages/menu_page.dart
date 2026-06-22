@@ -88,12 +88,12 @@ class _MenuPageState extends State<MenuPage> {
   }
   Future<void> _go(BuildContext context, String route) async {
     final syncRoute = route == "/sync";
-    final rfeedRequiredRoutes = {
+    final fieldTratoRequiredRoutes = {
       "/fabricacao",
       "/fornecimento",
       "/grava-tag",
     };
-    final needsWifiPermission = syncRoute || rfeedRequiredRoutes.contains(route);
+    final needsWifiPermission = syncRoute || fieldTratoRequiredRoutes.contains(route);
 
     if (needsWifiPermission) {
       final granted = await WifiGuard.requestLocationPermissionIfNeeded();
@@ -160,14 +160,14 @@ class _MenuPageState extends State<MenuPage> {
           return;
         }
       }
-      if (WifiGuard.isRFeedSsid(ssid)) {
+      if (WifiGuard.isFieldTratoSsid(ssid)) {
         final trocar = await showDialog<bool>(
               context: context,
               builder: (_) => AlertDialog(
                 title: const Text("Rede para sincronizacao"),
                 content: Text(
-                  "Rede atual: ${ssid.isEmpty ? "RFeed" : ssid}.\n\n"
-                  "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao RFeed*).",
+                  "Rede atual: ${ssid.isEmpty ? "FieldTrato" : ssid}.\n\n"
+                  "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao FieldTrato*).",
                 ),
                 actions: [
                   TextButton(
@@ -191,7 +191,7 @@ class _MenuPageState extends State<MenuPage> {
       }
     }
 
-    if (rfeedRequiredRoutes.contains(route)) {
+    if (fieldTratoRequiredRoutes.contains(route)) {
       final ssid = await WifiGuard.getCurrentSsid();
       if (!mounted) return;
       if (ssid.isEmpty) {
@@ -227,13 +227,13 @@ class _MenuPageState extends State<MenuPage> {
         }
       }
 
-      if (!WifiGuard.isRFeedSsid(ssid)) {
+      if (!WifiGuard.isFieldTratoSsid(ssid)) {
         final trocar = await showDialog<bool>(
               context: context,
               builder: (_) => AlertDialog(
                 title: const Text("Rede para operacao"),
                 content: Text(
-                  "Para operar Fabricacao, Fornecimento e Gravar TAG, conecte em uma rede RFeed*.\n\n"
+                  "Para operar Fabricacao, Fornecimento e Gravar TAG, conecte em uma rede FieldTrato*.\n\n"
                   "Rede atual: ${ssid.isEmpty ? "nao identificada" : ssid}",
                 ),
                 actions: [
