@@ -53,7 +53,7 @@ class AboutPage extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.all(16),
                   child: Text(
-                    "O RFeed e um aplicativo para apoiar a operacao de "
+                    "O Field Trato e um aplicativo para apoiar a operacao de "
                     "fabricacao, fornecimento e sincronizacao de dados no "
                     "campo, com foco em agilidade, controle e confiabilidade.",
                     style: TextStyle(fontSize: 15, height: 1.45),

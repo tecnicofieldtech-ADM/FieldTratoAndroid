@@ -100,7 +100,7 @@ class RFeedApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: "RFeed",
+      title: "Field Trato",
       theme: theme,
       initialRoute: "/",
       routes: {
