@@ -63,66 +63,69 @@ class FabricacaoRepo {
   // =========================================================
   // RESUMO POR DIETA/DATA/TRATO (PREVISAO)
   // =========================================================
-  Future<List<Map<String, Object?>>> listResumoPorDietaDataTrato({
-    required String idDieta,
+  static String _normalizeDietaId(String? raw) {
+    return (raw ?? "").replaceAll(RegExp(r"\s+"), "").trim().toUpperCase();
+  }
+
+  List<String> _dietaIdCandidates(String idDieta) {
+    final raw = idDieta.trim();
+    final out = <String>[];
+    void add(String s) {
+      final n = _normalizeDietaId(s);
+      if (n.isNotEmpty && !out.contains(n)) out.add(n);
+    }
+
+    add(raw);
+    final asInt = int.tryParse(raw);
+    if (asInt != null) add(asInt.toString());
+    return out;
+  }
+
+  Future<List<Map<String, Object?>>> _queryResumoPorDietaDataTrato({
+    required String dietaNorm,
+    required String ymd,
     int? trato,
-    DateTime? data,
     String? idFazenda,
   }) async {
-    const t = "PREVISAO";
-    if (!await _hasTable(t)) return [];
-
     final where = <String>[];
     final args = <Object?>[];
 
-    final dietaNorm =
-        idDieta.trim().replaceAll(RegExp(r"\s+"), "").toUpperCase();
-    if (dietaNorm.isNotEmpty) {
-      where.add(
-        "REPLACE(UPPER(TRIM(COALESCE(p.ID_RACAO,''))), ' ', '') = ?",
-      );
-      args.add(dietaNorm);
-    }
+    where.add(
+      "REPLACE(UPPER(TRIM(COALESCE(p.${FornTables.pvIdRacao},''))), ' ', '') = ?",
+    );
+    args.add(dietaNorm);
 
     if (trato != null && trato > 0) {
-      where.add("COALESCE(p.TRATO,0) = ?");
+      where.add("COALESCE(p.${FornTables.pvTrato},0) = ?");
       args.add(trato);
     }
 
-    final d = data ?? DateTime.now();
-    final y = d.year.toString().padLeft(4, "0");
-    final m = d.month.toString().padLeft(2, "0");
-    final dd = d.day.toString().padLeft(2, "0");
-    final ymd = "$y-$m-$dd";
-    where.add("substr(COALESCE(p.DATA,''),1,10) = ?");
+    where.add("substr(COALESCE(p.${FornTables.pvData},''),1,10) = ?");
     args.add(ymd);
 
     final faz = (idFazenda ?? "").trim();
-    final joinBaias =
-        faz.isNotEmpty && await _hasTable(FornTables.detalhesBaias);
-    if (joinBaias) {
-      where.add("TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)");
+    if (faz.isNotEmpty && await _hasTable(FornTables.detalhesBaias)) {
+      where.add("""
+        EXISTS (
+          SELECT 1
+          FROM ${FornTables.detalhesBaias} db
+          WHERE TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+                TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
+            AND TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)
+        )
+      """);
       args.add(faz);
     }
 
-    final joinSql = joinBaias
-        ? """
-      LEFT JOIN ${FornTables.detalhesBaias} db
-        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
-           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
-    """
-        : "";
-
     final sql = """
       SELECT
-        COALESCE(p.ID_RACAO,'') AS id_dieta,
-        substr(COALESCE(p.DATA,''),1,10) AS data_ymd,
-        COALESCE(p.TRATO,0) AS trato,
-        SUM(COALESCE(p.PREVISTO_KG,0)) AS previsto,
+        COALESCE(p.${FornTables.pvIdRacao},'') AS id_dieta,
+        substr(COALESCE(p.${FornTables.pvData},''),1,10) AS data_ymd,
+        COALESCE(p.${FornTables.pvTrato},0) AS trato,
+        SUM(COALESCE(p.${FornTables.pvPrevistoKg},0)) AS previsto,
         SUM(${FornTables.sqlRealizadoKgLocal("p")}) AS realizado
-      FROM PREVISAO p
-      $joinSql
-      ${where.isEmpty ? "" : "WHERE ${where.join(" AND ")}"}
+      FROM ${FornTables.previsao} p
+      WHERE ${where.join(" AND ")}
       GROUP BY id_dieta, data_ymd, trato
       ORDER BY data_ymd DESC, trato ASC
     """;
@@ -130,6 +133,51 @@ class FabricacaoRepo {
     final db = await _db;
     final rows = await db.rawQuery(sql, args);
     return rows.map((e) => _lowerKeys(Map<String, Object?>.from(e))).toList();
+  }
+
+  Future<List<Map<String, Object?>>> listResumoPorDietaDataTrato({
+    required String idDieta,
+    int? trato,
+    DateTime? data,
+    String? idFazenda,
+  }) async {
+    if (!await _hasTable(FornTables.previsao)) return [];
+
+    final d = data ?? DateTime.now();
+    final y = d.year.toString().padLeft(4, "0");
+    final m = d.month.toString().padLeft(2, "0");
+    final dd = d.day.toString().padLeft(2, "0");
+    final ymd = "$y-$m-$dd";
+
+    final faz = (idFazenda ?? "").trim();
+    final candidates = _dietaIdCandidates(idDieta);
+
+    for (final dietaNorm in candidates) {
+      if (faz.isNotEmpty) {
+        final comFazenda = await _queryResumoPorDietaDataTrato(
+          dietaNorm: dietaNorm,
+          ymd: ymd,
+          trato: trato,
+          idFazenda: faz,
+        );
+        if (comFazenda.isNotEmpty) return comFazenda;
+      }
+
+      final semFazenda = await _queryResumoPorDietaDataTrato(
+        dietaNorm: dietaNorm,
+        ymd: ymd,
+        trato: trato,
+        idFazenda: null,
+      );
+      if (semFazenda.isNotEmpty) return semFazenda;
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        "[FAB_RESUMO] vazio dieta='$idDieta' data=$ymd trato=$trato fazenda='$faz'",
+      );
+    }
+    return [];
   }
 
   // =========================================================

@@ -119,11 +119,12 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
 
     if (mounted) setState(() => _loadingResumo = true);
     try {
-      final idFazenda = await _cfg.getIdFazendaSelecionada();
+      final backend = await _cfg.getBackend();
+      final isFieldpec = backend == 1;
+      final idFazendaSel = await _cfg.getIdFazendaSelecionada();
       final rows = await widget.repo.listResumoPorDietaDataTrato(
         idDieta: id,
-        trato: _tratoSelecionado,
-        idFazenda: idFazenda,
+        idFazenda: isFieldpec ? null : idFazendaSel,
       );
       final list = rows.map(_ResumoTrato.fromMap).toList();
       if (!mounted) return;
@@ -340,7 +341,11 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                       )
                                       .toList(),
                                   onChanged: (v) async {
-                                    setState(() => _dietaId = v);
+                                    setState(() {
+                                      _dietaId = v;
+                                      _tratoSelecionado = null;
+                                      _kgCtrl.text = "0";
+                                    });
                                     await _loadResumo();
                                   },
                                   decoration: const InputDecoration(
@@ -405,11 +410,10 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                         return ChoiceChip(
                                           label: Text("Trato $t"),
                                           selected: sel,
-                                          onSelected: (_) async {
+                                          onSelected: (_) {
                                             setState(
                                               () => _tratoSelecionado = t,
                                             );
-                                            await _loadResumo();
                                           },
                                         );
                                       }).toList(),
@@ -423,6 +427,17 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                               const Padding(
                                 padding: EdgeInsets.symmetric(vertical: 6),
                                 child: LinearProgressIndicator(minHeight: 3),
+                              )
+                            else if (_resumos.isEmpty)
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Text(
+                                    "Nenhum previsto encontrado para esta dieta hoje. "
+                                    "Sincronize a previsao do dia ou verifique a fazenda selecionada.",
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ),
                               ),
                             if (_resumos.isNotEmpty)
                               Card(
