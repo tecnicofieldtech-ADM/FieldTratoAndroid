@@ -4,10 +4,16 @@ import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 
 import "../../../db/app_db.dart";
+import "../../../services/rfid_tag_resolver.dart";
 import "fornecimento_tables.dart";
 import "../domain/fornecimento_models.dart";
 
 class FornecimentoDao {
+  FornecimentoDao({RfidTagResolver? rfidResolver})
+      : _rfidResolver = rfidResolver ?? RfidTagResolver();
+
+  final RfidTagResolver _rfidResolver;
+
   Future<Database> get _db async => AppDb.instance.db;
 
   // ✅ executa SQL "cru"
@@ -274,12 +280,17 @@ class FornecimentoDao {
     final tag = epc.trim();
     if (tag.isEmpty) return null;
 
+    final rfidMatch = await _rfidResolver.sqlRfidEquals(
+      "db.${FornTables.dbRfid}",
+      tag,
+    );
+
     final where = <String>[
-      "TRIM(db.${FornTables.dbRfid}) = TRIM(?)",
+      rfidMatch.clause,
       "substr(a.${FornTables.pvData},1,10) = ?",
       "a.${FornTables.pvTrato} = ?",
     ];
-    final args = <Object?>[tag, dataYmd, trato];
+    final args = <Object?>[...rfidMatch.args, dataYmd, trato];
 
     final racao = (idRacao ?? "").trim();
     if (racao.isNotEmpty) {
@@ -909,11 +920,19 @@ class FornecimentoDao {
     final tag = rfid.trim();
     if (tag.isEmpty) return null;
 
-    final rows = await db.query(
-      FornTables.detalhesBaias,
-      where: "TRIM(${FornTables.dbRfid}) = TRIM(?)",
-      whereArgs: [tag],
-      limit: 1,
+    final rfidMatch = await _rfidResolver.sqlRfidEquals(
+      FornTables.dbRfid,
+      tag,
+    );
+
+    final rows = await db.rawQuery(
+      """
+      SELECT *
+      FROM ${FornTables.detalhesBaias}
+      WHERE ${rfidMatch.clause}
+      LIMIT 1
+      """,
+      rfidMatch.args,
     );
 
     if (rows.isEmpty) return null;

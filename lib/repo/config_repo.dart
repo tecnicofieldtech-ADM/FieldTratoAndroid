@@ -64,6 +64,11 @@ class ConfigRepo {
           "station_wifi_password", "STATION_WIFI_PASSWORD TEXT");
       await addIfMissing("station_base_url", "STATION_BASE_URL TEXT");
       await addIfMissing("station_base_url_legacy", "STATION_BASE_URL_LEGACY TEXT");
+      await addIfMissing(
+        "ignorar_prefixo_rfid",
+        "IGNORAR_PREFIXO_RFID INTEGER DEFAULT 0",
+      );
+      await addIfMissing("prefixo_rfid", "PREFIXO_RFID TEXT DEFAULT 'H'");
     } catch (_) {
       // se der erro (tabela não existe, etc.), ignora aqui.
       // seu AppDb.onCreate garante a criação.
@@ -183,6 +188,17 @@ class ConfigRepo {
   Future<String> getHostRfid() async => _toStr(await _getField("HOST_RFID"));
   Future<int> getPortaRfid() async => _toInt(await _getField("PORTA_RFID"));
   Future<int> getModeloRfid() async => _toInt(await _getField("MODELO_RFID"));
+
+  /// Antena Intelbras etc.: ignora letra de prefixo ao consultar tag no banco.
+  Future<bool> getIgnorarPrefixoRfid() async {
+    return _toInt(await _getField("IGNORAR_PREFIXO_RFID"), def: 0) == 1;
+  }
+
+  Future<String> getPrefixoRfid() async {
+    final v = _toStr(await _getField("PREFIXO_RFID"), def: "H").trim();
+    if (v.isEmpty) return "H";
+    return v.substring(0, 1).toUpperCase();
+  }
 
   // -------------------------
   // FABRICAÇÃO

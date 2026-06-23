@@ -7,6 +7,8 @@ import "../../../helpers/rfid_comm.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
 import "../../../services/session_service.dart";
+import "../../../services/rfid_tag_resolver.dart";
+import "../../../utils/rfid_tag_utils.dart";
 
 class FornecimentoHeaderVM {
   final int trato;
@@ -85,6 +87,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
   final FornecimentoRepo _repo;
   final ScaleComm _scale;
   final RfidComm _rfid;
+  final RfidTagResolver _rfidTagResolver = RfidTagResolver();
 
   final bool _autoFlowRfid;
 
@@ -354,16 +357,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
   bool _equalsIgnoreCase(String a, String b) =>
       a.toLowerCase() == b.toLowerCase();
 
-  String _normalizeEpc(String s) {
-    var t = s.trim();
-    final up = t.toUpperCase();
+  String _normalizeEpc(String s) => RfidTagUtils.normalizeRawEpc(s);
 
-    final idx = up.indexOf("EPC:");
-    if (idx >= 0) t = t.substring(idx + 4).trim();
-    if (t.startsWith(";")) t = t.substring(1).trim();
-
-    t = t.replaceAll(" ", "").replaceAll("\n", "").replaceAll("\r", "");
-    return t;
+  Future<bool> _sameRfidTag(String a, String b) async {
+    final x = _normalizeEpc(a);
+    final y = _normalizeEpc(b);
+    if (x.isEmpty || y.isEmpty) return false;
+    if (x == y) return true;
+    return _rfidTagResolver.matches(a, b);
   }
 
   String _currentUserId() {
@@ -573,10 +574,10 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _rfidProcessing = true;
     try {
       final currentSessao = _selected;
-      final currentEpc = _normalizeEpc(currentSessao?.epc ?? "").toUpperCase();
-      final lidoEpc = _normalizeEpc(epc).toUpperCase();
-      final tagDiferenteDaSessaoAtual =
-          currentEpc.isEmpty || currentEpc != lidoEpc;
+      final currentEpc = _normalizeEpc(currentSessao?.epc ?? "");
+      final lidoEpc = _normalizeEpc(epc);
+      final tagDiferenteDaSessaoAtual = currentEpc.isEmpty ||
+          !await _sameRfidTag(currentSessao?.epc ?? "", epc);
 
       final target = await _findCurralByEpc(epc);
 
@@ -678,14 +679,13 @@ class FornecimentoDashboardController extends ChangeNotifier {
   }
 
   Future<CurralCardVM?> _findCurralByEpc(String epc) async {
-    final epcNorm = _normalizeEpc(epc).toUpperCase();
+    final epcNorm = _normalizeEpc(epc);
     if (epcNorm.isEmpty) return null;
 
-    // tenta no mapa já carregado
     for (final c in _curraisAll) {
-      final ce = c.epc == null ? "" : _normalizeEpc(c.epc!).toUpperCase();
-      if (ce.isEmpty) continue;
-      if (ce == epcNorm) return c;
+      final ce = c.epc;
+      if (ce == null || ce.trim().isEmpty) continue;
+      if (await _rfidTagResolver.matches(epc, ce)) return c;
     }
 
     final h = _header;

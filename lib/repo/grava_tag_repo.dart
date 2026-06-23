@@ -1,6 +1,7 @@
 import "package:sqflite/sqflite.dart";
 
 import "../db/app_db.dart";
+import "../services/rfid_tag_resolver.dart";
 
 class GravaTagCurral {
   GravaTagCurral({
@@ -19,6 +20,11 @@ class GravaTagCurral {
 }
 
 class GravaTagRepo {
+  GravaTagRepo({RfidTagResolver? rfidResolver})
+      : _rfidResolver = rfidResolver ?? RfidTagResolver();
+
+  final RfidTagResolver _rfidResolver;
+
   Future<Database> get _db async => AppDb.instance.db;
 
   String _s(dynamic v) => (v ?? "").toString().trim();
@@ -126,8 +132,13 @@ class GravaTagRepo {
     if (tag.isEmpty) return null;
 
     final faz = _s(idFazenda);
-    final where = <String>["UPPER(TRIM(COALESCE(RFID, ''))) = UPPER(TRIM(?))"];
-    final args = <Object?>[tag];
+    final rfidMatch = await _rfidResolver.sqlRfidEquals(
+      "COALESCE(RFID, '')",
+      tag,
+    );
+
+    final where = <String>[rfidMatch.clause];
+    final args = <Object?>[...rfidMatch.args];
 
     if (faz.isNotEmpty) {
       where.add("TRIM(COALESCE(ID_FAZENDA, '')) = TRIM(?)");
@@ -169,11 +180,16 @@ class GravaTagRepo {
     await db.transaction((txn) async {
       await _ensureGravaTagTable(txn);
 
+      final rfidMatch = await _rfidResolver.sqlRfidEquals(
+        "COALESCE(RFID, '')",
+        tag,
+      );
+
       await txn.update(
         "DETALHES_BAIAS",
         {"RFID": ""},
-        where: "UPPER(TRIM(COALESCE(RFID, ''))) = UPPER(TRIM(?))",
-        whereArgs: [tag],
+        where: rfidMatch.clause,
+        whereArgs: rfidMatch.args,
       );
 
       await txn.update(

@@ -18,6 +18,7 @@ import "../helpers/scale_comm.dart";
 
 // ✅ helper do RFID
 import "../helpers/rfid_comm.dart";
+import "../utils/rfid_tag_utils.dart";
 
 class ConfigPage extends StatefulWidget {
   const ConfigPage({super.key});
@@ -45,6 +46,7 @@ class _ConfigPageState extends State<ConfigPage> {
   final _portaBalancaCtrl = TextEditingController();
   final _ipRfidCtrl = TextEditingController();
   final _portaRfidCtrl = TextEditingController();
+  final _prefixoRfidCtrl = TextEditingController(text: "H");
   final _ipEspelhoCtrl = TextEditingController();
   final _portaEspelhoCtrl = TextEditingController();
   final _hostEstacionarioCtrl = TextEditingController();
@@ -68,7 +70,7 @@ class _ConfigPageState extends State<ConfigPage> {
   int _operacao = 0;
   int _modeloBalanca = 0;
   int _modeloRfid = 0;
-  int _modoSaidaFab = 0; // 0 = Pá | 1 = LED
+  bool _ignorarPrefixoRfid = false;
   FabricacaoFlowMode _flowMode = FabricacaoFlowMode.fullOnStation;
 
   /// Estacionário: libera tile Carregamento no menu. Distribuidor: libera Nova fabricação na lista.
@@ -205,6 +207,7 @@ class _ConfigPageState extends State<ConfigPage> {
     _portaBalancaCtrl.dispose();
     _ipRfidCtrl.dispose();
     _portaRfidCtrl.dispose();
+    _prefixoRfidCtrl.dispose();
     _ipEspelhoCtrl.dispose();
     _portaEspelhoCtrl.dispose();
     _hostEstacionarioCtrl.dispose();
@@ -288,10 +291,13 @@ class _ConfigPageState extends State<ConfigPage> {
 
       _ipRfidCtrl.text = _asStr(cfg["HOST_RFID"]);
       _portaRfidCtrl.text = _asStr(cfg["PORTA_RFID"]);
+      _ignorarPrefixoRfid = _asInt(cfg["IGNORAR_PREFIXO_RFID"], 0) == 1;
+      _prefixoRfidCtrl.text = _asStr(cfg["PREFIXO_RFID"]).trim().isEmpty
+          ? "H"
+          : _asStr(cfg["PREFIXO_RFID"]).trim().substring(0, 1).toUpperCase();
 
       _ipEspelhoCtrl.text = _asStr(cfg["IP_ESPELHO"]);
       _portaEspelhoCtrl.text = _asStr(cfg["PORTA_ESPELHO"]);
-      _modoSaidaFab = _asInt(cfg["MODO_SAIDA_FAB"], 0) == 1 ? 1 : 0;
       _hostEstacionarioCtrl.text = _asStr(cfg["HOST_ESTACIONARIO"]);
       _portaEstacionarioCtrl.text = _asStr(cfg["PORTA_ESTACIONARIO"]);
       _stationWifiSsidCtrl.text = _asStr(cfg["STATION_WIFI_SSID"]);
@@ -446,10 +452,12 @@ class _ConfigPageState extends State<ConfigPage> {
       "MODELO_RFID": _modeloRfid,
       "HOST_RFID": _ipRfidCtrl.text.trim(),
       "PORTA_RFID": int.tryParse(_portaRfidCtrl.text.trim()) ?? 0,
+      "IGNORAR_PREFIXO_RFID": _ignorarPrefixoRfid ? 1 : 0,
+      "PREFIXO_RFID": RfidTagUtils.sanitizePrefixLetter(_prefixoRfidCtrl.text),
       "ID_VAGAO": _idVagao ?? "",
       "NOME_VAGAO": _nomeVagao ?? "",
       "ID_FAZENDA": _idFazenda ?? "",
-      "MODO_SAIDA_FAB": _modoSaidaFab,
+      "MODO_SAIDA_FAB": 0,
       "IP_ESPELHO": _ipEspelhoCtrl.text.trim(),
       "PORTA_ESPELHO": int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 9000,
       "HOST_ESTACIONARIO": hostEst,
@@ -532,13 +540,20 @@ class _ConfigPageState extends State<ConfigPage> {
     final outIp = _ipEspelhoCtrl.text.trim();
     final outPort = int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 0;
     if (outIp.isEmpty) {
-      _toast("Informe o IP da saída (${_modoSaidaFab == 1 ? "LED" : "pá"}).");
+      _toast("Informe o IP do espelhamento da pa.");
       return false;
     }
     if (outPort <= 0) {
-      _toast(
-          "Informe a porta da saída (${_modoSaidaFab == 1 ? "LED" : "pá"}).");
+      _toast("Informe a porta do espelhamento da pa.");
       return false;
+    }
+
+    if (_ignorarPrefixoRfid) {
+      final p = _prefixoRfidCtrl.text.trim();
+      if (p.isEmpty || !RegExp(r"^[A-Za-z0-9]$").hasMatch(p)) {
+        _toast("Informe uma letra ou digito para o prefixo RFID.");
+        return false;
+      }
     }
 
     return true;
@@ -1372,6 +1387,31 @@ class _ConfigPageState extends State<ConfigPage> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text("Ignorar prefixo da tag RFID"),
+                  subtitle: const Text(
+                    "Antena Intelbras pode enviar HF... enquanto o banco tem H... ou F...",
+                  ),
+                  value: _ignorarPrefixoRfid,
+                  onChanged: (v) => setState(() => _ignorarPrefixoRfid = v),
+                ),
+                if (_ignorarPrefixoRfid) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _prefixoRfidCtrl,
+                    maxLength: 1,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(
+                      labelText: "Letra do prefixo",
+                      helperText:
+                          "Ex.: H — usada ao consultar a tag no banco apos a leitura.",
+                      border: OutlineInputBorder(),
+                      counterText: "",
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 12),
                 SizedBox(
@@ -1437,38 +1477,22 @@ class _ConfigPageState extends State<ConfigPage> {
 
                 const SizedBox(height: 16),
 
-                _sectionTitle("Saída da fabricação"),
-                RadioListTile<int>(
-                  dense: true,
-                  value: 0,
-                  groupValue: _modoSaidaFab,
-                  title: const Text("Espelhamento da pá"),
-                  onChanged: (v) => setState(() => _modoSaidaFab = v ?? 0),
-                ),
-                RadioListTile<int>(
-                  dense: true,
-                  value: 1,
-                  groupValue: _modoSaidaFab,
-                  title: const Text("LED de rede"),
-                  onChanged: (v) => setState(() => _modoSaidaFab = v ?? 1),
-                ),
+                _sectionTitle("Espelhamento da pa"),
                 TextField(
                   controller: _ipEspelhoCtrl,
-                  decoration: InputDecoration(
-                    labelText: _modoSaidaFab == 1 ? "IP do LED" : "IP da pá",
-                    border: const OutlineInputBorder(),
+                  decoration: const InputDecoration(
+                    labelText: "IP da pa",
+                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _portaEspelhoCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: _modoSaidaFab == 1
-                        ? "Porta do LED"
-                        : "Porta do espelhamento",
-                    helperText: "Padrão: 9000",
-                    border: const OutlineInputBorder(),
+                  decoration: const InputDecoration(
+                    labelText: "Porta do espelhamento",
+                    helperText: "Padrao: 9000",
+                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 22),
