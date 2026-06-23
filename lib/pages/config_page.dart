@@ -118,6 +118,8 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _testingStation = false;
   bool _connectingStationWifi = false;
   bool get _isDistribuidor => _operacao == 2;
+  bool get _exigeEspelhamento => _operacao == 0 || _operacao == 1;
+  bool get _exigeConfigEstacionario => _isDistribuidor && _modoHibrido;
 
   List<Widget> _fabricacaoFlowModeRadioTiles() {
     return [
@@ -519,7 +521,7 @@ class _ConfigPageState extends State<ConfigPage> {
       return false;
     }
 
-    if (_isDistribuidor) {
+    if (_exigeConfigEstacionario) {
       final base = _stationBaseUrlCtrl.text.trim();
       final ssid = _stationWifiSsidCtrl.text.trim();
       if (base.isEmpty) {
@@ -537,15 +539,17 @@ class _ConfigPageState extends State<ConfigPage> {
       }
     }
 
-    final outIp = _ipEspelhoCtrl.text.trim();
-    final outPort = int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 0;
-    if (outIp.isEmpty) {
-      _toast("Informe o IP do espelhamento da pa.");
-      return false;
-    }
-    if (outPort <= 0) {
-      _toast("Informe a porta do espelhamento da pa.");
-      return false;
+    if (_exigeEspelhamento) {
+      final outIp = _ipEspelhoCtrl.text.trim();
+      final outPort = int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 0;
+      if (outIp.isEmpty) {
+        _toast("Informe o IP do espelhamento da pa.");
+        return false;
+      }
+      if (outPort <= 0) {
+        _toast("Informe a porta do espelhamento da pa.");
+        return false;
+      }
     }
 
     if (_ignorarPrefixoRfid) {
@@ -1477,6 +1481,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
                 const SizedBox(height: 16),
 
+                if (_exigeEspelhamento) ...[
                 _sectionTitle("Espelhamento da pa"),
                 TextField(
                   controller: _ipEspelhoCtrl,
@@ -1496,8 +1501,9 @@ class _ConfigPageState extends State<ConfigPage> {
                   ),
                 ),
                 const SizedBox(height: 22),
+                ],
 
-                if (_isDistribuidor) ...[
+                if (_exigeConfigEstacionario) ...[
                   Card(
                     clipBehavior: Clip.antiAlias,
                     child: Padding(

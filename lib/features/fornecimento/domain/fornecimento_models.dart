@@ -466,6 +466,21 @@ class FabricacaoFornecimentoGate {
     );
   }
 
+  factory FabricacaoFornecimentoGate.semVinculo({
+    required String idDieta,
+    required double pesoCarregadoKg,
+    String? racaoNome,
+  }) {
+    return FabricacaoFornecimentoGate(
+      idFabricacao: "",
+      idDieta: idDieta.trim(),
+      qtdPrevista: pesoCarregadoKg,
+      qtdRealizada: pesoCarregadoKg,
+      syncOk: false,
+      racaoNome: racaoNome,
+    );
+  }
+
   String get racaoDisplay {
     final nome = (racaoNome ?? "").trim();
     if (nome.isNotEmpty) return nome;

@@ -92,6 +92,7 @@ class _MenuPageState extends State<MenuPage> {
       "/fabricacao",
       "/fornecimento",
       "/grava-tag",
+      "/carregamento-estacionario",
     };
     final needsWifiPermission = syncRoute || fieldTratoRequiredRoutes.contains(route);
 
@@ -104,7 +105,8 @@ class _MenuPageState extends State<MenuPage> {
           builder: (_) => AlertDialog(
             title: const Text("Permissao necessaria"),
             content: const Text(
-              "Para verificar o nome da rede Wi-Fi, permita a Localizacao do app nas configuracoes.",
+              "Para verificar o nome da rede Wi-Fi, permita Localizacao e "
+              "Dispositivos proximos (Wi-Fi) nas permissoes do app.",
             ),
             actions: [
               TextButton(
@@ -233,7 +235,7 @@ class _MenuPageState extends State<MenuPage> {
               builder: (_) => AlertDialog(
                 title: const Text("Rede para operacao"),
                 content: Text(
-                  "Para operar Fabricacao, Fornecimento e Gravar TAG, conecte em uma rede FieldTrato*.\n\n"
+                  "Para operar Fabricacao, Carregamento, Fornecimento e Gravar TAG, conecte em uma rede FieldTrato*.\n\n"
                   "Rede atual: ${ssid.isEmpty ? "nao identificada" : ssid}",
                 ),
                 actions: [
@@ -304,9 +306,13 @@ class _MenuPageState extends State<MenuPage> {
 
                   final t = _tipoTrabalho;
                   final hibrido = _modoHibrido;
-                  final podeFabricar = (t == null) || t == 0 || t == 1 || t == 2;
-                  final podeFornecer = (t == null) || t == 0 || t == 2;
-                  final podeCarregamento = t == 2 || (t == 1 && hibrido);
+                  final distribuidorPuro = t == 2 && !hibrido;
+                  final podeFabricar = t != null &&
+                      (t == 0 || t == 1 || (t == 2 && hibrido));
+                  final podeFornecer =
+                      t == null || t == 0 || t == 2;
+                  final podeCarregamento =
+                      t == 2 || (t == 1 && hibrido);
 
                   return Column(
                     children: [
@@ -417,18 +423,36 @@ class _MenuPageState extends State<MenuPage> {
                                   SizedBox(
                                     width: tileW,
                                     height: tileH,
-                                    child: _Tile(
-                                      icon: Icons.precision_manufacturing,
-                                      title: "Fabricação",
-                                      bg: const Color(0xCC25A7CF),
-                                      fg: Colors.white,
-                                      enabled: podeFabricar,
-                                      onTap: () => _go(context, "/fabricacao"),
-                                      onDisabledTap: () => _toast(
-                                        context,
-                                        "Modo Distribuidor: Fabricação desabilitada.",
-                                      ),
-                                    ),
+                                    child: distribuidorPuro
+                                        ? _Tile(
+                                            icon: Icons
+                                                .download_for_offline_outlined,
+                                            title: "Carregamento",
+                                            bg: const Color(0xCC25A7CF),
+                                            fg: Colors.white,
+                                            enabled: podeCarregamento,
+                                            onTap: () => _go(
+                                              context,
+                                              "/carregamento-estacionario",
+                                            ),
+                                            onDisabledTap: () => _toast(
+                                              context,
+                                              "Carregamento indisponível neste modo.",
+                                            ),
+                                          )
+                                        : _Tile(
+                                            icon: Icons.precision_manufacturing,
+                                            title: "Fabricação",
+                                            bg: const Color(0xCC25A7CF),
+                                            fg: Colors.white,
+                                            enabled: podeFabricar,
+                                            onTap: () =>
+                                                _go(context, "/fabricacao"),
+                                            onDisabledTap: () => _toast(
+                                              context,
+                                              "Fabricação indisponível neste modo.",
+                                            ),
+                                          ),
                                   ),
                                   const SizedBox(width: gap),
                                   SizedBox(
@@ -454,42 +478,75 @@ class _MenuPageState extends State<MenuPage> {
                               const SizedBox(height: gap),
 
                               // ===== LINHA 3 =====
-                              Row(
-                                children: [
-                                  SizedBox(
-                                    width: tileW,
-                                    height: tileH,
-                                    child: _Tile(
-                                      icon: Icons.download_for_offline_outlined,
-                                      title: "Carregamento",
-                                      bg: const Color(0xCC25A7CF),
-                                      fg: Colors.white,
-                                      enabled: podeCarregamento,
-                                      onTap: () => _go(
-                                        context,
-                                        "/carregamento-estacionario",
-                                      ),
-                                      onDisabledTap: () => _toast(
-                                        context,
-                                        "Modo Estacionario: funcao exclusiva do distribuidor.",
+                              if (!distribuidorPuro)
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      width: tileW,
+                                      height: tileH,
+                                      child: _Tile(
+                                        icon: Icons.download_for_offline_outlined,
+                                        title: "Carregamento",
+                                        bg: const Color(0xCC25A7CF),
+                                        fg: Colors.white,
+                                        enabled: podeCarregamento,
+                                        onTap: () => _go(
+                                          context,
+                                          "/carregamento-estacionario",
+                                        ),
+                                        onDisabledTap: () => _toast(
+                                          context,
+                                          "Modo Estacionario: funcao exclusiva do distribuidor.",
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: gap),
-                                  SizedBox(
-                                    width: tileW,
-                                    height: tileH,
-                                    child: _Tile(
-                                      icon: Icons.dashboard_outlined,
-                                      title: "Dashboard",
-                                      bg: const Color(0xCC25A7CF),
-                                      fg: Colors.white,
-                                      onTap: () => _go(context, "/dashboard"),
+                                    const SizedBox(width: gap),
+                                    SizedBox(
+                                      width: tileW,
+                                      height: tileH,
+                                      child: _Tile(
+                                        icon: Icons.dashboard_outlined,
+                                        title: "Dashboard",
+                                        bg: const Color(0xCC25A7CF),
+                                        fg: Colors.white,
+                                        onTap: () =>
+                                            _go(context, "/dashboard"),
+                                      ),
                                     ),
-                                  ),
-                                ],
-                              ),
+                                  ],
+                                )
+                              else
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      width: tileW,
+                                      height: tileH,
+                                      child: _Tile(
+                                        icon: Icons.dashboard_outlined,
+                                        title: "Dashboard",
+                                        bg: const Color(0xCC25A7CF),
+                                        fg: Colors.white,
+                                        onTap: () =>
+                                            _go(context, "/dashboard"),
+                                      ),
+                                    ),
+                                    const SizedBox(width: gap),
+                                    SizedBox(
+                                      width: tileW,
+                                      height: tileH,
+                                      child: _Tile(
+                                        icon: Icons.nfc,
+                                        title: "Gravar TAG",
+                                        bg: const Color(0xCC25A7CF),
+                                        fg: Colors.white,
+                                        onTap: () =>
+                                            _go(context, "/grava-tag"),
+                                      ),
+                                    ),
+                                  ],
+                                ),
 
+                              if (!distribuidorPuro) ...[
                               const SizedBox(height: gap),
 
                               // ===== LINHA 4 =====
@@ -514,6 +571,7 @@ class _MenuPageState extends State<MenuPage> {
                                   ),
                                 ],
                               ),
+                              ],
 
                               const SizedBox(height: 18),
                             ],

@@ -1,5 +1,7 @@
 // lib/features/fornecimento/ui/fornecimento_dashboard_page.dart
 import "dart:async";
+
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
@@ -280,11 +282,12 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
         _ctrl.setLeituraRfid(false);
       }
     } catch (e) {
-      _ctrl.setError("Erro ao configurar conexões (balança/RFID): $e");
+      debugPrint("Fornecimento dashboard: falha ao configurar balança/RFID: $e");
     }
   }
 
   Future<void> _boot() async {
+    _ctrl.beginBoot();
     await _loadUiPrefs();
     await _ensureLoggedOrRedirect();
     if (!mounted) return;
@@ -308,10 +311,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     }
 
     if (car == null) {
-      _ctrl.setError(
-        "Não existe carregamento em aberto (STATUS=0).\n"
-        "Finalize a fabricação e gere o carregamento antes de entrar no mapa.",
-      );
+      final tipo = await _cfgRepo.getTipoTrabalho();
+      final msg = tipo == 2
+          ? "Não há carregamento aberto hoje.\n"
+              "Realize o carregamento da ração antes de fornecer."
+          : "Não existe carregamento em aberto (STATUS=0).\n"
+              "Finalize a fabricação e gere o carregamento antes de entrar no mapa.";
+      _ctrl.setError(msg);
       return;
     }
 
@@ -522,12 +528,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
         });
 
         Widget mainBody() {
-          if (_ctrl.error != null) {
+          if (_ctrl.error != null && !_ctrl.loading) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
                   _ctrl.error!,
+                  textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     color: Colors.red,
@@ -535,6 +542,10 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 ),
               ),
             );
+          }
+
+          if (_ctrl.loading && _ctrl.header == null) {
+            return const Center(child: CircularProgressIndicator());
           }
 
           return Column(

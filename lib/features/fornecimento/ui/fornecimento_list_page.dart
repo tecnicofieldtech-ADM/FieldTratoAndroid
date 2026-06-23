@@ -444,7 +444,10 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      final trato = await _pickTratoModal();
+      final sugerido = widget.tratoSugerido;
+      final trato = (sugerido != null && sugerido > 0)
+          ? sugerido
+          : await _pickTratoModal();
       if (!mounted || trato == null) return;
       _openDashboard(trato: trato, startCleared: true);
     });

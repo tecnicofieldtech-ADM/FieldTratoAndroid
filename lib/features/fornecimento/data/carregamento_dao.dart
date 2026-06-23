@@ -1,4 +1,5 @@
 // lib/features/fornecimento/data/carregamento_dao.dart
+import "dart:math";
 import "package:sqflite/sqflite.dart";
 import "../../../db/app_db.dart";
 
@@ -85,6 +86,133 @@ class CarregamentoDao {
 
     if (rows.isEmpty) return null;
     return rows.first;
+  }
+
+  String _newId() {
+    final r = Random();
+    final s = List.generate(32, (_) => r.nextInt(16).toRadixString(16)).join();
+    return "${s.substring(0, 8)}-${s.substring(8, 12)}-${s.substring(12, 16)}-"
+        "${s.substring(16, 20)}-${s.substring(20)}";
+  }
+
+  Future<Map<String, Object?>?> getById(String id) async {
+    final db = await _db;
+    final key = id.trim();
+    if (key.isEmpty) return null;
+
+    final rows = await db.query(
+      _table,
+      where: "TRIM(ID) = TRIM(?)",
+      whereArgs: [key],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Carregamento aberto sem fabricação (ração pronta no vagão).
+  Future<Map<String, Object?>?> getAbertoSemFabricacao({
+    String? idVagao,
+    DateTime? data,
+  }) async {
+    final db = await _db;
+    final dateStr = _ymd(data ?? DateTime.now());
+    final vag = (idVagao ?? "").trim();
+
+    final where = <String>[
+      "COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      "substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?",
+      "TRIM(COALESCE(CAST(ID_FABRICACAO AS TEXT),'')) = ''",
+    ];
+    final args = <Object?>[statusAberto, dateStr];
+
+    if (vag.isNotEmpty) {
+      where.add("TRIM(COALESCE(CAST(ID_VAGAO AS TEXT),'')) = TRIM(?)");
+      args.add(vag);
+    }
+
+    final rows = await db.query(
+      _table,
+      where: where.join(" AND "),
+      whereArgs: args,
+      orderBy: "DATA_REGISTRO DESC",
+      limit: 1,
+    );
+
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  Future<String> criarAbertoSemFabricacao({
+    required String idDieta,
+    required String idVagao,
+    required double pesoCarregado,
+    DateTime? data,
+  }) async {
+    final db = await _db;
+    final dieta = idDieta.trim();
+    final vag = idVagao.trim();
+    if (dieta.isEmpty) {
+      throw Exception("Dieta obrigatoria para carregamento sem fabricacao.");
+    }
+    if (vag.isEmpty) {
+      throw Exception("Vagao nao configurado.");
+    }
+    if (pesoCarregado <= 0) {
+      throw Exception("Peso carregado deve ser maior que zero.");
+    }
+
+    final existente = await getAbertoSemFabricacao(idVagao: vag, data: data);
+    if (existente != null) {
+      final id = (existente["ID"] ?? "").toString().trim();
+      if (id.isNotEmpty) {
+        await db.update(
+          _table,
+          {
+            "ID_DIETA": dieta,
+            "PESO_CARREGADO": pesoCarregado,
+            "PESO_FABRICADO": pesoCarregado,
+            "ID_VAGAO": vag,
+          },
+          where: "TRIM(ID) = TRIM(?)",
+          whereArgs: [id],
+        );
+        return id;
+      }
+    }
+
+    final id = _newId();
+    await db.insert(_table, {
+      "ID": id,
+      "DATA_REGISTRO": (data ?? DateTime.now()).toIso8601String(),
+      "STATUS": statusAberto,
+      "ID_FABRICACAO": "",
+      "ID_DIETA": dieta,
+      "PESO_FABRICADO": pesoCarregado,
+      "PESO_CARREGADO": pesoCarregado,
+      "ID_VAGAO": vag,
+    });
+    return id;
+  }
+
+  Future<int> updatePesoCarregadoAberto({
+    required String idCarregamento,
+    required double pesoCarregado,
+  }) async {
+    final db = await _db;
+    final id = idCarregamento.trim();
+    if (id.isEmpty) return 0;
+
+    return db.update(
+      _table,
+      {
+        "PESO_CARREGADO": pesoCarregado,
+        "PESO_FABRICADO": pesoCarregado,
+      },
+      where: "TRIM(ID) = TRIM(?) AND COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      whereArgs: [id, statusAberto],
+    );
   }
 
   /// ✅ Finaliza um carregamento (status=1)

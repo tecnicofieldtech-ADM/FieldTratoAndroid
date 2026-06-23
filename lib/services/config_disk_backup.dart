@@ -60,7 +60,7 @@ class ConfigDiskBackup {
     final payload = <String, dynamic>{
       "schema": schemaVersion,
       "savedAt": DateTime.now().toUtc().toIso8601String(),
-      "appId": "com.rfeed.rfeedx",
+      "appId": "com.rfeed.fieldtrato",
       "config": _configToJsonMap(config),
       if (session != null) "session": session,
     };

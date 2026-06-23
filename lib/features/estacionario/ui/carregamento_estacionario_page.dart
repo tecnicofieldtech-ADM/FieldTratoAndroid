@@ -15,6 +15,7 @@ import "../../fabricacao/data/fabricacao_repo.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
 import "../../fabricacao/ui/fabricacao_carregamento_vagao_page.dart";
 import "../../fabricacao/ui/fabricacao_recebimento_peso_caminhao_page.dart";
+import "carregamento_sem_vinculo_page.dart";
 
 class CarregamentoEstacionarioPage extends StatefulWidget {
   const CarregamentoEstacionarioPage({super.key});
@@ -33,6 +34,7 @@ class _CarregamentoEstacionarioPageState
 
   bool _loading = false;
   bool _modoDistribuidor = false;
+  bool _modoBeatBox = false;
   bool _healthOk = false;
   bool _buscarAoRetornarDoWifi = false;
 
@@ -68,15 +70,22 @@ class _CarregamentoEstacionarioPageState
   Future<String?> _readSsidWithGate() async {
     if (!Platform.isAndroid) return "";
 
+    var ssid = await WifiGuard.getCurrentSsid();
+    if (WifiGuard.isSsidIdentifiable(ssid)) return ssid;
+
     final granted = await WifiGuard.requestLocationPermissionIfNeeded();
     if (!mounted) return null;
     if (!granted) {
+      ssid = await WifiGuard.getCurrentSsid();
+      if (WifiGuard.isSsidIdentifiable(ssid)) return ssid;
+
       final abrir = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
               title: const Text("Permissão necessária"),
               content: const Text(
-                "Para verificar o nome da rede Wi‑Fi, permita a localização do app nas configurações.",
+                "Para verificar o nome da rede Wi‑Fi, permita Localização e "
+                "Dispositivos próximos (Wi‑Fi) nas permissões do app.",
               ),
               actions: [
                 TextButton(
@@ -95,7 +104,7 @@ class _CarregamentoEstacionarioPageState
       return null;
     }
 
-    var ssid = await WifiGuard.getCurrentSsid();
+    ssid = await WifiGuard.getCurrentSsid();
     if (!mounted) return null;
     if (ssid.isEmpty) {
       final locOn = await WifiGuard.isLocationServiceEnabled();
@@ -126,6 +135,44 @@ class _CarregamentoEstacionarioPageState
       }
     }
     return ssid;
+  }
+
+  /// Ração pronta / vagão: exige rede FieldTrato* (balança e RFID).
+  Future<bool> _ensureOnFieldTratoNetwork({bool abrirWifi = true}) async {
+    if (!Platform.isAndroid) return true;
+
+    final ssid = await _readSsidWithGate();
+    if (ssid == null) return false;
+    if (WifiGuard.isFieldTratoSsid(ssid)) return true;
+    if (!mounted) return false;
+
+    final trocar = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Rede FieldTrato necessária"),
+            content: Text(
+              "Para carregar na balança do vagão, conecte em uma rede FieldTrato*.\n\n"
+              "Rede atual: ${ssid.isEmpty ? "não identificada" : ssid}",
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text("Cancelar"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text("Abrir Wi‑Fi"),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (trocar && abrirWifi) {
+      await WifiGuard.openWifiSelector();
+      _msg("Conecte na rede FieldTrato do vagão e tente novamente.");
+    }
+    return false;
   }
 
   /// Passo 1: Wi‑Fi BeatBox / estacionário.
@@ -189,13 +236,12 @@ class _CarregamentoEstacionarioPageState
                     ? "Você ainda está na rede do estacionário:\n\n"
                         "• Rede atual: $ssid\n"
                         "• Rede estacionária (config): $station\n\n"
-                        "Conecte em uma rede diferente — a Wi‑Fi do vagão/balança — "
+                        "Conecte na rede FieldTrato do vagão (SSID diferente de $station) "
                         "para pesar e completar o carregamento."
-                    : "Não foi possível confirmar a rede do vagão.\n\n"
+                    : "Conecte na rede FieldTrato do vagão para pesar o carregamento.\n\n"
                         "Rede atual: ${ssid.isEmpty ? "não identificada" : ssid}\n"
                         "Rede estacionária (config): $station\n\n"
-                        "Conecte na Wi‑Fi do vagão (SSID diferente de $station) "
-                        "e toque em Verificar.",
+                        "A rede deve começar com FieldTrato e ser diferente de $station.",
               ),
               actions: [
                 TextButton(
@@ -241,8 +287,6 @@ class _CarregamentoEstacionarioPageState
       _alvoBridge =
           alvo == null ? "-" : "http://${alvo.host}:${alvo.port} (bridge)";
     });
-
-    await _iniciarFluxoEntrada();
   }
 
   /// Passos 1–2: abrir Wi‑Fi BeatBox e listar carregamentos.
@@ -458,6 +502,61 @@ class _CarregamentoEstacionarioPageState
       body: Column(
         children: [
           Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  label: Text("Ração pronta"),
+                  icon: Icon(Icons.scale),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text("BeatBox"),
+                  icon: Icon(Icons.download),
+                ),
+              ],
+              selected: {_modoBeatBox},
+              onSelectionChanged: (s) {
+                setState(() => _modoBeatBox = s.first);
+                if (_modoBeatBox) {
+                  unawaited(_iniciarFluxoEntrada());
+                }
+              },
+            ),
+          ),
+          if (!_modoBeatBox)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      "Carregue a ração já fabricada na balança do vagão, "
+                      "sem importar lote da BeatBox.",
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () async {
+                        if (!await _ensureOnFieldTratoNetwork()) return;
+                        if (!mounted) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const CarregamentoSemVinculoPage(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_forward),
+                      label: const Text("Iniciar carregamento sem vínculo"),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else ...[
+          Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -536,6 +635,7 @@ class _CarregamentoEstacionarioPageState
                         },
                       ),
           ),
+          ],
         ],
       ),
     );

@@ -440,9 +440,7 @@ class OutboxSync {
 
   Future<void> syncFornecimento(void Function(String) log) async {
     if (api.isFieldpec) {
-      log(
-        "Fieldpec: fornecimento sincroniza junto com /Post/Fabricacao (pacote completo).",
-      );
+      await _syncFornecimentoFieldpecSemFabricacao(log);
       return;
     }
 
@@ -583,6 +581,99 @@ class OutboxSync {
 
     if (syncedCount > 0) {
       log("$syncedCount registro(s) de fornecimento marcado(s) FLAG_SYNC=1");
+    }
+  }
+
+  /// Fieldpec: fornecimentos sem fabricação no tablet (carregamento sem vínculo).
+  Future<void> _syncFornecimentoFieldpecSemFabricacao(
+    void Function(String) log,
+  ) async {
+    final db = await AppDb.instance.db;
+
+    final rows = await db.rawQuery('''
+      SELECT
+        cf.ID                                                       AS id_cadastro,
+        cf.ID_FORNECIMENTO                                          AS id_fornecimento,
+        cf.ID_BAIA                                                  AS id_baia,
+        cf.DATA                                                     AS data_forn,
+        cf.TRATO                                                    AS trato,
+        cf.ID_FABRICACAO                                            AS id_fabricacao,
+        cf.ID_USUARIO                                               AS id_usuario_lancamento,
+        COALESCE(cf.ID_DIETA, '')                                   AS id_dieta_realizada,
+        COALESCE(cf.ID_DIETA, '')                                   AS id_racao,
+        COALESCE(cf.REALIZADO, 0)                                   AS delta_sessao,
+        COALESCE(p.REALIZADO_KG, 0)                                 AS total_mapa,
+        $_sqlMsFornecResolved                                        AS ms_dieta_realizada
+      FROM CADASTRO_FORNECIMENTO cf
+      LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
+      LEFT JOIN DIETA d ON TRIM(d.ID) = TRIM(COALESCE(cf.ID_DIETA, cfr.ID_DIETA))
+      LEFT JOIN PREVISAO p
+        ON TRIM(p.ID_FORNECIMENTO) = TRIM(cf.ID_FORNECIMENTO)
+       AND TRIM(p.ID_BAIA) = TRIM(cf.ID_BAIA)
+       AND substr(p.DATA, 1, 10) = substr(cf.DATA, 1, 10)
+       AND p.TRATO = cf.TRATO
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND TRIM(COALESCE(cf.ID_FABRICACAO, '')) = ''
+      ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
+    ''');
+
+    if (rows.isEmpty) {
+      log("Fieldpec: nenhum fornecimento sem fabricacao pendente.");
+      return;
+    }
+
+    var syncedCount = 0;
+    for (final r in rows) {
+      final idPrev = _s(r["id_fornecimento"]);
+      final idCad = _s(r["id_cadastro"]);
+      final idBaia = _s(r["id_baia"]);
+      final idRacao = _s(r["id_racao"]);
+      final trato = int.tryParse(_s(r["trato"])) ?? 0;
+      final dataRef = _toBrDate(r["data_forn"]);
+      final deltaSessao = _toDouble(r["delta_sessao"]);
+      if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) continue;
+      if (idBaia.isEmpty || idRacao.isEmpty || trato <= 0 || dataRef.isEmpty) {
+        continue;
+      }
+
+      final msResolved = _toDouble(r["ms_dieta_realizada"]);
+      if (!MsPercent.isValid(msResolved)) {
+        log(
+          "Fieldpec fornecimento cadastro=$idCad: MS invalida (dieta). Pulando.",
+        );
+        continue;
+      }
+
+      final payload = <String, dynamic>{
+        "id": idPrev,
+        "id_cadastro": idCad,
+        "id_fornecimento": idPrev,
+        "id_fabricacao": "",
+        "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
+        "id_tratador": _s(r["id_usuario_lancamento"]),
+        "id_dieta_realizada": _s(r["id_dieta_realizada"]),
+        "id_baia": idBaia,
+        "id_racao": idRacao,
+        "trato": trato.toString(),
+        "data": dataRef,
+        "realizado": _br3(deltaSessao),
+        "ms_dieta_realizada": _br3(msResolved),
+      };
+
+      final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
+      final ok = await api.postFornecimento(payloadFixed, log: log);
+      if (ok) {
+        await _marcarFornecimentoSyncOk(db, idCad);
+        syncedCount++;
+      }
+    }
+
+    if (syncedCount > 0) {
+      log(
+        "Fieldpec: $syncedCount fornecimento(s) sem fabricacao sincronizado(s).",
+      );
     }
   }
 }

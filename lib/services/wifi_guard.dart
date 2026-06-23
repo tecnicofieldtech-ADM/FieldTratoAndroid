@@ -8,17 +8,55 @@ class WifiGuard {
   static const MethodChannel _androidNetworkPanelChannel =
       MethodChannel("rfeed/android_network");
 
-  /// Solicita permissao de localizacao sob demanda quando ainda nao concedida.
+  static bool isSsidIdentifiable(String ssid) {
+    final s = ssid.trim().replaceAll('"', "");
+    if (s.isEmpty) return false;
+    return s.toLowerCase() != "<unknown ssid>";
+  }
+
+  static Future<bool> _locationPermissionGranted() async {
+    final whenInUse = await Permission.locationWhenInUse.status;
+    if (whenInUse.isGranted) return true;
+    final loc = await Permission.location.status;
+    return loc.isGranted;
+  }
+
+  static Future<bool> _nearbyWifiPermissionGranted() async {
+    try {
+      final nearby = await Permission.nearbyWifiDevices.status;
+      return nearby.isGranted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Verifica acesso ao SSID (permissoes + leitura real no aparelho).
   static Future<bool> requestLocationPermissionIfNeeded() async {
     if (!Platform.isAndroid) return true;
 
     try {
-      final current = await Permission.locationWhenInUse.status;
-      if (current.isGranted) return true;
-      // Em alguns aparelhos MIUI, o request nativo pode derrubar o app.
-      // Aqui apenas informamos que ainda nao ha permissao para o fluxo
-      // de UI guiar o usuario ate as configuracoes do app.
-      return false;
+      final ssid = await getCurrentSsid();
+      if (isSsidIdentifiable(ssid)) return true;
+
+      if (await _locationPermissionGranted()) return true;
+      if (await _nearbyWifiPermissionGranted()) return true;
+
+      // Alguns OEMs so atualizam o status apos request().
+      try {
+        final locReq = await Permission.locationWhenInUse.request();
+        if (locReq.isGranted) return true;
+      } catch (_) {}
+
+      try {
+        final nearbyReq = await Permission.nearbyWifiDevices.request();
+        if (nearbyReq.isGranted) return true;
+      } catch (_) {}
+
+      if (await _locationPermissionGranted()) return true;
+      if (await _nearbyWifiPermissionGranted()) return true;
+
+      final ssidAfter = await getCurrentSsid();
+      return isSsidIdentifiable(ssidAfter);
     } catch (_) {
       return false;
     }
@@ -110,13 +148,14 @@ class WifiGuard {
     return a == b;
   }
 
-  /// Após receber carregamento: exige SSID identificável e **diferente** da estacionária.
+  /// Após receber carregamento: exige rede FieldTrato* e **diferente** da estacionária.
   static bool isVagaoNetworkAfterCarregamento({
     required String current,
     required String stationSsid,
   }) {
     final cur = current.trim().replaceAll('"', "");
     if (cur.isEmpty || cur.toLowerCase() == "<unknown ssid>") return false;
+    if (!isFieldTratoSsid(cur)) return false;
     final station = stationSsid.trim();
     if (station.isEmpty) return true;
     return !ssidMatchesExpected(cur, station);

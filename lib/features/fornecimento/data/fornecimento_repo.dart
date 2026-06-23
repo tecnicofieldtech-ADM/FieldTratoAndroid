@@ -227,7 +227,8 @@ class FornecimentoRepo {
     return car != null;
   }
 
-  /// Exige carregamento aberto + fabricação vinculada com QTD_REALIZADA > 0.
+  /// Exige carregamento aberto. Com fabricação vinculada, exige QTD_REALIZADA > 0.
+  /// Sem fabricação (ração pronta), exige dieta e peso carregado > 0.
   Future<FabricacaoFornecimentoGate> assertFabricacaoParaFornecimento({
     DateTime? data,
   }) async {
@@ -240,11 +241,34 @@ class FornecimentoRepo {
       );
     }
 
-    var fabId = (car.idFabricacao ?? "").trim();
+    final fabId = (car.idFabricacao ?? "").trim();
     if (fabId.isEmpty) {
-      fabId = ((await _dao.getFabricacaoEmAbertoId(data: ref)) ?? "").trim();
+      final idDieta = (car.idDieta ?? "").trim();
+      if (idDieta.isEmpty) {
+        throw Exception(
+          "Carregamento aberto sem dieta. Registre o carregamento da ração.",
+        );
+      }
+
+      final row = await _carregDao.getById(car.id);
+      final peso = _toDouble(row?["PESO_CARREGADO"]);
+      if (peso <= 0) {
+        throw Exception(
+          "Carregamento sem peso registrado. Salve o peso carregado antes de fornecer.",
+        );
+      }
+
+      return FabricacaoFornecimentoGate.semVinculo(
+        idDieta: idDieta,
+        pesoCarregadoKg: peso,
+      );
     }
-    if (fabId.isEmpty) {
+
+    var fabIdResolved = fabId;
+    if (fabIdResolved.isEmpty) {
+      fabIdResolved = ((await _dao.getFabricacaoEmAbertoId(data: ref)) ?? "").trim();
+    }
+    if (fabIdResolved.isEmpty) {
       throw Exception(
         "Carregamento aberto sem fabricação vinculada. "
         "Receba o carregamento da BeatBox ou finalize a fabricação com peso "
@@ -252,9 +276,9 @@ class FornecimentoRepo {
       );
     }
 
-    final resumo = await _dao.getFabricacaoResumo(fabId);
+    final resumo = await _dao.getFabricacaoResumo(fabIdResolved);
     if (resumo == null) {
-      throw Exception("Fabricação $fabId não encontrada no tablet.");
+      throw Exception("Fabricação $fabIdResolved não encontrada no tablet.");
     }
 
     final qtdReal = _toDouble(resumo["qtd_realizada"]);
@@ -266,6 +290,28 @@ class FornecimentoRepo {
     }
 
     return FabricacaoFornecimentoGate.fromMap(resumo);
+  }
+
+  Future<String> criarCarregamentoSemVinculo({
+    required String idDieta,
+    required double pesoCarregadoKg,
+    String? idVagaoOverride,
+  }) async {
+    var idVagao = (idVagaoOverride ?? "").trim();
+    if (idVagao.isEmpty) {
+      idVagao = (await _cfg.getIdVagao()).trim();
+    }
+    if (idVagao.isEmpty) {
+      throw Exception("Vagão não configurado.");
+    }
+
+    final id = await _carregDao.criarAbertoSemFabricacao(
+      idDieta: idDieta,
+      idVagao: idVagao,
+      pesoCarregado: pesoCarregadoKg,
+    );
+    setIdRacaoAtual(idDieta.trim());
+    return id;
   }
 
   double _toDouble(Object? v) {

@@ -70,6 +70,20 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
       final t = await _cfgRepo.getTipoTrabalho();
       final h = await _cfgRepo.getModoHibrido();
       if (!mounted) return;
+      if (t == 2 && !h) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context).pushReplacementNamed("/menu");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Modo Distribuidor: use Carregamento e Fornecimento.",
+              ),
+            ),
+          );
+        });
+        return;
+      }
       setState(() {
         _tipoTrabalho = t;
         _modoHibrido = h;

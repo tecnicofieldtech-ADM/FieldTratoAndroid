@@ -1,4 +1,4 @@
-# Gera APK release do RFeedX (mesmo applicationId para atualizar sem desinstalar).
+# Gera APK release do Field Trato (applicationId proprio: com.rfeed.fieldtrato).
 # Requisitos: Flutter SDK, android/key.properties com o MESMO keystore do pacote anterior.
 #
 # Uso:
@@ -25,7 +25,7 @@ if ($pubspec -match 'version:\s*([0-9.]+)\+(\d+)') {
   Write-Host "Versao: $($Matches[1]) (build $($Matches[2]))" -ForegroundColor Cyan
 }
 
-Write-Host "applicationId: com.rfeed.rfeedx (nao altere para atualizar in-place)" -ForegroundColor Cyan
+Write-Host "applicationId: com.rfeed.fieldtrato" -ForegroundColor Cyan
 
 flutter pub get
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -49,7 +49,7 @@ $outDir = Join-Path $root "build\app\outputs\flutter-apk"
 $releaseDir = Join-Path $root "release"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
-$apkName = "RFeedX-$versionName-$versionCode.apk"
+$apkName = "FieldTrato-$versionName-build$versionCode-release.apk"
 $destApk = Join-Path $releaseDir $apkName
 
 Get-ChildItem $outDir -Filter "*.apk" | ForEach-Object {

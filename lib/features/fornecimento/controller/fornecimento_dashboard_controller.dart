@@ -319,9 +319,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
   }
 
   void setError(String? msg) {
-    _error = msg;
+    _error = (msg ?? "").trim().isEmpty ? null : msg!.trim();
     _loading = false;
     notifyListeners();
+  }
+
+  void beginBoot() {
+    _error = null;
+    _setLoading(true);
   }
 
   bool _consumeBlockingErrorAsNotice({
@@ -402,8 +407,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
       final car = await _repo.getCarregamentoAberto(data: data);
       if (car == null || car.id.trim().isEmpty) {
         throw Exception(
-          "Não existe carregamento em aberto para hoje. "
-          "Finalize uma fabricação para gerar o carregamento (STATUS=0).",
+          "Não há carregamento aberto hoje. "
+          "Realize o carregamento da ração antes de fornecer.",
         );
       }
 
