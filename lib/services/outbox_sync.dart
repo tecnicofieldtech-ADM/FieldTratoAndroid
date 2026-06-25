@@ -1,3 +1,5 @@
+import "package:uuid/uuid.dart";
+
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../services/api_service.dart";
@@ -5,6 +7,7 @@ import "../utils/ms_percent.dart";
 
 class OutboxSync {
   final ApiService api;
+  static const _uuid = Uuid();
 
   OutboxSync({required this.api});
 
@@ -113,6 +116,73 @@ class OutboxSync {
     return t;
   }
 
+  /// Normaliza hora do SQLite (HH:MM, HH:MM:SS ou ISO) para envio à API.
+  String _toHora(dynamic v) {
+    var t = _s(v);
+    if (t.isEmpty) return "";
+
+    if (t.contains("T")) {
+      final parts = t.split("T");
+      if (parts.length > 1) t = parts[1];
+    } else if (t.contains(" ")) {
+      final parts = t.split(" ");
+      if (parts.length > 1) t = parts.last;
+    }
+
+    t = t.split(".").first.trim();
+    final m = RegExp(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?").firstMatch(t);
+    if (m == null) return "";
+
+    final hh = m.group(1)!.padLeft(2, "0");
+    final mm = m.group(2)!.padLeft(2, "0");
+    final ss = (m.group(3) ?? "00").padLeft(2, "0");
+    return "$hh:$mm:$ss";
+  }
+
+  void _putHorasPayload(
+    Map<String, dynamic> map, {
+    required String horaInicio,
+    required String horaFim,
+    bool insumo = false,
+  }) {
+    if (horaInicio.isNotEmpty) {
+      if (insumo) {
+        map["hora_ini"] = horaInicio;
+        map["HORA_INI"] = horaInicio;
+      } else {
+        map["hora_inicio"] = horaInicio;
+        map["HORA_INICIO"] = horaInicio;
+      }
+    }
+    if (horaFim.isNotEmpty) {
+      if (insumo) {
+        map["hora_fim"] = horaFim;
+        map["HORA_FIM"] = horaFim;
+      } else {
+        map["hora_fim"] = horaFim;
+        map["HORA_FIM"] = horaFim;
+      }
+    }
+  }
+
+  void _putHorasFornecimento(
+    Map<String, dynamic> map, {
+    required String horaInicio,
+    required String horaFim,
+  }) {
+    if (horaInicio.isNotEmpty) {
+      map["hora_inicio"] = horaInicio;
+      map["HORA_INICIO"] = horaInicio;
+    }
+    final horaForn = horaFim.isNotEmpty ? horaFim : horaInicio;
+    if (horaForn.isNotEmpty) {
+      map["hora_forn"] = horaForn;
+      map["HORA_FORN"] = horaForn;
+      map["hora_fim"] = horaFim.isNotEmpty ? horaFim : horaForn;
+      map["HORA_FIM"] = horaFim.isNotEmpty ? horaFim : horaForn;
+    }
+  }
+
   static const Set<String> _decimalKeys = {
     "qtde_prevista",
     "qtd_realizada",
@@ -216,10 +286,20 @@ class OutboxSync {
       where: where.join(" AND "),
     );
 
+    log(
+      "Sync fabricacao: ${api.isFieldpec ? "Fieldpec (POST /Post/Fabricacao pacote)" : "CGPec (cabecalho + /Post/Fabricacao_Insumo)"}",
+    );
+    if (!api.isFieldpec) {
+      log(
+        "Se o servidor for Fieldpec, configure BACKEND=Fieldpec (1) na Config.",
+      );
+    }
+
     for (final f in fab) {
       final idFabricacao = _s(f["ID"]);
       final idFazenda = _s(f["ID_FAZENDA"]);
       var handoffId = _s(f["HANDOFF_ID"]);
+      final isFieldpec = api.isFieldpec;
 
       if (idFabricacao.isEmpty) {
         log("Pulando fabricacao sem ID");
@@ -227,14 +307,14 @@ class OutboxSync {
       }
 
       if (handoffId.isEmpty) {
-        handoffId = idFabricacao;
+        handoffId = _uuid.v4();
         await db.update(
           "CADASTRO_FABRICA_RACAO",
           {"HANDOFF_ID": handoffId},
           where: "ID=?",
           whereArgs: [idFabricacao],
         );
-        log("handoff_id ausente em $idFabricacao: usando fallback pelo ID local.");
+        log("handoff_id gerado para fab local $idFabricacao.");
       }
 
       final kgReal = _toDouble(f["QTD_REALIZADA"]);
@@ -249,7 +329,6 @@ class OutboxSync {
       );
 
       final payloadFab = <String, dynamic>{
-        "id": idFabricacao,
         "handoff_id": handoffId,
         "id_fazenda": idFazenda,
         "id_dieta": _s(f["ID_DIETA"]),
@@ -262,6 +341,16 @@ class OutboxSync {
         "ms_prevista": _br2(f["MS_PREVISTA"]),
         "ms_realizada": _br2(msFabResolved),
       };
+      _putHorasPayload(
+        payloadFab,
+        horaInicio: _toHora(f["HORA_INICIO"]),
+        horaFim: _toHora(f["HORA_FIM"]),
+      );
+      if (isFieldpec) {
+        payloadFab["id_local"] = idFabricacao;
+      } else {
+        payloadFab["id"] = idFabricacao;
+      }
 
       final payloadFabFixed =
           _fixBodyDecimals(payloadFab) as Map<String, dynamic>;
@@ -283,27 +372,33 @@ class OutboxSync {
             continue;
           }
 
-          itens.add({
-            "id": _s(i["ID"]),
+          final item = <String, dynamic>{
+            if (!isFieldpec) "id": _s(i["ID"]),
+            if (isFieldpec) "id_local": _s(i["ID"]),
             "id_fazenda": idFazenda,
-            "id_fabricacao": idFabricacao,
             "id_insumo": _s(i["ID_INSUMO"]),
             "qtde_prevista": _br3(i["QTD_PREVISTA"]),
             "qtd_realizada": _br3(i["QTD_REALIZADA"]),
             "ms_insumo": _br3(i["MS_INSUMO"]),
             "id_operador": _s(i["ID_OPERADOR"]),
             "id_usuario": _s(i["ID_USUARIO"]),
-          });
+          };
+          _putHorasPayload(
+            item,
+            horaInicio: _toHora(i["HORA_INICIO"]),
+            horaFim: _toHora(i["HORA_FIM"]),
+            insumo: true,
+          );
+          itens.add(item);
         }
       }
-
-      final isFieldpec = api.isFieldpec;
 
       final fornecimentosVinculados = await db.rawQuery('''
         SELECT
           cf.ID_FORNECIMENTO                                          AS id_fornecimento,
           MAX(cf.ID_BAIA)                                             AS id_curral,
-          MAX(COALESCE(cf.HORA_FIM, cf.HORA_INICIO, ''))             AS hora_forn,
+          MAX(COALESCE(cf.HORA_INICIO, ''))                           AS hora_inicio,
+          MAX(COALESCE(cf.HORA_FIM, ''))                              AS hora_fim,
           MAX(cf.DATA)                                                AS data_forn,
           MAX(cf.TRATO)                                               AS trato,
           MAX(cf.ID_USUARIO)                                          AS id_usuario_lancamento,
@@ -343,7 +438,6 @@ class OutboxSync {
           "IDCURRAL": _s(r["id_curral"]),
           "id_baia": _s(r["id_curral"]),
           "id_racao": _s(r["id_racao"]),
-          "HORA_FORN": _s(r["hora_forn"]),
           "DATA_FORN": _toBrDate(r["data_forn"]),
           "data": _toBrDate(r["data_forn"]),
           "TRATO": _s(r["trato"]),
@@ -354,6 +448,11 @@ class OutboxSync {
           "realizado": _br3(r["realizado"]),
           "ms_dieta_realizada": _br3(msForn),
         });
+        _putHorasFornecimento(
+          fornecimentos.last,
+          horaInicio: _toHora(r["hora_inicio"]),
+          horaFim: _toHora(r["hora_fim"]),
+        );
       }
 
       log(
@@ -361,11 +460,16 @@ class OutboxSync {
       );
 
       if (isFieldpec) {
+        // FieldTrato: fabricação sobe só cabeçalho+insumos; tratos vão em syncFornecimento.
         final pacoteCompleto = <String, dynamic>{
           ...payloadFabFixed,
           "itens": itens,
-          "fornecimentos": fornecimentos,
         };
+
+        log(
+          "Fieldpec: enviando fab sem fornecimentos no pacote "
+          "(tratos=${fornecimentos.length} sobem separado).",
+        );
 
         final pacoteCompletoFixed =
             _fixBodyDecimals(pacoteCompleto) as Map<String, dynamic>;
@@ -379,45 +483,72 @@ class OutboxSync {
         }
 
         if (fornecimentos.isNotEmpty) {
-          final pendingRows = await db.rawQuery(
-            """
-            SELECT ID
-            FROM CADASTRO_FORNECIMENTO
-            WHERE TRIM(COALESCE(ID_FABRICACAO,'')) = TRIM(?)
-              AND COALESCE(REALIZADO,0) > 0
-              AND IFNULL(FLAG_SYNC,0) = 0
-              AND TRIM(COALESCE(ID_FORNECIMENTO,'')) <> ''
-            """,
-            [idFabricacao],
+          log(
+            "Fieldpec: ${fornecimentos.length} trato(s) vinculado(s) a fab $idFabricacao "
+            "serao enviados no passo Fornecimento (POST /Post/Fornecimento).",
           );
-          final syncedRowIds = pendingRows
-              .map((e) => _s(e["ID"]))
-              .where((e) => e.isNotEmpty)
-              .toList();
-
-          for (final idCad in syncedRowIds) {
-            await _marcarFornecimentoSyncOk(db, idCad);
-          }
         }
       } else {
-        final okFab = await api.postFabricacao(payloadFabFixed, log: log);
-        if (!okFab) {
-          log("Falha Fabricacao id=$idFabricacao");
-          continue;
-        }
+        final pacoteField = <String, dynamic>{
+          ...payloadFabFixed,
+          "itens": itens,
+          "fornecimentos": fornecimentos,
+        };
+        final pacoteFieldFixed =
+            _fixBodyDecimals(pacoteField) as Map<String, dynamic>;
 
-        if (itens.isNotEmpty) {
-          final bodyItensFixed =
-              _fixBodyDecimals({"itens": itens}) as Map<String, dynamic>;
+        if (itens.isNotEmpty || fornecimentos.isNotEmpty) {
+          final okFieldPacote = await api.postFabricacaoPacoteFieldpec(
+            pacoteFieldFixed,
+            log: log,
+          );
+          if (okFieldPacote) {
+            log(
+              "Fabricacao sincronizada via pacote Fieldpec (BACKEND estava CGPec).",
+            );
+            if (fornecimentos.isNotEmpty) {
+              final pendingRows = await db.rawQuery(
+                """
+                SELECT ID
+                FROM CADASTRO_FORNECIMENTO
+                WHERE TRIM(COALESCE(ID_FABRICACAO,'')) = TRIM(?)
+                  AND COALESCE(REALIZADO,0) > 0
+                  AND IFNULL(FLAG_SYNC,0) = 0
+                  AND TRIM(COALESCE(ID_FORNECIMENTO,'')) <> ''
+                """,
+                [idFabricacao],
+              );
+              for (final row in pendingRows) {
+                await _marcarFornecimentoSyncOk(db, _s(row["ID"]));
+              }
+            }
+          } else {
+            final okFab = await api.postFabricacao(payloadFabFixed, log: log);
+            if (!okFab) {
+              log("Falha Fabricacao id=$idFabricacao");
+              continue;
+            }
 
-          final okItens =
-              await api.postFabricacaoInsumo(bodyItensFixed, log: log);
-          if (!okItens) {
-            log("Falha Fabricacao_Insumo id=$idFabricacao");
-            continue;
+            if (itens.isNotEmpty) {
+              final bodyItensFixed =
+                  _fixBodyDecimals({"itens": itens}) as Map<String, dynamic>;
+
+              final okItens =
+                  await api.postFabricacaoInsumo(bodyItensFixed, log: log);
+              if (!okItens) {
+                log("Falha Fabricacao_Insumo id=$idFabricacao");
+                continue;
+              }
+            } else {
+              log("Nenhum insumo valido para enviar na fab $idFabricacao");
+            }
           }
         } else {
-          log("Nenhum insumo valido para enviar na fab $idFabricacao");
+          final okFab = await api.postFabricacao(payloadFabFixed, log: log);
+          if (!okFab) {
+            log("Falha Fabricacao id=$idFabricacao");
+            continue;
+          }
         }
       }
 
@@ -440,7 +571,7 @@ class OutboxSync {
 
   Future<void> syncFornecimento(void Function(String) log) async {
     if (api.isFieldpec) {
-      await _syncFornecimentoFieldpecSemFabricacao(log);
+      await _syncFornecimentoFieldpec(log);
       return;
     }
 
@@ -479,6 +610,8 @@ class OutboxSync {
         cf.ID_FORNECIMENTO                                          AS id_fornecimento,
         cf.ID_BAIA                                                  AS id_baia,
         cf.DATA                                                     AS data_forn,
+        cf.HORA_INICIO                                              AS hora_inicio,
+        cf.HORA_FIM                                                 AS hora_fim,
         cf.TRATO                                                    AS trato,
         cf.ID_FABRICACAO                                            AS id_fabricacao,
         cf.ID_USUARIO                                               AS id_usuario_lancamento,
@@ -560,6 +693,11 @@ class OutboxSync {
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
       };
+      _putHorasFornecimento(
+        payload,
+        horaInicio: _toHora(r["hora_inicio"]),
+        horaFim: _toHora(r["hora_fim"]),
+      );
 
       log(
         "Fornecimento cadastro=$idCad chave=$idBaia|$idRacao|$dataRef|$trato "
@@ -584,11 +722,18 @@ class OutboxSync {
     }
   }
 
-  /// Fieldpec: fornecimentos sem fabricação no tablet (carregamento sem vínculo).
-  Future<void> _syncFornecimentoFieldpecSemFabricacao(
-    void Function(String) log,
-  ) async {
+  /// Fieldpec: fornecimento sobe independente de fabricação vinculada no tablet.
+  Future<void> _syncFornecimentoFieldpec(void Function(String) log) async {
     final db = await AppDb.instance.db;
+
+    final diag = await db.rawQuery("""
+      SELECT COUNT(*) AS qtd
+      FROM CADASTRO_FORNECIMENTO
+      WHERE IFNULL(REALIZADO,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0
+    """);
+    final qtdPend =
+        diag.isNotEmpty ? int.tryParse("${diag.first["qtd"]}") ?? 0 : 0;
+    log("Fieldpec: CADASTRO_FORNECIMENTO pendentes = $qtdPend");
 
     final rows = await db.rawQuery('''
       SELECT
@@ -596,11 +741,13 @@ class OutboxSync {
         cf.ID_FORNECIMENTO                                          AS id_fornecimento,
         cf.ID_BAIA                                                  AS id_baia,
         cf.DATA                                                     AS data_forn,
+        cf.HORA_INICIO                                              AS hora_inicio,
+        cf.HORA_FIM                                                 AS hora_fim,
         cf.TRATO                                                    AS trato,
         cf.ID_FABRICACAO                                            AS id_fabricacao,
         cf.ID_USUARIO                                               AS id_usuario_lancamento,
-        COALESCE(cf.ID_DIETA, '')                                   AS id_dieta_realizada,
-        COALESCE(cf.ID_DIETA, '')                                   AS id_racao,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_dieta_realizada,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_racao,
         COALESCE(cf.REALIZADO, 0)                                   AS delta_sessao,
         COALESCE(p.REALIZADO_KG, 0)                                 AS total_mapa,
         $_sqlMsFornecResolved                                        AS ms_dieta_realizada
@@ -615,12 +762,11 @@ class OutboxSync {
       WHERE COALESCE(cf.REALIZADO, 0) > 0
         AND IFNULL(cf.FLAG_SYNC, 0) = 0
         AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
-        AND TRIM(COALESCE(cf.ID_FABRICACAO, '')) = ''
       ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
     ''');
 
     if (rows.isEmpty) {
-      log("Fieldpec: nenhum fornecimento sem fabricacao pendente.");
+      log("Fieldpec: nenhum fornecimento pendente para enviar.");
       return;
     }
 
@@ -635,13 +781,18 @@ class OutboxSync {
       final deltaSessao = _toDouble(r["delta_sessao"]);
       if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) continue;
       if (idBaia.isEmpty || idRacao.isEmpty || trato <= 0 || dataRef.isEmpty) {
+        log(
+          "Fieldpec fornecimento chave incompleta: cadastro=$idCad "
+          "baia=$idBaia racao=$idRacao trato=$trato data=$dataRef",
+        );
         continue;
       }
 
       final msResolved = _toDouble(r["ms_dieta_realizada"]);
       if (!MsPercent.isValid(msResolved)) {
         log(
-          "Fieldpec fornecimento cadastro=$idCad: MS invalida (dieta). Pulando.",
+          "Fieldpec fornecimento cadastro=$idCad racao=$idRacao: MS invalida "
+          "(fab/dieta; deve ser > 0 e <= 100). Pulando.",
         );
         continue;
       }
@@ -650,7 +801,7 @@ class OutboxSync {
         "id": idPrev,
         "id_cadastro": idCad,
         "id_fornecimento": idPrev,
-        "id_fabricacao": "",
+        "id_fabricacao": _s(r["id_fabricacao"]),
         "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
         "id_tratador": _s(r["id_usuario_lancamento"]),
         "id_dieta_realizada": _s(r["id_dieta_realizada"]),
@@ -661,18 +812,31 @@ class OutboxSync {
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
       };
+      _putHorasFornecimento(
+        payload,
+        horaInicio: _toHora(r["hora_inicio"]),
+        horaFim: _toHora(r["hora_fim"]),
+      );
 
       final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
       final ok = await api.postFornecimento(payloadFixed, log: log);
       if (ok) {
         await _marcarFornecimentoSyncOk(db, idCad);
         syncedCount++;
+      } else {
+        log(
+          "Fieldpec falha fornecimento cadastro=$idCad "
+          "chave=$idBaia|$idRacao|$dataRef|$trato",
+        );
       }
     }
 
     if (syncedCount > 0) {
+      log("Fieldpec: $syncedCount fornecimento(s) sincronizado(s).");
+    } else if (rows.isNotEmpty) {
       log(
-        "Fieldpec: $syncedCount fornecimento(s) sem fabricacao sincronizado(s).",
+        "Fieldpec: ${rows.length} pendente(s), nenhum enviado "
+        "(verifique MS da dieta ou chave baia/racao/trato/data).",
       );
     }
   }

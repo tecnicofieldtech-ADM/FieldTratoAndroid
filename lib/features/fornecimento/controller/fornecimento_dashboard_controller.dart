@@ -4,6 +4,7 @@ import "package:flutter/foundation.dart";
 
 import "../../../helpers/scale_comm.dart";
 import "../../../helpers/rfid_comm.dart";
+import "../../../repo/config_repo.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
 import "../../../services/session_service.dart";
@@ -33,6 +34,10 @@ class CurralCardVM {
   final String? linha;
   final int orderTrato;
   final double previstoKg;
+  final double previstoOriginalKg;
+  final double previstoRecalculadoKg;
+  final bool isUltimoTrato;
+  final bool previsaoDuplaFieldpec;
   final double realizadoKg;
   final String? epc;
 
@@ -43,11 +48,52 @@ class CurralCardVM {
     required this.linha,
     required this.orderTrato,
     required this.previstoKg,
+    required this.previstoOriginalKg,
+    required this.previstoRecalculadoKg,
+    this.isUltimoTrato = false,
+    this.previsaoDuplaFieldpec = false,
     required this.realizadoKg,
     required this.epc,
   });
 
-  double get diffKg => realizadoKg - previstoKg;
+  bool get isUltimoTratoEfetivo {
+    if (isUltimoTrato) return true;
+    if (!previsaoDuplaFieldpec) return false;
+    if (previstoOriginalKg > 0 &&
+        previstoRecalculadoKg >= 0 &&
+        (previstoOriginalKg - previstoRecalculadoKg).abs() > 0.01) {
+      return true;
+    }
+    // Fallback: meta original maior que previsto cadastro da linha.
+    return previstoOriginalKg > 0 &&
+        previstoKg > 0 &&
+        previstoOriginalKg > previstoKg + 0.01;
+  }
+
+  double get diffKg {
+    if (previsaoDuplaFieldpec && isUltimoTratoEfetivo) {
+      return realizadoKg - metaPrevistoUltimoTratoKg;
+    }
+    return realizadoKg - previstoKg;
+  }
+
+  /// Previsto exibido no mapa/painel (meta no último trato FieldPec).
+  double get previstoExibicaoKg {
+    if (previsaoDuplaFieldpec && isUltimoTratoEfetivo) {
+      return metaPrevistoUltimoTratoKg;
+    }
+    return previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
+  }
+
+  /// Meta do último trato: total previsto do dia − realizado dos tratos anteriores.
+  /// = previstoRecalculado (saldo) + realizado deste trato.
+  double get metaPrevistoUltimoTratoKg {
+    if (previstoRecalculadoKg > 0 || realizadoKg > 0) {
+      final meta = previstoRecalculadoKg + realizadoKg;
+      if (meta > 0) return meta;
+    }
+    return previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
+  }
 }
 
 class TotaisVM {
@@ -78,15 +124,18 @@ class FornecimentoDashboardController extends ChangeNotifier {
     required FornecimentoRepo repo,
     required ScaleComm scale,
     required RfidComm rfid,
+    ConfigRepo? configRepo,
     bool autoFlowRfid = true, // RFID comanda iniciar/salvar
   })  : _repo = repo,
         _scale = scale,
         _rfid = rfid,
+        _cfg = configRepo ?? ConfigRepo(),
         _autoFlowRfid = autoFlowRfid;
 
   final FornecimentoRepo _repo;
   final ScaleComm _scale;
   final RfidComm _rfid;
+  final ConfigRepo _cfg;
   final RfidTagResolver _rfidTagResolver = RfidTagResolver();
 
   final bool _autoFlowRfid;
@@ -230,6 +279,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
   String? _idCadastroAberto;
 
   String _idFazenda = "";
+  bool _isFieldpec = false;
 
   int _origemMapa = 0; // 0 = RFID, 1 = Mapa
 
@@ -252,12 +302,39 @@ class FornecimentoDashboardController extends ChangeNotifier {
   double get aFornecerEstimadoKg {
     final s = _selected;
     if (s == null) return 0;
+
+    // FieldPec último trato: A FORNECER = saldo do dia (recalc) − sessão aberta.
+    if (_isFieldpec && s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
+      final saldo = s.previstoRecalculadoKg - fornecidoSessaoKg;
+      return saldo < 0 ? 0 : saldo;
+    }
+
     final previsto = s.previstoKg;
     final realizadoEst = s.realizadoKg + fornecidoSessaoKg;
     if (realizadoEst <= previsto) {
       return previsto - realizadoEst;
     }
     return realizadoEst - previsto;
+  }
+
+  double get previstoPainelKg {
+    final s = _selected;
+    if (s == null) return 0;
+    if (_isFieldpec && s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
+      return s.metaPrevistoUltimoTratoKg;
+    }
+    if (_isFieldpec && s.previsaoDuplaFieldpec) {
+      return s.previstoOriginalKg > 0 ? s.previstoOriginalKg : s.previstoKg;
+    }
+    return s.previstoKg;
+  }
+
+  bool get isFieldpecUltimoTratoSelecionado {
+    final s = _selected;
+    return _isFieldpec &&
+        s != null &&
+        s.previsaoDuplaFieldpec &&
+        s.isUltimoTratoEfetivo;
   }
 
   double get realizadoEstimadoKg {
@@ -306,6 +383,13 @@ class FornecimentoDashboardController extends ChangeNotifier {
     if (_linhaFiltro == next) return;
     _linhaFiltro = next;
     notifyListeners();
+  }
+
+  /// Recarrega currais do SQLite (após atualizar previsão na API).
+  Future<void> reloadMapa() async {
+    final idFazenda = _idFazenda.trim();
+    if (idFazenda.isEmpty || _header == null) return;
+    await _reloadMapa(idFazenda: idFazenda);
   }
 
   // ===========================
@@ -391,6 +475,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _error = null;
 
     _idFazenda = idFazenda.trim();
+    _isFieldpec = (await _cfg.getBackend()) == 1;
 
     // garante listeners 1 vez
     _startScaleListener();
@@ -773,13 +858,22 @@ class FornecimentoDashboardController extends ChangeNotifier {
       );
       final linha = linhaRaw.isEmpty ? null : linhaRaw;
 
+      final orig = _toD(r.previstoOriginalKg ?? r.previstoKg);
+      final recalc = _toD(r.previstoRecalculadoKg ?? r.previstoKg);
+      final ultimo = r.isUltimoTrato ||
+          (_isFieldpec && (orig - recalc).abs() > 0.01 && orig > 0);
+
       return CurralCardVM(
         idFornecimento: idForne.isEmpty ? "?" : idForne,
         idBaia: idBaia.isEmpty ? "?" : idBaia,
         curralNome: nome.isEmpty ? "Baia $idBaiaTxt" : nome,
         linha: linha,
         orderTrato: r.ordemFornecimento ?? 0,
-        previstoKg: _toD(r.previstoKg),
+        previstoKg: orig > 0 ? orig : _toD(r.previstoKg),
+        previstoOriginalKg: orig,
+        previstoRecalculadoKg: recalc,
+        isUltimoTrato: ultimo,
+        previsaoDuplaFieldpec: _isFieldpec,
         realizadoKg: _toD(r.realizadoKg),
         epc: rfid,
       );

@@ -18,7 +18,7 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 10, // MODO_HIBRIDO (estacionário + distribuidor híbrido)
+      version: 11, // PREVISAO FieldPec: original + recalculado
       onConfigure: (db) async {
         await db.execute("PRAGMA foreign_keys = ON;");
       },
@@ -381,8 +381,11 @@ class AppDb {
       ID_BAIA TEXT NOT NULL,
       TRATO INTEGER NOT NULL,
       PREVISTO_KG NUMERIC NOT NULL,
+      PREVISTO_ORIGINAL_KG NUMERIC,
+      PREVISTO_RECALCULADO_KG NUMERIC,
       REALIZADO_KG NUMERIC DEFAULT 0,
       ID_RACAO TEXT,
+      ULTIMO_TRATO INTEGER DEFAULT 0,
       PRIMARY KEY (ID_FORNECIMENTO, DATA, ID_BAIA, TRATO)
     );
     """);
@@ -656,6 +659,32 @@ class AppDb {
 
     if (oldV < 10) {
       await _addColumnIgnore(db, "CONFIG", "MODO_HIBRIDO INTEGER DEFAULT 0");
+    }
+
+    if (oldV < 11) {
+      await _addColumnIgnore(
+        db,
+        "PREVISAO",
+        "PREVISTO_ORIGINAL_KG NUMERIC",
+      );
+      await _addColumnIgnore(
+        db,
+        "PREVISAO",
+        "PREVISTO_RECALCULADO_KG NUMERIC",
+      );
+      await _addColumnIgnore(
+        db,
+        "PREVISAO",
+        "ULTIMO_TRATO INTEGER DEFAULT 0",
+      );
+      await db.execute("""
+      UPDATE PREVISAO
+      SET
+        PREVISTO_ORIGINAL_KG = COALESCE(PREVISTO_ORIGINAL_KG, PREVISTO_KG),
+        PREVISTO_RECALCULADO_KG = COALESCE(PREVISTO_RECALCULADO_KG, PREVISTO_KG)
+      WHERE PREVISTO_ORIGINAL_KG IS NULL
+         OR PREVISTO_RECALCULADO_KG IS NULL;
+      """);
     }
   }
 }

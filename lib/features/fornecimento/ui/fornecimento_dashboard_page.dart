@@ -220,18 +220,12 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   /// Atualiza baias + previsão do dia antes de montar o mapa (evita SQLite desatualizado).
   Future<void> _refreshMapaRemoto({required DateTime data}) async {
     try {
-      final cfg = await _cfgRepo.getConfig();
-      if (cfg == null) return;
-
-      final ymd = _ymd(data);
-      await _bootstrap.baixarBaias(cfg, widget.idFazenda);
-      await _bootstrap.baixarPrevisaoTrato(
-        cfg,
-        widget.idFazenda,
-        ymd,
+      await widget.repo.prefetchMapaDoDia(
+        idFazenda: widget.idFazenda,
+        data: data,
       );
-    } catch (_) {
-      // offline / API indisponível: segue com SQLite local
+    } catch (e) {
+      debugPrint("Fornecimento dashboard: falha ao atualizar mapa remoto: $e");
     }
   }
 
@@ -333,27 +327,38 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     // ✅ conecta por config (await para evitar corrida de lifecycle)
     await _connectDevicesFromConfig();
 
-    await _refreshMapaRemoto(
-      data: widget.data ?? DateTime.now(),
-    );
+    final dataBoot = widget.data ?? DateTime.now();
+
+    await _refreshMapaRemoto(data: dataBoot);
 
     await _ctrl.init(
-      data: widget.data ?? DateTime.now(),
+      data: dataBoot,
       trato: widget.trato,
       idFazenda: widget.idFazenda,
       idRacaoFiltro: idDietaCarregada,
     );
 
-    if ((_linhaFiltroSaved ?? "").trim().isNotEmpty) {
-      _ctrl.setLinhaFiltro(_linhaFiltroSaved);
+    if (!mounted) return;
+
+    if (_ctrl.currais.isEmpty) {
+      await _refreshMapaRemoto(data: dataBoot);
+      await _ctrl.reloadMapa();
     }
+
     if (widget.startCleared) {
-      // sempre inicia zerado no fluxo "Novo Fornecimento"
+      await _saveLinhaFiltroPref(null);
+      _linhaFiltroSaved = null;
+      _ctrl.setLinhaFiltro(null);
       await _saveCurralSelecionadoPref(null);
       _curralSelSaved = null;
       _ctrl.restaurarSelecaoPorIdFornecimento("");
-    } else if ((_curralSelSaved ?? "").trim().isNotEmpty) {
-      _ctrl.restaurarSelecaoPorIdFornecimento(_curralSelSaved!);
+    } else {
+      if ((_linhaFiltroSaved ?? "").trim().isNotEmpty) {
+        _ctrl.setLinhaFiltro(_linhaFiltroSaved);
+      }
+      if ((_curralSelSaved ?? "").trim().isNotEmpty) {
+        _ctrl.restaurarSelecaoPorIdFornecimento(_curralSelSaved!);
+      }
     }
   }
 
@@ -518,11 +523,19 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
 
         final realizadoEst = _ctrl.realizadoEstimadoKg;
         final aFornecerEst = _ctrl.aFornecerEstimadoKg;
+        final previstoPainel = _ctrl.previstoPainelKg;
+        final isFieldpecUltimo = _ctrl.isFieldpecUltimoTratoSelecionado;
 
-        final progress =
-            sel == null ? 0.0 : _progress(realizadoEst, sel.previstoKg);
+        final progress = sel == null
+            ? 0.0
+            : _progress(
+                realizadoEst,
+                isFieldpecUltimo
+                    ? sel.metaPrevistoUltimoTratoKg
+                    : sel.previstoKg,
+              );
 
-        final level = _computeLevel(sel, realizadoEst);
+        final level = _computeLevel(sel, realizadoEst, aFornecerEst);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _beeper.maybeBeep(level);
         });
@@ -573,6 +586,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                           fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
                           realizadoEstimadoKg: realizadoEst,
                           aFornecerEstimadoKg: aFornecerEst,
+                          previstoPainelKg: previstoPainel,
+                          isFieldpecUltimoTrato: isFieldpecUltimo,
                           onSalvar: _onSalvarSeguro,
                           ultimo: _ctrl.ultimo,
                           fmt: _fmtNum,
@@ -748,8 +763,20 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     );
   }
 
-  _BeepLevel _computeLevel(CurralCardVM? s, double realizadoEstimadoKg) {
+  _BeepLevel _computeLevel(
+    CurralCardVM? s,
+    double realizadoEstimadoKg,
+    double aFornecerEstimadoKg,
+  ) {
     if (s == null) return _BeepLevel.ok;
+
+    if (s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
+      if (aFornecerEstimadoKg <= 0) return _BeepLevel.reached;
+      if (aFornecerEstimadoKg <= _beeper.criticalKg) return _BeepLevel.critical;
+      if (aFornecerEstimadoKg <= _beeper.nearKg) return _BeepLevel.near;
+      return _BeepLevel.ok;
+    }
+
     final previsto = s.previstoKg;
     if (previsto <= 0) return _BeepLevel.ok;
 
@@ -1008,7 +1035,7 @@ class _CurralCardSmall extends StatelessWidget {
                 height: 28,
                 child: Row(
                   children: [
-                    Expanded(child: _mini(fg, "P", n0(c.previstoKg))),
+                    Expanded(child: _mini(fg, "P", n0(c.previstoExibicaoKg))),
                     const SizedBox(width: 4),
                     Expanded(child: _mini(fg, "R", n0(c.realizadoKg))),
                     const SizedBox(width: 4),
@@ -1069,6 +1096,8 @@ class _RightPanel extends StatelessWidget {
     required this.fornecidoSessaoKg,
     required this.realizadoEstimadoKg,
     required this.aFornecerEstimadoKg,
+    required this.previstoPainelKg,
+    required this.isFieldpecUltimoTrato,
     required this.onSalvar,
     required this.ultimo,
     required this.fmt,
@@ -1088,6 +1117,8 @@ class _RightPanel extends StatelessWidget {
 
   final double realizadoEstimadoKg;
   final double aFornecerEstimadoKg;
+  final double previstoPainelKg;
+  final bool isFieldpecUltimoTrato;
 
   final Future<void> Function() onSalvar;
 
@@ -1139,9 +1170,13 @@ class _RightPanel extends StatelessWidget {
       return t.isEmpty ? "-" : t;
     }
 
-    final previsto = hasSel ? s.previstoKg : 0.0;
+    final previsto = hasSel ? previstoPainelKg : 0.0;
     final realizado = hasSel ? s.realizadoKg : 0.0;
-    final dif = hasSel ? s.diffKg : 0.0;
+    final dif = hasSel
+        ? (isFieldpecUltimoTrato
+            ? (realizadoEstimadoKg - previsto)
+            : s.diffKg)
+        : 0.0;
     final difEst = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
     final curralNome = hasSel ? s.curralNome : "ESPERANDO CURRAL";
     final linha = hasSel ? linhaTxt(s.linha) : "-";
@@ -1153,6 +1188,7 @@ class _RightPanel extends StatelessWidget {
 
     String aFornecerSigned() {
       final t = fmt(aFornecerEstimadoKg, dec: 0);
+      if (isFieldpecUltimoTrato) return t;
       return difEst > 0 ? "+$t" : t;
     }
 

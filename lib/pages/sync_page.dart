@@ -2,6 +2,7 @@ import "dart:async";
 
 import "package:flutter/material.dart";
 
+import "../domain/sync_pendencia_registro.dart";
 import "../repo/config_repo.dart";
 import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
@@ -51,6 +52,7 @@ class _SyncPageState extends State<SyncPage> {
   int _pendTag = 0;
   int _pendFab = 0;
   int _pendFor = 0;
+  List<SyncPendenciaRegistro> _pendRegistros = const [];
   bool _loadingPend = false;
   ScaffoldMessengerState? _messenger;
 
@@ -77,12 +79,14 @@ class _SyncPageState extends State<SyncPage> {
       final tag = await _cfgRepo.countGravaTagPendenteSync();
       final fab = await _cfgRepo.countFabricacaoPendenteSync();
       final forn = await _cfgRepo.countFornecimentoPendenteSync();
+      final registros = await _cfgRepo.listPendenciasSyncDetalhe();
 
       if (!mounted) return;
       setState(() {
         _pendTag = tag;
         _pendFab = fab;
         _pendFor = forn;
+        _pendRegistros = registros;
       });
     } finally {
       if (mounted) setState(() => _loadingPend = false);
@@ -462,6 +466,11 @@ class _SyncPageState extends State<SyncPage> {
               ],
             ),
 
+            if (_pendRegistros.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _PendenciasLista(registros: _pendRegistros),
+            ],
+
             const SizedBox(height: 12),
 
             // ✅ BOX PRINCIPAL (PROGRESSO + BOTÃO)
@@ -577,6 +586,110 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PendenciasLista extends StatelessWidget {
+  const _PendenciasLista({required this.registros});
+
+  final List<SyncPendenciaRegistro> registros;
+
+  IconData _icon(SyncPendenciaTipo tipo) {
+    switch (tipo) {
+      case SyncPendenciaTipo.gravaTag:
+        return Icons.nfc_outlined;
+      case SyncPendenciaTipo.fabricacao:
+        return Icons.factory_outlined;
+      case SyncPendenciaTipo.fornecimento:
+        return Icons.local_shipping_outlined;
+    }
+  }
+
+  Color _accent(SyncPendenciaTipo tipo) {
+    switch (tipo) {
+      case SyncPendenciaTipo.gravaTag:
+        return Colors.indigo.shade800;
+      case SyncPendenciaTipo.fabricacao:
+        return Colors.deepOrange.shade800;
+      case SyncPendenciaTipo.fornecimento:
+        return Colors.teal.shade800;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 220),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black12),
+        color: Colors.orange.withValues(alpha: 0.04),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+            child: Text(
+              "Registros pendentes (${registros.length})",
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          const Divider(height: 1, color: Colors.black12),
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              itemCount: registros.length,
+              separatorBuilder: (_, __) => const Divider(
+                height: 8,
+                color: Colors.black12,
+              ),
+              itemBuilder: (_, i) {
+                final r = registros[i];
+                final accent = _accent(r.tipo);
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(_icon(r.tipo), size: 18, color: accent),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            r.titulo,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "${r.tipoLabel} · ${r.subtitulo}",
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.black.withValues(alpha: 0.62),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

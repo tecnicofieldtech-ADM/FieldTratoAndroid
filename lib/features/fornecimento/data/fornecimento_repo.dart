@@ -5,6 +5,10 @@ import "dart:io";
 import "package:flutter/foundation.dart";
 
 import "../../../repo/config_repo.dart";
+import "../../../repo/fazenda_repo.dart";
+import "../../../repo/user_repo.dart";
+import "../../../repo/vagao_repo.dart";
+import "../../../services/bootstrap_sync.dart";
 import "../domain/histerese_params.dart";
 
 import "carregamento_dao.dart";
@@ -199,7 +203,11 @@ class FornecimentoRepo {
   // CARREGAMENTO (Rotormix)
   // ===========================
   Future<CarregamentoAberto?> getCarregamentoAberto({DateTime? data}) async {
-    final car = await _carregDao.getAbertoHoje(data: data ?? DateTime.now());
+    final ref = data ?? DateTime.now();
+    final idVagao = (await _cfg.getIdVagao()).trim();
+    final car = idVagao.isNotEmpty
+        ? await _carregDao.getAbertoAtivo(data: ref, idVagao: idVagao)
+        : await _carregDao.getAbertoHoje(data: ref);
     if (car == null) return null;
 
     final id = (car["ID"] ?? "").toString().trim();
@@ -223,7 +231,11 @@ class FornecimentoRepo {
   }
 
   Future<bool> existeCarregamentoAbertoHoje({DateTime? data}) async {
-    final car = await _carregDao.getAbertoHoje(data: data ?? DateTime.now());
+    final ref = data ?? DateTime.now();
+    final idVagao = (await _cfg.getIdVagao()).trim();
+    final car = idVagao.isNotEmpty
+        ? await _carregDao.getAbertoAtivo(data: ref, idVagao: idVagao)
+        : await _carregDao.getAbertoHoje(data: ref);
     return car != null;
   }
 
@@ -490,6 +502,26 @@ class FornecimentoRepo {
 
   Future<List<CurralPrev>> listCurraisPrevistosHojeSimple() =>
       listCurraisPrevistosHoje();
+
+  /// Baixa baias + previsão do dia na API antes de abrir o mapa de fornecimento.
+  Future<void> prefetchMapaDoDia({
+    required String idFazenda,
+    DateTime? data,
+  }) async {
+    final cfg = await _cfg.getConfig();
+    if (cfg == null) return;
+
+    final bootstrap = BootstrapSync(
+      cfgRepo: _cfg,
+      vagaoRepo: VagaoRepo(),
+      fazendaRepo: FazendaRepo(),
+      userRepo: UserRepo(),
+    );
+
+    final ymd = _ymd(data ?? DateTime.now());
+    await bootstrap.baixarBaias(cfg, idFazenda);
+    await bootstrap.baixarPrevisaoTrato(cfg, idFazenda, ymd);
+  }
 
   // ===========================
   // SNAPSHOT
@@ -1179,6 +1211,17 @@ class FornecimentoRepo {
         db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
         $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(
+          a.${FornTables.pvPrevistoOriginalKg},
+          a.${FornTables.pvPrevistoKg},
+          0
+        ) AS previstoOriginalKg,
+        COALESCE(
+          a.${FornTables.pvPrevistoRecalculadoKg},
+          a.${FornTables.pvPrevistoKg},
+          0
+        ) AS previstoRecalculadoKg,
+        COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
         ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,
@@ -1213,6 +1256,17 @@ class FornecimentoRepo {
         db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
         $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(
+          a.${FornTables.pvPrevistoOriginalKg},
+          a.${FornTables.pvPrevistoKg},
+          0
+        ) AS previstoOriginalKg,
+        COALESCE(
+          a.${FornTables.pvPrevistoRecalculadoKg},
+          a.${FornTables.pvPrevistoKg},
+          0
+        ) AS previstoRecalculadoKg,
+        COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
         ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,

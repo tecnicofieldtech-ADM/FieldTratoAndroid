@@ -108,6 +108,9 @@ class CurralPrev {
     required this.trato,
     required this.dataIso, // YYYY-MM-DD
     required this.previstoKg,
+    this.previstoOriginalKg,
+    this.previstoRecalculadoKg,
+    this.isUltimoTrato = false,
     this.realizadoKg = 0,
     this.faltaKg = 0,
     this.concluido = false,
@@ -129,6 +132,9 @@ class CurralPrev {
   final String dataIso;
 
   final double previstoKg;
+  final double? previstoOriginalKg;
+  final double? previstoRecalculadoKg;
+  final bool isUltimoTrato;
 
   double realizadoKg;
   double faltaKg;
@@ -170,12 +176,19 @@ class CurralPrev {
     int? ordemFornecimento,
     String? numero,
     int? qtdSessoes,
+    double? previstoOriginalKg,
+    double? previstoRecalculadoKg,
+    bool? isUltimoTrato,
   }) {
     return CurralPrev(
       idBaia: idBaia,
       trato: trato,
       dataIso: dataIso,
       previstoKg: previstoKg,
+      previstoOriginalKg: previstoOriginalKg ?? this.previstoOriginalKg,
+      previstoRecalculadoKg:
+          previstoRecalculadoKg ?? this.previstoRecalculadoKg,
+      isUltimoTrato: isUltimoTrato ?? this.isUltimoTrato,
       realizadoKg: realizadoKg ?? this.realizadoKg,
       faltaKg: faltaKg ?? this.faltaKg,
       concluido: concluido ?? this.concluido,
@@ -227,7 +240,41 @@ class CurralPrev {
     final dataIso = snAny(["dataIso", "data", "DATA", "data_iso"]) ?? "";
     final trato = iAny(["trato", "TRATO"], def: 0);
 
-    final previsto = dAny(["previstoKg", "previsto", "PREVISTO_KG", "PREVISTO"]);
+    final previstoApi =
+        dAny(["previstoKg", "previsto", "PREVISTO_KG", "PREVISTO"]);
+    final previstoOriginal = dAny([
+      "previstoOriginalKg",
+      "previstoOriginal",
+      "previsto_original",
+      "PREVISTO_ORIGINAL_KG",
+      "PREVISTO_ORIGINAL",
+    ]);
+    final previstoRecalculado = dAny([
+      "previstoRecalculadoKg",
+      "previstoRecalculado",
+      "previsto_recalculado",
+      "PREVISTO_RECALCULADO_KG",
+      "PREVISTO_RECALCULADO",
+    ]);
+    final previstoOrigFinal =
+        previstoOriginal > 0 ? previstoOriginal : previstoApi;
+    final previstoRecalcFinal = previstoRecalculado > 0
+        ? previstoRecalculado
+        : previstoApi;
+    var isUltimoTrato = bAny([
+      "isUltimoTrato",
+      "ultimoTrato",
+      "ultimo_trato",
+      "ULTIMO_TRATO",
+    ]);
+    if (!isUltimoTrato &&
+        previstoOrigFinal > 0 &&
+        previstoRecalcFinal >= 0 &&
+        (previstoOrigFinal - previstoRecalcFinal).abs() > 0.01) {
+      isUltimoTrato = true;
+    }
+    final previstoExibicao =
+        previstoOrigFinal > 0 ? previstoOrigFinal : previstoRecalcFinal;
     final realizado =
         dAny(["realizadoKg", "realizado", "REALIZADO_KG", "REALIZADO"]);
 
@@ -243,16 +290,25 @@ class CurralPrev {
 
     final numero = snAny(["numero", "NUMERO"]);
 
-    final concluido = bAny(["concluido"]) ||
-        (previsto > 0 ? (realizado >= previsto) : (realizado > 0));
+    final concluido = isUltimoTrato
+        ? previstoRecalcFinal <= 0 && realizado > 0
+        : (bAny(["concluido"]) ||
+            (previstoExibicao > 0
+                ? (realizado >= previstoExibicao)
+                : (realizado > 0)));
 
-    final falta = _clamp0(previsto - realizado);
+    final falta = isUltimoTrato
+        ? _clamp0(previstoRecalcFinal)
+        : _clamp0(previstoExibicao - realizado);
 
     return CurralPrev(
       idBaia: idBaia,
       trato: trato,
       dataIso: dataIso,
-      previstoKg: previsto,
+      previstoKg: previstoExibicao,
+      previstoOriginalKg: previstoOrigFinal,
+      previstoRecalculadoKg: previstoRecalcFinal,
+      isUltimoTrato: isUltimoTrato,
       realizadoKg: realizado,
       faltaKg: falta,
       concluido: concluido,
@@ -539,9 +595,10 @@ class FornecimentoLocalRow {
   final bool? fabSyncOk;
   final String? fabHandoffId;
 
-  bool get fabSyncPendente => fabSyncOk == false;
-  bool get bloqueadoPorFab =>
-      !syncOk && (fabSyncOk == false || (idFabricacao ?? "").trim().isEmpty);
+  bool get fabSyncPendente =>
+      (idFabricacao ?? "").trim().isNotEmpty && fabSyncOk == false;
+  /// Bloqueia sync somente quando há fabricação vinculada ainda não sincronizada.
+  bool get bloqueadoPorFab => !syncOk && fabSyncPendente;
 
   String get racaoDisplay {
     final nome = (racaoNome ?? "").trim();

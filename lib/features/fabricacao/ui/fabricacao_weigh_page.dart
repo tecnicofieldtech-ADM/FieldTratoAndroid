@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 
 import "../../../repo/config_repo.dart"; // ✅ novo (pra pegar tipoTrabalho e vagão)
+import "../../fornecimento/data/fornecimento_repo.dart";
 import "../domain/fabricacao_flow.dart";
 import "../controller/fabricacao_controller.dart";
 import "../data/fabricacao_repo.dart";
@@ -46,6 +47,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   int _tipoTrabalho = 0;
 
   final _cfgRepo = ConfigRepo(); // ✅ config pra criar carregamento
+  final _fornRepo = FornecimentoRepo();
 
   bool get _recebendoAgora {
     final dt = c.lastPacketAt;
@@ -452,6 +454,12 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       await _goFabricacaoList();
       return;
     }
+
+    try {
+      await _fornRepo.prefetchMapaDoDia(idFazenda: idFazenda);
+    } catch (_) {}
+
+    if (!mounted) return;
 
     Navigator.of(context).pushReplacementNamed(
       "/fornecimento",

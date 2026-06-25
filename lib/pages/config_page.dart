@@ -118,8 +118,8 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _testingStation = false;
   bool _connectingStationWifi = false;
   bool get _isDistribuidor => _operacao == 2;
-  bool get _exigeEspelhamento => _operacao == 0 || _operacao == 1;
-  bool get _exigeConfigEstacionario => _isDistribuidor && _modoHibrido;
+  bool get _mostrarConfigEstacionario => _isDistribuidor;
+  bool get _mostrarEspelhamento => true;
 
   List<Widget> _fabricacaoFlowModeRadioTiles() {
     return [
@@ -519,37 +519,6 @@ class _ConfigPageState extends State<ConfigPage> {
     if (tolPct < 0) {
       _toast("Tolerância (%) deve ser 0 ou maior.");
       return false;
-    }
-
-    if (_exigeConfigEstacionario) {
-      final base = _stationBaseUrlCtrl.text.trim();
-      final ssid = _stationWifiSsidCtrl.text.trim();
-      if (base.isEmpty) {
-        _toast("Informe o baseUrl do estacionario.");
-        return false;
-      }
-      if (CarregamentoEstacionarioApi.tryParseHostPort(base) == null) {
-        _toast(
-            "Base URL invalida. Ex.: http://IP_DO_TABLET:8080 (porta do bridge).");
-        return false;
-      }
-      if (ssid.isEmpty) {
-        _toast("Informe o SSID da rede do estacionario.");
-        return false;
-      }
-    }
-
-    if (_exigeEspelhamento) {
-      final outIp = _ipEspelhoCtrl.text.trim();
-      final outPort = int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 0;
-      if (outIp.isEmpty) {
-        _toast("Informe o IP do espelhamento da pa.");
-        return false;
-      }
-      if (outPort <= 0) {
-        _toast("Informe a porta do espelhamento da pa.");
-        return false;
-      }
     }
 
     if (_ignorarPrefixoRfid) {
@@ -1481,12 +1450,17 @@ class _ConfigPageState extends State<ConfigPage> {
 
                 const SizedBox(height: 16),
 
-                if (_exigeEspelhamento) ...[
+                if (_mostrarEspelhamento) ...[
                 _sectionTitle("Espelhamento da pa"),
+                Text(
+                  "Opcional. Preencha apenas se usar espelhamento da PA.",
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _ipEspelhoCtrl,
                   decoration: const InputDecoration(
-                    labelText: "IP da pa",
+                    labelText: "IP da pa (opcional)",
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1503,7 +1477,7 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 22),
                 ],
 
-                if (_exigeConfigEstacionario) ...[
+                if (_mostrarConfigEstacionario) ...[
                   Card(
                     clipBehavior: Clip.antiAlias,
                     child: Padding(
@@ -1520,7 +1494,7 @@ class _ConfigPageState extends State<ConfigPage> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            "Rede e URL do tablet no misturador.",
+                            "Opcional. Necessário apenas para carregamento via BeatBox/estacionário.",
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),

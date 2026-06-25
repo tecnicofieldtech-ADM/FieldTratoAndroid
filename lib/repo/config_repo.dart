@@ -1,5 +1,6 @@
 import "package:sqflite/sqflite.dart";
 import "../db/app_db.dart";
+import "../domain/sync_pendencia_registro.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../services/config_disk_backup.dart";
 import "../utils/station_bridge_url.dart";
@@ -303,35 +304,183 @@ class ConfigRepo {
   // ✅ PENDÊNCIAS DE SINCRONIZAÇÃO (OUTBOX)
   // =========================================================
 
+  Future<({bool skip, List<String> where})> _fabricacaoPendenteFiltro() async {
+    final flowMode = await getFabricacaoFlowMode();
+    final tipoTrabalho = await getTipoTrabalho();
+
+    if (flowMode == FabricacaoFlowMode.startStationFinishTruck &&
+        tipoTrabalho == 1) {
+      return (skip: true, where: const <String>[]);
+    }
+
+    final where = <String>["IFNULL(FLAG_SYNC,0) = 0"];
+
+    if (flowMode == FabricacaoFlowMode.startStationFinishTruck) {
+      where.add("IFNULL(FAB_STATUS,0) = $fabricacaoStatusFinalizada");
+      where.add("UPPER(TRIM(COALESCE(ORIGIN_DEVICE,''))) = 'CAMINHAO'");
+    } else {
+      where.add("IFNULL(QTD_REALIZADA,0) > 0");
+    }
+
+    return (skip: false, where: where);
+  }
+
+  String _fmtDataBr(String iso) {
+    final t = iso.trim();
+    if (t.length >= 10) {
+      final p = t.substring(0, 10).split("-");
+      if (p.length == 3) return "${p[2]}/${p[1]}/${p[0]}";
+    }
+    return t.isEmpty ? "-" : t;
+  }
+
+  double _toD(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().replaceAll(",", ".")) ?? 0;
+  }
+
+  Future<List<SyncPendenciaRegistro>> listPendenciasSyncDetalhe({
+    int limitPerTipo = 80,
+  }) async {
+    final out = <SyncPendenciaRegistro>[];
+    out.addAll(await _listGravaTagPendenteDetalhe(limit: limitPerTipo));
+    out.addAll(await _listFabricacaoPendenteDetalhe(limit: limitPerTipo));
+    out.addAll(await _listFornecimentoPendenteDetalhe(limit: limitPerTipo));
+    return out;
+  }
+
+  Future<List<SyncPendenciaRegistro>> _listGravaTagPendenteDetalhe({
+    int limit = 80,
+  }) async {
+    final db = await _db;
+    try {
+      final rows = await db.rawQuery("""
+        SELECT
+          g.ID AS id,
+          COALESCE(g.TAG, '') AS tag,
+          COALESCE(g.ID_PASTO_CURRAL, '') AS id_curral,
+          COALESCE(b.NOME_LOCAL, g.ID_PASTO_CURRAL, '') AS nome_curral
+        FROM GRAVA_TAG g
+        LEFT JOIN DETALHES_BAIAS b
+          ON TRIM(CAST(b.ID AS TEXT)) = TRIM(CAST(g.ID_PASTO_CURRAL AS TEXT))
+        WHERE IFNULL(g.SYNC, 0) = 0
+        ORDER BY g.ID DESC
+        LIMIT ?
+      """, [limit]);
+
+      return rows.map((r) {
+        final nome = (r["nome_curral"] ?? "").toString().trim();
+        final tag = (r["tag"] ?? "").toString().trim();
+        final idCurral = (r["id_curral"] ?? "").toString().trim();
+        final titulo = nome.isNotEmpty
+            ? nome
+            : (idCurral.isNotEmpty ? "Curral $idCurral" : "Curral");
+        final tagTxt = tag.isEmpty ? "sem TAG" : tag;
+        return SyncPendenciaRegistro(
+          tipo: SyncPendenciaTipo.gravaTag,
+          titulo: titulo,
+          subtitulo: "TAG: $tagTxt",
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<SyncPendenciaRegistro>> _listFabricacaoPendenteDetalhe({
+    int limit = 80,
+  }) async {
+    final db = await _db;
+    try {
+      final filtro = await _fabricacaoPendenteFiltro();
+      if (filtro.skip) return const [];
+
+      final rows = await db.rawQuery("""
+        SELECT
+          h.ID AS id,
+          substr(COALESCE(h.DATA_FABRICACAO, ''), 1, 10) AS data_iso,
+          COALESCE(h.TRATO, 0) AS trato,
+          COALESCE(d.NOME, h.ID_DIETA, '') AS racao,
+          COALESCE(h.QTD_REALIZADA, 0) AS realizado
+        FROM CADASTRO_FABRICA_RACAO h
+        LEFT JOIN DIETA d ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(h.ID_DIETA AS TEXT))
+        WHERE ${filtro.where.join(" AND ")}
+        ORDER BY h.DATA_FABRICACAO DESC, h.HORA_INICIO DESC, h.ID DESC
+        LIMIT ?
+      """, [limit]);
+
+      return rows.map((r) {
+        final racao = (r["racao"] ?? "").toString().trim();
+        final trato = int.tryParse("${r["trato"]}") ?? 0;
+        final data = _fmtDataBr((r["data_iso"] ?? "").toString());
+        final kg = _toD(r["realizado"]);
+        final titulo = racao.isEmpty
+            ? "Fabricação trato $trato"
+            : "$racao · Trato $trato";
+        return SyncPendenciaRegistro(
+          tipo: SyncPendenciaTipo.fabricacao,
+          titulo: titulo,
+          subtitulo: "$data · ${kg.toStringAsFixed(0)} kg",
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<SyncPendenciaRegistro>> _listFornecimentoPendenteDetalhe({
+    int limit = 80,
+  }) async {
+    final db = await _db;
+    try {
+      final rows = await db.rawQuery("""
+        SELECT
+          substr(COALESCE(F.DATA, ''), 1, 10) AS data_iso,
+          COALESCE(F.TRATO, 0) AS trato,
+          COALESCE(F.REALIZADO, 0) AS realizado,
+          COALESCE(B.NOME_LOCAL, F.ID_BAIA, '') AS nome_baia,
+          COALESCE(d.NOME, F.ID_DIETA, '') AS racao
+        FROM CADASTRO_FORNECIMENTO F
+        LEFT JOIN DETALHES_BAIAS B
+          ON TRIM(CAST(B.ID AS TEXT)) = TRIM(CAST(F.ID_BAIA AS TEXT))
+        LEFT JOIN DIETA d
+          ON TRIM(CAST(d.ID AS TEXT)) = TRIM(CAST(F.ID_DIETA AS TEXT))
+        WHERE IFNULL(F.REALIZADO, 0) > 0
+          AND IFNULL(F.FLAG_SYNC, 0) = 0
+        ORDER BY F.DATA DESC, F.HORA_INICIO DESC, F.ID DESC
+        LIMIT ?
+      """, [limit]);
+
+      return rows.map((r) {
+        final baia = (r["nome_baia"] ?? "").toString().trim();
+        final trato = int.tryParse("${r["trato"]}") ?? 0;
+        final data = _fmtDataBr((r["data_iso"] ?? "").toString());
+        final kg = _toD(r["realizado"]);
+        final racao = (r["racao"] ?? "").toString().trim();
+        final titulo = baia.isEmpty ? "Trato $trato" : "$baia · Trato $trato";
+        final racaoTxt = racao.isEmpty ? "" : " · $racao";
+        return SyncPendenciaRegistro(
+          tipo: SyncPendenciaTipo.fornecimento,
+          titulo: titulo,
+          subtitulo: "$data · ${kg.toStringAsFixed(0)} kg$racaoTxt",
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<int> countFabricacaoPendenteSync() async {
     final db = await _db;
     try {
-      final flowMode = await getFabricacaoFlowMode();
-      final tipoTrabalho = await getTipoTrabalho();
-
-      // Regra global:
-      // - startStationFinishTruck + estacionario => nunca sincroniza fabricacao.
-      // - startStationFinishTruck + caminhao => sincroniza somente finalizadas no caminhao.
-      if (flowMode == FabricacaoFlowMode.startStationFinishTruck &&
-          tipoTrabalho == 1) {
-        return 0;
-      }
-
-      final where = <String>[
-        "IFNULL(FLAG_SYNC,0) = 0",
-      ];
-
-      if (flowMode == FabricacaoFlowMode.startStationFinishTruck) {
-        where.add("IFNULL(FAB_STATUS,0) = $fabricacaoStatusFinalizada");
-        where.add("UPPER(TRIM(COALESCE(ORIGIN_DEVICE,''))) = 'CAMINHAO'");
-      } else {
-        where.add("IFNULL(QTD_REALIZADA,0) > 0");
-      }
+      final filtro = await _fabricacaoPendenteFiltro();
+      if (filtro.skip) return 0;
 
       final rows = await db.rawQuery(
         "SELECT COUNT(*) AS QTD "
         "FROM CADASTRO_FABRICA_RACAO "
-        "WHERE ${where.join(" AND ")}",
+        "WHERE ${filtro.where.join(" AND ")}",
       );
       if (rows.isEmpty) return 0;
       final v = rows.first["QTD"];

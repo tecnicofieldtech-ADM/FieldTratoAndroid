@@ -20,6 +20,72 @@ class CarregamentoDao {
     return "$yyyy-$mm-$dd";
   }
 
+  /// Finaliza todos os carregamentos abertos do dia (opcionalmente do vagão).
+  Future<int> finalizarAbertos({
+    DateTime? data,
+    String? idVagao,
+    String? excetoId,
+  }) async {
+    final db = await _db;
+    final dateStr = _ymd(data ?? DateTime.now());
+    final vag = (idVagao ?? "").trim();
+    final exc = (excetoId ?? "").trim();
+
+    final where = <String>[
+      "COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      "substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?",
+    ];
+    final args = <Object?>[statusAberto, dateStr];
+
+    if (vag.isNotEmpty) {
+      where.add("TRIM(COALESCE(CAST(ID_VAGAO AS TEXT),'')) = TRIM(?)");
+      args.add(vag);
+    }
+    if (exc.isNotEmpty) {
+      where.add("TRIM(ID) <> TRIM(?)");
+      args.add(exc);
+    }
+
+    return db.update(
+      _table,
+      {"STATUS": statusFinalizado},
+      where: where.join(" AND "),
+      whereArgs: args,
+    );
+  }
+
+  /// Carregamento aberto ativo (status=0) do dia, opcionalmente filtrado por vagão.
+  Future<Map<String, Object?>?> getAbertoAtivo({
+    DateTime? data,
+    String? idVagao,
+  }) async {
+    final db = await _db;
+    final dateStr = _ymd(data ?? DateTime.now());
+    final vag = (idVagao ?? "").trim();
+
+    final where = <String>[
+      "COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      "substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?",
+    ];
+    final args = <Object?>[statusAberto, dateStr];
+
+    if (vag.isNotEmpty) {
+      where.add("TRIM(COALESCE(CAST(ID_VAGAO AS TEXT),'')) = TRIM(?)");
+      args.add(vag);
+    }
+
+    final rows = await db.query(
+      _table,
+      where: where.join(" AND "),
+      whereArgs: args,
+      orderBy: "DATA_REGISTRO DESC",
+      limit: 1,
+    );
+
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
   /// Pega o carregamento aberto mais recente (status=0) no dia informado.
   /// 🔥 FIX: usa substr(DATA_REGISTRO,1,10)=YYYY-MM-DD (mais estável que date()).
   Future<Map<String, Object?>?> getAbertoHoje({DateTime? data}) async {
@@ -163,24 +229,7 @@ class CarregamentoDao {
       throw Exception("Peso carregado deve ser maior que zero.");
     }
 
-    final existente = await getAbertoSemFabricacao(idVagao: vag, data: data);
-    if (existente != null) {
-      final id = (existente["ID"] ?? "").toString().trim();
-      if (id.isNotEmpty) {
-        await db.update(
-          _table,
-          {
-            "ID_DIETA": dieta,
-            "PESO_CARREGADO": pesoCarregado,
-            "PESO_FABRICADO": pesoCarregado,
-            "ID_VAGAO": vag,
-          },
-          where: "TRIM(ID) = TRIM(?)",
-          whereArgs: [id],
-        );
-        return id;
-      }
-    }
+    await finalizarAbertos(data: data, idVagao: vag);
 
     final id = _newId();
     await db.insert(_table, {

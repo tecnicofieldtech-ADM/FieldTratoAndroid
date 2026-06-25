@@ -31,6 +31,9 @@ uses
   UdmFieldPec,
   Controllers.Mirror;
 
+function ParseHoraRef(const S: string): TDateTime; forward;
+procedure SetParamHoraOpcional(Q: TFDQuery; const Nome: string; H: TDateTime); forward;
+
 function ExtractStrCI(const Obj: TJSONObject; const Keys: array of string): string; forward;
 
 procedure LimpaJSONObject(JSON: TJSONObject);
@@ -676,9 +679,10 @@ var
 
   vId: string;
   vIdFabricacao, vIdUsuario, vIdTratador, vIdDietaRealizada, vRealizado, vMS: string;
-  vIdBaia, vIdRacaoPrev, vTratoStr, vDataISO: string;
+  vIdBaia, vIdRacaoPrev, vTratoStr, vDataISO, vHoraForn: string;
   vTrato: Integer;
   vData: TDateTime;
+  vHoraFornDt: TDateTime;
   vMsFornec, vRealizadoNum, vRealizadoAtual, vRealizadoGravar: Double;
   vFornecimentoAcumulativo: Boolean;
   vPontoCorteKg: Double;
@@ -787,6 +791,7 @@ begin
       vIdRacaoPrev := JSONStrFirst(Body, ['id_racao', 'ID_RACAO', 'IDRACAO', 'id_dieta', 'id_dieta_prevista']);
       vTratoStr := JSONStrFirst(Body, ['trato', 'TRATO'], '0');
       vDataISO := JSONStrFirst(Body, ['data', 'DATA_FORN', 'data_forn', 'DATA_FAB']);
+      vHoraForn := JSONStrFirst(Body, ['hora_forn', 'HORA_FORN', 'hora_fim', 'HORA_FIM']);
 
       vTrato := StrToIntDef(vTratoStr, 0);
       vData := ParseDataRef(vDataISO);
@@ -891,22 +896,37 @@ begin
       else
         vRealizadoGravar := vRealizadoNum;
 
+      vHoraFornDt := ParseHoraRef(vHoraForn);
+
       with dmGlobal.qryAux do
       begin
         Close;
-        SQL.Text :=
-          'UPDATE FORNECIMENTO_CONF SET ' +
-          '  REALIZADO_MN_KG = :REALIZADO, ' +
-          '  MS_RACAO = :MS, ' +
-          '  ID_MOTORISTA = :ID_MOTORISTA, ' +
-          '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
-          '  ID_USUARIO_ALTERACAO = :ID_USUARIO ' +
-          'WHERE ID = :ID';
+        if Frac(vHoraFornDt) > 0 then
+          SQL.Text :=
+            'UPDATE FORNECIMENTO_CONF SET ' +
+            '  REALIZADO_MN_KG = :REALIZADO, ' +
+            '  MS_RACAO = :MS, ' +
+            '  ID_MOTORISTA = :ID_MOTORISTA, ' +
+            '  HORA_FORN = :HORA_FORN, ' +
+            '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
+            '  ID_USUARIO_ALTERACAO = :ID_USUARIO ' +
+            'WHERE ID = :ID'
+        else
+          SQL.Text :=
+            'UPDATE FORNECIMENTO_CONF SET ' +
+            '  REALIZADO_MN_KG = :REALIZADO, ' +
+            '  MS_RACAO = :MS, ' +
+            '  ID_MOTORISTA = :ID_MOTORISTA, ' +
+            '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
+            '  ID_USUARIO_ALTERACAO = :ID_USUARIO ' +
+            'WHERE ID = :ID';
         ParamByName('REALIZADO').AsFloat := vRealizadoGravar;
         ParamByName('MS').AsFloat := vMsFornec;
         ParamByName('ID_MOTORISTA').AsInteger := IdMotorista;
         ParamByName('ID_USUARIO').AsInteger := IdMotorista;
         ParamByName('ID').AsInteger := IdFornecConf;
+        if Frac(vHoraFornDt) > 0 then
+          ParamByName('HORA_FORN').AsDateTime := Frac(vHoraFornDt);
         ExecSQL;
       end;
 
@@ -930,6 +950,327 @@ begin
       JSONResult.AddPair('erro', 'Erro: ' + E.ClassName + ' - ' + E.Message);
       Res.Send(JSONResult).Status(500);
     end;
+  end;
+end;
+
+function ParseHoraRef(const S: string): TDateTime;
+var
+  Txt: string;
+  P: Integer;
+begin
+  Result := 0;
+  Txt := Trim(S);
+  if Txt = '' then
+    Exit;
+
+  if Pos('T', Txt) > 0 then
+  begin
+    P := Pos('T', Txt);
+    Txt := Copy(Txt, P + 1, MaxInt);
+  end
+  else if Pos(' ', Txt) > 0 then
+  begin
+    P := LastDelimiter(' ', Txt);
+    Txt := Copy(Txt, P + 1, MaxInt);
+  end;
+
+  Txt := Trim(StringReplace(Txt, '.', ':', [rfReplaceAll]));
+  if Pos(':', Txt) = 0 then
+    Exit;
+
+  try
+    if Length(Txt) = 5 then
+      Result := StrToTime(Txt + ':00')
+    else
+      Result := StrToTime(Copy(Txt, 1, 8));
+  except
+    Result := 0;
+  end;
+end;
+
+procedure SetParamHoraOpcional(Q: TFDQuery; const Nome: string; H: TDateTime);
+begin
+  if Frac(H) > 0 then
+    Q.ParamByName(Nome).AsDateTime := Frac(H)
+  else
+    Q.ParamByName(Nome).Clear;
+end;
+
+function ProximoIdTabela(Conn: TFDConnection; const TableName: string): Integer;
+var
+  Q: TFDQuery;
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text := Format(
+      'SELECT COALESCE(MAX(ID), 0) + 1 AS NX FROM %s',
+      [TableName]);
+    Q.Open;
+    Result := Q.FieldByName('NX').AsInteger;
+    if Result <= 0 then
+      Result := 1;
+  finally
+    Q.Free;
+  end;
+end;
+
+function ProximoIdFabricacao(Conn: TFDConnection): Integer;
+begin
+  Result := ProximoIdTabela(Conn, 'FABRICACAO');
+end;
+
+procedure AplicarParamsInsertFabricacao(
+  Q: TFDQuery;
+  IdDieta, IdFazenda, IdUsuario, IdOperador: Integer;
+  DataFab: TDate;
+  QtdePrevista, QtdeRealizada, CustoTotal: Double);
+begin
+  Q.ParamByName('IDRACAO').AsInteger := IdDieta;
+  Q.ParamByName('DATA_FAB').AsDate := DataFab;
+  Q.ParamByName('KG_PREVISTO').AsFloat := QtdePrevista;
+  Q.ParamByName('KG_REALIZADO').AsFloat := QtdeRealizada;
+  Q.ParamByName('CUSTO_TOTAL').AsFloat := CustoTotal;
+  Q.ParamByName('ID_USUARIO').AsInteger := IdUsuario;
+  Q.ParamByName('ID_OPERADOR').AsInteger := IdOperador;
+  Q.ParamByName('ID_PROPRIEDADE').AsInteger := IdFazenda;
+end;
+
+function InserirFabricacaoComIdSeguro(
+  Conn: TFDConnection;
+  IdDieta, IdFazenda, IdUsuario, IdOperador: Integer;
+  DataFab: TDate;
+  QtdePrevista, QtdeRealizada, CustoTotal: Double): Integer;
+var
+  Q: TFDQuery;
+  Attempt: Integer;
+  ErrMsg: string;
+  NextId: Integer;
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+
+    for Attempt := 1 to 4 do
+    begin
+      NextId := ProximoIdFabricacao(Conn);
+      Q.Close;
+      Q.SQL.Text :=
+        'INSERT INTO FABRICACAO ( ' +
+        '  ID, IDRACAO, DATA_FAB, KG_PREVISTO, KG_REALIZADO, CUSTO_TOTAL, ' +
+        '  ID_USUARIO, ID_OPERADOR, ID_PROPRIEDADE, ORIGEM_DADOS, STATUS, DATAREG ' +
+        ') VALUES ( ' +
+        '  :ID, :IDRACAO, :DATA_FAB, :KG_PREVISTO, :KG_REALIZADO, :CUSTO_TOTAL, ' +
+        '  :ID_USUARIO, :ID_OPERADOR, :ID_PROPRIEDADE, 1, 1, CURRENT_DATE ' +
+        ')';
+
+      Q.ParamByName('ID').AsInteger := NextId;
+      AplicarParamsInsertFabricacao(
+        Q, IdDieta, IdFazenda, IdUsuario, IdOperador, DataFab,
+        QtdePrevista, QtdeRealizada, CustoTotal);
+
+      try
+        Q.ExecSQL;
+        Result := NextId;
+        Exit;
+      except
+        on E: Exception do
+        begin
+          ErrMsg := UpperCase(E.Message);
+          if (Pos('PRIMARY', ErrMsg) = 0) and
+             (Pos('UNIQUE', ErrMsg) = 0) and
+             (Pos('PK_FABRICACAO', ErrMsg) = 0) then
+            raise;
+        end;
+      end;
+    end;
+
+    raise Exception.Create('Falha ao inserir FABRICACAO (PK) apos 4 tentativas.');
+  finally
+    Q.Free;
+  end;
+end;
+
+procedure InserirFabricacaoInsumoSeguro(
+  Conn: TFDConnection;
+  IdServidorFab, IdInsumo, IdUsuarioItem: Integer;
+  DataFab: TDate;
+  QtdePrevistaItem, QtdeRealizadaItem, MsInsumo, ValorKgInsumo: Double;
+  HoraIni, HoraFim: TDateTime);
+var
+  Q: TFDQuery;
+  Attempt: Integer;
+  ErrMsg: string;
+  NextId: Integer;
+
+  procedure AplicarParams;
+  begin
+    Q.ParamByName('ID_FABRICACAO').AsInteger := IdServidorFab;
+    Q.ParamByName('ID_ALIMENTO').AsInteger := IdInsumo;
+    Q.ParamByName('DATA_FAB').AsDate := DataFab;
+    Q.ParamByName('MS_INSUMO').AsFloat := MsInsumo;
+    Q.ParamByName('KG_PREVISTO').AsFloat := QtdePrevistaItem;
+    Q.ParamByName('KG_FABRICADO').AsFloat := QtdeRealizadaItem;
+    Q.ParamByName('ID_USUARIO').AsInteger := IdUsuarioItem;
+    Q.ParamByName('VALOR_KG').AsFloat := ValorKgInsumo;
+  end;
+
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+
+    for Attempt := 1 to 4 do
+    begin
+      NextId := ProximoIdTabela(Conn, 'FABRICACAO_INSUMOS');
+      Q.Close;
+      Q.SQL.Text :=
+        'INSERT INTO FABRICACAO_INSUMOS ( ' +
+        '  ID, ID_FABRICACAO, ID_ALIMENTO, DATA_FAB, MS_INSUMO, ' +
+        '  KG_PREVISTO, KG_FABRICADO, ID_USUARIO, STATUS, DATAREG, VALOR_KG, ' +
+        '  HORA_INI, HORA_FIM ' +
+        ') VALUES ( ' +
+        '  :ID, :ID_FABRICACAO, :ID_ALIMENTO, :DATA_FAB, :MS_INSUMO, ' +
+        '  :KG_PREVISTO, :KG_FABRICADO, :ID_USUARIO, 1, CURRENT_DATE, :VALOR_KG, ' +
+        '  :HORA_INI, :HORA_FIM ' +
+        ')';
+      Q.ParamByName('ID').AsInteger := NextId;
+      AplicarParams;
+      SetParamHoraOpcional(Q, 'HORA_INI', HoraIni);
+      SetParamHoraOpcional(Q, 'HORA_FIM', HoraFim);
+
+      try
+        Q.ExecSQL;
+        Exit;
+      except
+        on E: Exception do
+        begin
+          ErrMsg := UpperCase(E.Message);
+          if (Pos('PRIMARY', ErrMsg) = 0) and
+             (Pos('UNIQUE', ErrMsg) = 0) and
+             (Pos('PK_', ErrMsg) = 0) then
+            raise Exception.CreateFmt(
+              'FABRICACAO_INSUMOS insumo=%d fab=%d: %s',
+              [IdInsumo, IdServidorFab, E.Message]);
+        end;
+      end;
+    end;
+
+    raise Exception.Create('Falha ao inserir FABRICACAO_INSUMOS (PK) apos 4 tentativas.');
+  finally
+    Q.Free;
+  end;
+end;
+
+function BuscarValorKgInsumoConn(
+  Conn: TFDConnection; const AIdRacao, AIdInsumo: Integer): Double;
+var
+  Qry: TFDQuery;
+begin
+  Result := -1;
+
+  Qry := TFDQuery.Create(nil);
+  try
+    Qry.Connection := Conn;
+    Qry.SQL.Text :=
+      'SELECT FIRST 1 VALOR_MEDIO ' +
+      'FROM HIST_VALOR_INSUMOS hvi ' +
+      'WHERE hvi.ID_ALIMENTO = :ID_ALIMENTO ' +
+      'ORDER BY hvi.ID DESC';
+    Qry.ParamByName('ID_ALIMENTO').AsInteger := AIdInsumo;
+    Qry.Open;
+
+    if (not Qry.IsEmpty) and (not Qry.FieldByName('VALOR_MEDIO').IsNull) then
+      Result := Qry.FieldByName('VALOR_MEDIO').AsFloat;
+  finally
+    Qry.Free;
+  end;
+
+  if Result < 0 then
+  begin
+    Qry := TFDQuery.Create(nil);
+    try
+      Qry.Connection := Conn;
+      Qry.SQL.Text :=
+        'SELECT VALORKG ' +
+        'FROM RACAOINSUMOS r ' +
+        'WHERE r.IDRACAO = :IDRACAO ' +
+        '  AND r.IDINSUMOALIMENTO = :IDINSUMOALIMENTO';
+      Qry.ParamByName('IDRACAO').AsInteger := AIdRacao;
+      Qry.ParamByName('IDINSUMOALIMENTO').AsInteger := AIdInsumo;
+      Qry.Open;
+
+      if (not Qry.IsEmpty) and (not Qry.FieldByName('VALORKG').IsNull) then
+        Result := Qry.FieldByName('VALORKG').AsFloat
+      else
+        Result := 0;
+    finally
+      Qry.Free;
+    end;
+  end;
+end;
+
+function ProcessarItensFabricacao(
+  Conn: TFDConnection;
+  IdServidorFab, IdDieta, IdUsuario: Integer;
+  DataFab: TDate;
+  Itens: TJSONArray): Integer;
+var
+  IdxItem: Integer;
+  Item: TJSONObject;
+  IdInsumo, IdUsuarioItem: Integer;
+  QtdePrevistaItem, QtdeRealizadaItem, MsInsumo, ValorKgInsumo: Double;
+  HoraIniItem, HoraFimItem: TDateTime;
+begin
+  Result := 0;
+  if not Assigned(Itens) or (Itens.Count = 0) then
+    Exit;
+
+  for IdxItem := 0 to Itens.Count - 1 do
+  begin
+    if not (Itens.Items[IdxItem] is TJSONObject) then
+      Continue;
+
+    Item := TJSONObject(Itens.Items[IdxItem]);
+
+    IdInsumo := JSONIntFirst(Item, ['id_insumo', 'ID_ALIMENTO', 'id_alimento']);
+    QtdePrevistaItem := StrToFloatBR(JSONStrFirst(Item, ['qtde_prevista', 'KG_PREVISTO']));
+    QtdeRealizadaItem := StrToFloatBR(JSONStrFirst(Item, ['qtd_realizada', 'KG_FABRICADO', 'qtd_realizado']));
+    MsInsumo := StrToFloatBR(JSONStrFirst(Item, ['ms_insumo', 'MS_INSUMO']));
+    IdUsuarioItem := JSONIntFirst(Item, ['id_usuario', 'ID_USUARIO'], IdUsuario);
+    HoraIniItem := ParseHoraRef(JSONStrFirst(Item, ['hora_ini', 'HORA_INI', 'hora_inicio', 'HORA_INICIO']));
+    HoraFimItem := ParseHoraRef(JSONStrFirst(Item, ['hora_fim', 'HORA_FIM']));
+
+    if IdInsumo <= 0 then
+      raise Exception.CreateFmt(
+        'Item %d com id_insumo/ID_ALIMENTO invalido (valor recebido: %s).',
+        [IdxItem + 1, JSONStrFirst(Item, ['id_insumo', 'ID_ALIMENTO', 'id_alimento'])]);
+
+    ValorKgInsumo := BuscarValorKgInsumoConn(Conn, IdDieta, IdInsumo);
+    if ValorKgInsumo < 0 then
+      ValorKgInsumo := 0;
+
+    try
+      InserirFabricacaoInsumoSeguro(
+        Conn,
+        IdServidorFab,
+        IdInsumo,
+        IdUsuarioItem,
+        DataFab,
+        QtdePrevistaItem,
+        QtdeRealizadaItem,
+        MsInsumo,
+        ValorKgInsumo,
+        HoraIniItem,
+        HoraFimItem);
+    except
+      on E: Exception do
+        raise Exception.CreateFmt(
+          'Erro ao inserir insumo %d (ID_ALIMENTO=%d, fab=%d, prev=%.3f, real=%.3f): %s',
+          [IdxItem + 1, IdInsumo, IdServidorFab, QtdePrevistaItem, QtdeRealizadaItem, E.Message]);
+    end;
+
+    Inc(Result);
   end;
 end;
 
@@ -989,6 +1330,9 @@ var
 
   ItensProcessados: Integer;
   FornecimentosProcessados: Integer;
+
+  HoraInicioFab: TDateTime;
+  HoraFimFab: TDateTime;
 
   RespJson: TJSONObject;
 
@@ -1084,6 +1428,8 @@ begin
     QtdeRealizada := StrToFloatBR(JSONStrFirst(Body, ['qtde_realizada', 'KG_REALIZADO', 'qtd_realizada', 'kg_realizado']));
     Itens         := JSONArrayFirst(Body, ['itens', 'FABRICACAO_INSUMOS', 'insumos']);
     Fornecimentos := JSONArrayFirst(Body, ['fornecimentos', 'FORNECIMENTO_CONF']);
+    HoraInicioFab := ParseHoraRef(JSONStrFirst(Body, ['hora_inicio', 'HORA_INICIO']));
+    HoraFimFab := ParseHoraRef(JSONStrFirst(Body, ['hora_fim', 'HORA_FIM']));
 
     if IdFazenda <= 0 then
       raise Exception.Create('Campo id_fazenda/ID_PROPRIEDADE inválido.');
@@ -1113,32 +1459,9 @@ begin
       ValorKgRacao := BuscarValorKgRacao(IdDieta);
       CustoTotal := QtdeRealizada * ValorKgRacao;
 
-      Q := TFDQuery.Create(nil);
-      try
-        Q.Connection := Conn;
-        Q.SQL.Text :=
-          'INSERT INTO FABRICACAO ( ' +
-          '  IDRACAO, DATA_FAB, KG_PREVISTO, KG_REALIZADO, CUSTO_TOTAL, ' +
-          '  ID_USUARIO, ID_OPERADOR, ID_PROPRIEDADE, ORIGEM_DADOS, STATUS, DATAREG ' +
-          ') VALUES ( ' +
-          '  :IDRACAO, :DATA_FAB, :KG_PREVISTO, :KG_REALIZADO, :CUSTO_TOTAL, ' +
-          '  :ID_USUARIO, :ID_OPERADOR, :ID_PROPRIEDADE, 1, 1, CURRENT_TIMESTAMP ' +
-          ') RETURNING ID';
-
-        Q.ParamByName('IDRACAO').AsInteger := IdDieta;
-        Q.ParamByName('DATA_FAB').AsDate := DataFab;
-        Q.ParamByName('KG_PREVISTO').AsFloat := QtdePrevista;
-        Q.ParamByName('KG_REALIZADO').AsFloat := QtdeRealizada;
-        Q.ParamByName('CUSTO_TOTAL').AsFloat := CustoTotal;
-        Q.ParamByName('ID_USUARIO').AsInteger := IdUsuario;
-        Q.ParamByName('ID_OPERADOR').AsInteger := IdOperador;
-        Q.ParamByName('ID_PROPRIEDADE').AsInteger := IdFazenda;
-
-        Q.Open;
-        IdServidorFab := Q.FieldByName('ID').AsInteger;
-      finally
-        FreeAndNil(Q);
-      end;
+      IdServidorFab := InserirFabricacaoComIdSeguro(
+        Conn, IdDieta, IdFazenda, IdUsuario, IdOperador, DataFab,
+        QtdePrevista, QtdeRealizada, CustoTotal);
 
       LoteFabricacao := IntToStr(IdServidorFab);
 
@@ -1147,10 +1470,14 @@ begin
         Q.Connection := Conn;
         Q.SQL.Text :=
           'UPDATE FABRICACAO ' +
-          'SET LOTE_FABRICACAO = :LOTE_FABRICACAO ' +
+          'SET LOTE_FABRICACAO = :LOTE_FABRICACAO, ' +
+          '    HORA_INICIO = :HORA_INICIO, ' +
+          '    HORA_FIM = :HORA_FIM ' +
           'WHERE ID = :ID';
         Q.ParamByName('LOTE_FABRICACAO').AsString := LoteFabricacao;
         Q.ParamByName('ID').AsInteger := IdServidorFab;
+        SetParamHoraOpcional(Q, 'HORA_INICIO', HoraInicioFab);
+        SetParamHoraOpcional(Q, 'HORA_FIM', HoraFimFab);
         Q.ExecSQL;
       finally
         FreeAndNil(Q);
@@ -1167,54 +1494,8 @@ begin
       end;
 
       if Assigned(Itens) and (Itens.Count > 0) then
-      begin
-        for IdxItem := 0 to Itens.Count - 1 do
-        begin
-          if not (Itens.Items[IdxItem] is TJSONObject) then
-            Continue;
-
-          Item := TJSONObject(Itens.Items[IdxItem]);
-
-          IdInsumo := JSONIntFirst(Item, ['id_insumo', 'ID_ALIMENTO', 'id_alimento']);
-          QtdePrevistaItem := StrToFloatBR(JSONStrFirst(Item, ['qtde_prevista', 'KG_PREVISTO']));
-          QtdeRealizadaItem := StrToFloatBR(JSONStrFirst(Item, ['qtd_realizada', 'KG_FABRICADO', 'qtd_realizado']));
-          MsInsumo := StrToFloatBR(JSONStrFirst(Item, ['ms_insumo', 'MS_INSUMO']));
-          IdUsuarioItem := JSONIntFirst(Item, ['id_usuario', 'ID_USUARIO'], IdUsuario);
-
-          if IdInsumo <= 0 then
-            raise Exception.CreateFmt('Item %d com id_insumo/ID_ALIMENTO inválido.', [IdxItem + 1]);
-
-          ValorKgInsumo := BuscarValorKgInsumo(IdDieta, IdInsumo);
-
-          Q := TFDQuery.Create(nil);
-          try
-            Q.Connection := Conn;
-            Q.SQL.Text :=
-              'INSERT INTO FABRICACAO_INSUMOS ( ' +
-              '  ID_FABRICACAO, ID_ALIMENTO, DATA_FAB, MS_INSUMO, ' +
-              '  KG_PREVISTO, KG_FABRICADO, ID_USUARIO, STATUS, DATAREG, VALOR_KG' +
-              ') VALUES ( ' +
-              '  :ID_FABRICACAO, :ID_ALIMENTO, :DATA_FAB, :MS_INSUMO, ' +
-              '  :KG_PREVISTO, :KG_FABRICADO, :ID_USUARIO, 1, CURRENT_TIMESTAMP, :VALOR_KG' +
-              ')';
-
-            Q.ParamByName('ID_FABRICACAO').AsInteger := IdServidorFab;
-            Q.ParamByName('ID_ALIMENTO').AsInteger := IdInsumo;
-            Q.ParamByName('DATA_FAB').AsDate := DataFab;
-            Q.ParamByName('MS_INSUMO').AsFloat := MsInsumo;
-            Q.ParamByName('KG_PREVISTO').AsFloat := QtdePrevistaItem;
-            Q.ParamByName('KG_FABRICADO').AsFloat := QtdeRealizadaItem;
-            Q.ParamByName('ID_USUARIO').AsInteger := IdUsuarioItem;
-            Q.ParamByName('VALOR_KG').AsFloat := ValorKgInsumo;
-            //Q.ParamByName('CUSTO').AsFloat := QtdeRealizadaItem * ValorKgInsumo;
-            Q.ExecSQL;
-          finally
-            FreeAndNil(Q);
-          end;
-
-          Inc(ItensProcessados);
-        end;
-      end;
+        ItensProcessados := ProcessarItensFabricacao(
+          Conn, IdServidorFab, IdDieta, IdUsuario, DataFab, Itens);
 
       if Assigned(Fornecimentos) and (Fornecimentos.Count > 0) then
       begin
@@ -1234,6 +1515,10 @@ begin
           HoraForn := JSONStr(Forn, 'HORA_FORN');
           if HoraForn = '' then
             HoraForn := JSONStr(Forn, 'hora_forn');
+          if HoraForn = '' then
+            HoraForn := JSONStrFirst(Forn, ['hora_fim', 'HORA_FIM']);
+          if HoraForn = '' then
+            HoraForn := JSONStrFirst(Forn, ['hora_inicio', 'HORA_INICIO']);
           if HoraForn = '' then
             HoraForn := '00:00:00';
 
@@ -1385,7 +1670,7 @@ begin
 
             Q.ParamByName('LOTE_FABRICACAO').AsString := LoteFabricacao;
             Q.ParamByName('ID_MOTORISTA').AsInteger := IdMotorista;
-            Q.ParamByName('HORA_FORN').AsDateTime := StrToTime(HoraForn);
+            Q.ParamByName('HORA_FORN').AsDateTime := Frac(ParseHoraRef(HoraForn));
             Q.ParamByName('QTD_CAB').AsFloat := QtdCab;
             Q.ParamByName('REALIZADO_MN_KG').AsFloat := RealizadoAtual + Realizado;
             Q.ParamByName('ID_USUARIO_ALTERACAO').AsInteger := IdMotorista;

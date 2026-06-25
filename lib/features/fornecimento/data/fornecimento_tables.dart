@@ -19,7 +19,8 @@ class FornTables {
   //
   // CREATE TABLE PREVISAO (
   //   ID_FORNECIMENTO, DATA, ID_BAIA, TRATO,
-  //   PREVISTO_KG, REALIZADO_KG, ID_RACAO
+  //   PREVISTO_KG, PREVISTO_ORIGINAL_KG, PREVISTO_RECALCULADO_KG,
+  //   REALIZADO_KG, ID_RACAO, ULTIMO_TRATO
   // )
   // =========================
   static const String pvIdFornecimento = "ID_FORNECIMENTO";
@@ -27,8 +28,11 @@ class FornTables {
   static const String pvTrato = "TRATO";
   static const String pvIdBaia = "ID_BAIA";
   static const String pvPrevistoKg = "PREVISTO_KG";
+  static const String pvPrevistoOriginalKg = "PREVISTO_ORIGINAL_KG";
+  static const String pvPrevistoRecalculadoKg = "PREVISTO_RECALCULADO_KG";
   static const String pvRealizadoKg = "REALIZADO_KG";
   static const String pvIdRacao = "ID_RACAO";
+  static const String pvUltimoTrato = "ULTIMO_TRATO";
 
   // =========================
   // DETALHES_BAIAS (cols)
@@ -118,18 +122,24 @@ AND (
     final a = aliasPrevisao;
     final match = sqlChaveCadastroMatchPrevisao(a, "cf");
     return """
-CASE
-  WHEN (
-    SELECT COUNT(*)
-    FROM $cadastroFornecimento cf
-    WHERE $match
-  ) > 0 THEN (
-    SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
-    FROM $cadastroFornecimento cf
-    WHERE $match
+(
+  SELECT MAX(v) FROM (
+    SELECT CASE
+      WHEN (
+        SELECT COUNT(*)
+        FROM $cadastroFornecimento cf
+        WHERE $match
+      ) > 0 THEN (
+        SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
+        FROM $cadastroFornecimento cf
+        WHERE $match
+      )
+      ELSE 0
+    END AS v
+    UNION ALL
+    SELECT COALESCE($a.$pvRealizadoKg, 0) AS v
   )
-  ELSE COALESCE($a.$pvRealizadoKg, 0)
-END""";
+)""";
   }
 
   static String sqlQtdSessoesLocal(String aliasPrevisao) {

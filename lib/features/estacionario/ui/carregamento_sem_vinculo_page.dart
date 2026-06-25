@@ -530,6 +530,12 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
       return;
     }
 
+    try {
+      await _fornRepo.prefetchMapaDoDia(idFazenda: idFazenda);
+    } catch (_) {}
+
+    if (!mounted) return;
+
     Navigator.of(context).pushNamedAndRemoveUntil(
       "/fornecimento",
       (r) => r.isFirst,

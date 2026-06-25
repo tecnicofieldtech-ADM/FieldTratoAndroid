@@ -449,6 +449,15 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
           ? sugerido
           : await _pickTratoModal();
       if (!mounted || trato == null) return;
+
+      try {
+        await widget.repo.prefetchMapaDoDia(
+          idFazenda: widget.idFazenda,
+          data: _date,
+        );
+      } catch (_) {}
+
+      if (!mounted) return;
       _openDashboard(trato: trato, startCleared: true);
     });
   }

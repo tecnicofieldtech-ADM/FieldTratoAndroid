@@ -57,19 +57,35 @@ class SyncOrchestrator {
         },
       ),
       SyncStep(title: "Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
-      SyncStep(
-        title: "Sincronizando Fabrica Racao",
-        run: () => outbox.syncFabricacao(
-          log,
-          idVagao,
-          flowMode: flowMode,
-          tipoTrabalho: tipoTrabalho,
+      if (backend == 1) ...[
+        SyncStep(
+          title: "Sincronizando Fornecimento",
+          run: () => outbox.syncFornecimento(log),
         ),
-      ),
-      SyncStep(
-        title: "Sincronizando Fornecimento",
-        run: () => outbox.syncFornecimento(log),
-      ),
+        SyncStep(
+          title: "Sincronizando Fabrica Racao",
+          run: () => outbox.syncFabricacao(
+            log,
+            idVagao,
+            flowMode: flowMode,
+            tipoTrabalho: tipoTrabalho,
+          ),
+        ),
+      ] else ...[
+        SyncStep(
+          title: "Sincronizando Fabrica Racao",
+          run: () => outbox.syncFabricacao(
+            log,
+            idVagao,
+            flowMode: flowMode,
+            tipoTrabalho: tipoTrabalho,
+          ),
+        ),
+        SyncStep(
+          title: "Sincronizando Fornecimento",
+          run: () => outbox.syncFornecimento(log),
+        ),
+      ],
       SyncStep(
         title: "Baixando Usuarios",
         run: () => bootstrap.baixarUsuarios(cfg, idFazenda),

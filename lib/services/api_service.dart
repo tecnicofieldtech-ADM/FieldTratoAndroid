@@ -317,6 +317,54 @@ class ApiService {
     }
   }
 
+  /// POST /Post/Fabricacao com pacote completo; retorna true se a API Field
+  /// respondeu com [id_servidor] (insumos gravados no mesmo request).
+  Future<bool> postFabricacaoPacoteFieldpec(
+    Map<String, dynamic> body, {
+    void Function(String)? log,
+  }) async {
+    try {
+      final r = await _dio.post(
+        "/Post/Fabricacao",
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null,
+          contentType: Headers.jsonContentType,
+          receiveTimeout: const Duration(seconds: 120),
+          sendTimeout: const Duration(seconds: 120),
+        ),
+      );
+
+      final okStatus = _isHttpSuccess(r.statusCode) || r.statusCode == 201;
+      if (!okStatus) {
+        log?.call(
+          "❌ /Post/Fabricacao (pacote Fieldpec) HTTP ${r.statusCode} "
+          "${_responseText(r.data)}",
+        );
+        return false;
+      }
+
+      final data = r.data;
+      if (data is Map) {
+        final idSrv = data["id_servidor"];
+        if (idSrv != null && idSrv.toString().trim().isNotEmpty) {
+          log?.call("✅ Fieldpec pacote OK id_servidor=$idSrv");
+          return true;
+        }
+      }
+      return false;
+    } on DioException catch (e) {
+      log?.call(
+        "❌ /Post/Fabricacao pacote Fieldpec EXC tipo=${e.type.name} "
+        "HTTP ${e.response?.statusCode} msg=${e.message ?? ''}",
+      );
+      return false;
+    } catch (e) {
+      log?.call("❌ /Post/Fabricacao pacote Fieldpec ERRO: $e");
+      return false;
+    }
+  }
+
   Future<bool> postFabricacao(Map<String, dynamic> body,
       {void Function(String)? log}) async {
     try {
@@ -326,21 +374,35 @@ class ApiService {
         options: Options(
           validateStatus: (s) => s != null,
           contentType: Headers.jsonContentType,
+          receiveTimeout: Duration(seconds: _isFieldpec ? 120 : 30),
+          sendTimeout: Duration(seconds: _isFieldpec ? 120 : 30),
         ),
       );
 
       if (_isHttpSuccess(r.statusCode) ||
+          r.statusCode == 201 ||
           r.statusCode == 208 ||
           r.statusCode == 409) {
         return true;
       }
 
-      log?.call("❌ /Post/Fabricacao HTTP ${r.statusCode}");
+      final errBody = _responseText(r.data);
+      log?.call("❌ /Post/Fabricacao HTTP ${r.statusCode} $errBody");
+      if (r.statusCode == 500 && errBody.contains("error")) {
+        log?.call("❌ /Post/Fabricacao detalhe API: $errBody");
+      }
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
+      final body = _responseText(e.response?.data);
 
-      log?.call("❌ /Post/Fabricacao EXCEPTION HTTP $status");
+      log?.call(
+        "❌ /Post/Fabricacao EXC tipo=${e.type.name} HTTP $status "
+        "msg=${e.message ?? ''}",
+      );
+      if (body.isNotEmpty) {
+        log?.call("❌ /Post/Fabricacao corpo: $body");
+      }
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fabricacao ERRO: $e");
@@ -369,6 +431,14 @@ class ApiService {
       );
 
       if (_isHttpSuccess(r.statusCode)) return true;
+
+      if (r.statusCode == 404) {
+        log?.call(
+          "❌ /Post/Fabricacao_Insumo HTTP 404 — rota inexistente. "
+          "No Fieldpec use BACKEND=Fieldpec (1): insumos vão em POST /Post/Fabricacao.",
+        );
+        return false;
+      }
 
       log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode}");
       return false;

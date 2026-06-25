@@ -77,6 +77,14 @@ class BootstrapSync {
     return "";
   }
 
+  static double _pickNum(Map<String, dynamic> m, List<String> keys) {
+    for (final k in keys) {
+      if (!m.containsKey(k)) continue;
+      return _toNum(m[k]).toDouble();
+    }
+    return 0;
+  }
+
   // =========================
   // BOOTSTRAP: VAGÃO/FAZENDA/USUÁRIO/BAIAS/DIETAS
   // =========================
@@ -393,6 +401,8 @@ class BootstrapSync {
   }) async {
     final api = await _apiFromCfg(cfg);
     final list = await api.getPrevisaoTrato(idFazenda, dataYmd);
+    final isFieldpec =
+        (int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0) == 1;
 
     log?.call("📥 Previsão (API): ${list.length} registros");
 
@@ -517,8 +527,51 @@ class BootstrapSync {
         // idRacao / idDieta
         final idRacao = _pickStr(m, ["idracao", "id_racao", "iddieta", "id_dieta"]);
 
-        // valores
-        final previsto = _toNum(m["previsto"] ?? m["previsto_kg"] ?? m["previstokg"]).toDouble();
+        // valores (FieldPec: previstoOriginal / previstoRecalculado / ultimoTrato)
+        final previstoLegacy = _pickNum(m, [
+          "previsto",
+          "previsto_kg",
+          "previstokg",
+        ]);
+        final previstoOriginalRaw = _pickNum(m, [
+          "previstooriginal",
+          "previsto_original",
+          "previsto_original_kg",
+        ]);
+        final previstoRecalculadoRaw = _pickNum(m, [
+          "previstorecalculado",
+          "previsto_recalculado",
+          "previsto_recalculado_kg",
+        ]);
+        final hasDualPrevisao = previstoOriginalRaw > 0 &&
+            previstoRecalculadoRaw > 0 &&
+            (previstoOriginalRaw - previstoRecalculadoRaw).abs() > 0.01;
+        final fieldpecPrevisao = isFieldpec || hasDualPrevisao;
+
+        final previstoOriginal = fieldpecPrevisao
+            ? (previstoOriginalRaw > 0 ? previstoOriginalRaw : previstoLegacy)
+            : previstoLegacy;
+        final previstoRecalculado = fieldpecPrevisao
+            ? (previstoRecalculadoRaw > 0
+                ? previstoRecalculadoRaw
+                : previstoLegacy)
+            : previstoLegacy;
+        final previstoOriginalFinal =
+            previstoOriginal > 0 ? previstoOriginal : previstoRecalculado;
+        final previstoRecalcFinal = previstoRecalculado > 0
+            ? previstoRecalculado
+            : previstoOriginalFinal;
+        final previsto = fieldpecPrevisao ? previstoRecalcFinal : previstoLegacy;
+        final ultimoTratoRaw = _pickNum(m, [
+          "ultimotrato",
+          "ultimo_trato",
+        ]);
+        final ultimoTrato = fieldpecPrevisao
+            ? ((ultimoTratoRaw > 0 ? ultimoTratoRaw.toInt() : 0) > 0 ||
+                    hasDualPrevisao
+                ? 1
+                : 0)
+            : 0;
         final apiRealizado =
             _toNum(m["realizado"] ?? m["realizado_kg"] ?? m["realizadokg"]).toDouble();
 
@@ -555,6 +608,11 @@ class BootstrapSync {
             "ID_BAIA": idBaia,
             "TRATO": trato,
             "PREVISTO_KG": previsto,
+            if (fieldpecPrevisao) ...{
+              "PREVISTO_ORIGINAL_KG": previstoOriginalFinal,
+              "PREVISTO_RECALCULADO_KG": previstoRecalcFinal,
+              "ULTIMO_TRATO": ultimoTrato,
+            },
             "REALIZADO_KG": realizadoFinal,
             "ID_RACAO": idRacao,
           },
@@ -576,7 +634,9 @@ class BootstrapSync {
     log?.call("📊 PREVISAO no SQLite (dia $dataYmd): $total registros");
 
     final sample = await db.rawQuery("""
-      SELECT ID_BAIA, DATA, TRATO, ID_RACAO, PREVISTO_KG, REALIZADO_KG
+      SELECT ID_BAIA, DATA, TRATO, ID_RACAO,
+             PREVISTO_KG, PREVISTO_ORIGINAL_KG, PREVISTO_RECALCULADO_KG,
+             REALIZADO_KG, ULTIMO_TRATO
       FROM PREVISAO
       WHERE substr(DATA,1,10)=?
       LIMIT 5

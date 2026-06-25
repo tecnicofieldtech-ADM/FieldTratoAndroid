@@ -10,6 +10,11 @@ import "../domain/models.dart";
 import "../domain/fabricacao_flow.dart";
 
 class FabricacaoRepo {
+  FabricacaoRepo({CarregamentoDao? carregamentoDao})
+      : _carregDao = carregamentoDao ?? CarregamentoDao();
+
+  final CarregamentoDao _carregDao;
+
   Future<Database> get _db async => AppDb.instance.db;
 
   // cache de colunas por tabela (evita PRAGMA toda hora)
@@ -840,6 +845,8 @@ class FabricacaoRepo {
         return (existing.first["id"] ?? "").toString();
       }
     }
+
+    await _carregDao.finalizarAbertos(idVagao: vag);
 
     // 2) cria novo
     final uid = _genUuid();
