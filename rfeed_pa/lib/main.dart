@@ -1,5 +1,5 @@
 ﻿import "package:flutter/material.dart";
-import "package:rfeed_pa/features/espelho/controller/pa_server_controller.dart";
+import "package:rfeed_pa/features/espelho/controller/pa_client_controller.dart";
 import "package:rfeed_pa/features/espelho/data/mirror_targets_repo.dart";
 import "package:rfeed_pa/features/espelho/ui/pa_dashboard_page.dart";
 import "package:rfeed_pa/features/espelho/ui/targets_list_page.dart";
@@ -15,7 +15,7 @@ class RFeedPaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final repo = MirrorTargetsRepo();
-    final server = PaServerController(repo: repo, port: 9000);
+    final client = PaClientController(repo: repo);
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -23,26 +23,26 @@ class RFeedPaApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
       ),
-      home: PaStartPage(repo: repo, server: server),
+      home: PaStartPage(repo: repo, client: client),
     );
   }
 }
 
 class PaStartPage extends StatelessWidget {
-  const PaStartPage({super.key, required this.repo, required this.server});
+  const PaStartPage({super.key, required this.repo, required this.client});
 
   final MirrorTargetsRepo repo;
-  final PaServerController server;
+  final PaClientController client;
 
   @override
   Widget build(BuildContext context) {
     return TargetsListPage(
       repo: repo,
-      server: server,
+      client: client,
       onSelected: (_) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => PaDashboardPage(repo: repo, server: server),
+            builder: (_) => PaDashboardPage(repo: repo, client: client),
           ),
         );
       },

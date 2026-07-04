@@ -1573,23 +1573,16 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 12),
                 if (_modoSaidaFab == 0) ...[
                   Text(
-                    "Espelhamento da pá (Wi‑Fi). Preencha IP e porta do espelho.",
+                    "Espelhamento multi-PA (Wi-Fi). O vagao abre um servidor na porta abaixo.\n"
+                    "As PAs conectam no IP deste tablet automaticamente.",
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 8),
                   TextField(
-                    controller: _ipEspelhoCtrl,
-                    decoration: const InputDecoration(
-                      labelText: "IP da pá (opcional)",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
                     controller: _portaEspelhoCtrl,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: "Porta do espelhamento",
+                      labelText: "Porta do servidor de espelho",
                       helperText: "Padrao: 9000",
                       border: OutlineInputBorder(),
                     ),

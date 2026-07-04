@@ -152,7 +152,7 @@ class FabricacaoController extends ChangeNotifier {
   bool get mirrorEnabled =>
       _modoSaidaFab == 1 ? LedService.instance.enabled : MirrorService.instance.enabled;
   bool get mirrorConnected =>
-      _modoSaidaFab == 1 ? LedService.instance.connected : MirrorService.instance.connected;
+      _modoSaidaFab == 1 ? LedService.instance.connected : MirrorService.instance.running;
 
   String get mirrorLabel {
     if (_modoSaidaFab == 1) {
@@ -164,14 +164,14 @@ class FabricacaoController extends ChangeNotifier {
     }
 
     if (!MirrorService.instance.enabled) return "Espelho: desligado";
-    return MirrorService.instance.connected
-        ? "Espelho: conectado (${MirrorService.instance.host}:${MirrorService.instance.port})"
-        : "Espelho: tentando (${MirrorService.instance.host}:${MirrorService.instance.port})";
+    final clients = MirrorService.instance.clientCount;
+    return MirrorService.instance.running
+        ? "Espelho: porta ${MirrorService.instance.port} ($clients PA${clients != 1 ? 's' : ''} conectada${clients != 1 ? 's' : ''})"
+        : "Espelho: iniciando porta ${MirrorService.instance.port}";
   }
 
   Future<void> startMirrorFromConfig() async {
     _modoSaidaFab = await _cfgRepo.getModoSaidaFabricacao();
-    final ip = (await _cfgRepo.getIpEspelho()).trim();
     final port = await _cfgRepo.getPortaEspelho();
 
     if (_modoSaidaFab == 1) {
@@ -189,9 +189,8 @@ class FabricacaoController extends ChangeNotifier {
     _stopLedTicker();
 
     await MirrorService.instance.configure(
-      host: ip,
       port: port,
-      onMessage: (msg) {
+      onCommand: (msg) {
         final t = (msg["t"] ?? msg["cmd"] ?? "").toString();
 
         if (t == "next") {

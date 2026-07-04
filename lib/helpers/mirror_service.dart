@@ -1,99 +1,63 @@
 import "dart:async";
 
-import "mirror_client.dart";
+import "mirror_server.dart";
 
 typedef MirrorOnMessage = void Function(Map<String, dynamic> msg);
 
+/// Service that manages the wagon's mirror server.
+///
+/// The wagon tablet opens a TCP server on a configurable port.
+/// PA tablets connect to it and receive state broadcasts.
+/// Commands from PAs (next, prev, finish) are forwarded via [onCommand].
 class MirrorService {
   MirrorService._();
   static final MirrorService instance = MirrorService._();
 
-  MirrorClient? _client;
+  MirrorServer? _server;
 
   bool _enabled = false;
   bool get enabled => _enabled;
 
-  String _host = "";
-  int _port = 0;
-
-  String get host => _host;
+  int _port = 9000;
   int get port => _port;
 
-  bool get connected => _client?.connected ?? false;
+  bool get running => _server?.running ?? false;
+  int get clientCount => _server?.clientCount ?? 0;
+  List<String> get clientIps => _server?.clientIps ?? [];
 
-  MirrorOnMessage? _externalOnMessage;
+  MirrorOnMessage? _onCommand;
 
-  Map<String, dynamic>? _lastState;
-
-  /// usado para filtrar/deduplicar resposta de `req_state`
-  String? _lastStateStream;
-
-  /// evita "storm" de recreate quando configure é chamado várias vezes
   Timer? _debounceStart;
 
-  /// Configure e liga (se host/port válidos).
-  /// - Recria o socket somente se host/port mudou.
-  /// - Responde automaticamente "req_state" devolvendo o último state enviado.
+  /// Configure and start the mirror server.
+  /// [port] is the TCP port to listen on (default 9000).
+  /// [onCommand] receives commands sent by PA clients (next, prev, finish).
   Future<void> configure({
-    required String host,
     required int port,
-    MirrorOnMessage? onMessage,
+    MirrorOnMessage? onCommand,
   }) async {
-    _externalOnMessage = onMessage;
+    _onCommand = onCommand;
 
-    final h = host.trim();
-    final p = port;
-
-    // config inválida => desliga
-    if (h.isEmpty || p <= 0) {
+    if (port <= 0) {
       await stop();
       _enabled = false;
-      _host = "";
       _port = 0;
       return;
     }
 
     _enabled = true;
 
-    final same = (_host == h && _port == p && _client != null);
-    _host = h;
-    _port = p;
+    final same = (_port == port && _server != null && _server!.running);
+    _port = port;
 
-    if (same) {
-      _ensureStartedSoon();
-      return;
-    }
+    if (same) return;
 
-    // mudou host/port => recria
     await _stopInternal();
 
-    _client = MirrorClient(
-      host: _host,
+    _server = MirrorServer(
       port: _port,
-      onMessage: (msg) {
-        final t = (msg["t"] ?? msg["cmd"] ?? "").toString();
-
-        // 🔁 auto-resposta ao pedido de estado
-        if (t == "req_state") {
-          final st = _lastState;
-          if (st != null) {
-            final reqStream =
-                (msg["stream"] ?? "").toString().trim();
-            final lastStream =
-                (_lastStateStream ?? "").trim();
-
-            // responde se:
-            // - não pediu stream específico
-            // - ou stream bate com o último enviado
-            if (reqStream.isEmpty || reqStream == lastStream) {
-              _client?.sendLine(st); // resposta forçada
-            }
-          }
-          return; // não repassa para controller
-        }
-
-        // demais mensagens seguem fluxo normal
-        _externalOnMessage?.call(msg);
+      onCommand: (cmd) {
+        _onCommand?.call(cmd);
       },
     );
 
@@ -105,27 +69,23 @@ class MirrorService {
     _debounceStart = Timer(const Duration(milliseconds: 80), () async {
       if (!_enabled) return;
       try {
-        await _client?.start();
+        await _server?.start();
       } catch (_) {}
     });
   }
 
-  /// Envia um state para o espelho.
-  /// - force=true  → envia sempre
-  /// - force=false → envia só se mudou (dedup)
+  /// Broadcast state to all connected PAs.
+  /// Deduplicates by default (only sends if changed).
   void sendState(Map<String, dynamic> state, {bool force = false}) {
     if (!_enabled) return;
 
-    _lastState = state;
-    _lastStateStream = (state["stream"] ?? "").toString();
-
-    final c = _client;
-    if (c == null) return;
+    final s = _server;
+    if (s == null || !s.running) return;
 
     if (force) {
-      c.sendLine(state);
+      s.broadcastForce(state);
     } else {
-      c.sendStateIfChanged(state);
+      s.broadcastState(state);
     }
   }
 
@@ -138,13 +98,11 @@ class MirrorService {
     _debounceStart?.cancel();
     _debounceStart = null;
 
-    final c = _client;
-    _client = null;
+    final s = _server;
+    _server = null;
 
     try {
-      await c?.stop();
+      await s?.stop();
     } catch (_) {}
   }
 }
-
-

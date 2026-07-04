@@ -4,7 +4,7 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:package_info_plus/package_info_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
-import "../controller/pa_server_controller.dart";
+import "../controller/pa_client_controller.dart";
 import "../data/mirror_targets_repo.dart";
 import "../domain/mirror_target.dart";
 import "target_form_page.dart";
@@ -13,13 +13,13 @@ class TargetsListPage extends StatefulWidget {
   const TargetsListPage({
     super.key,
     required this.repo,
-    required this.server,
+    required this.client,
     this.onSelected,
     this.autoPopOnSelect = false,
   });
 
   final MirrorTargetsRepo repo;
-  final PaServerController server;
+  final PaClientController client;
   final ValueChanged<MirrorTarget>? onSelected;
   final bool autoPopOnSelect;
 
@@ -151,7 +151,7 @@ class _TargetsListPageState extends State<TargetsListPage> {
       ),
     );
 
-    await widget.server.loadActive();
+    await widget.client.loadActive();
     await _load();
   }
 
@@ -162,7 +162,7 @@ class _TargetsListPageState extends State<TargetsListPage> {
       ),
     );
 
-    await widget.server.loadActive();
+    await widget.client.loadActive();
     await _load();
   }
 
@@ -189,14 +189,14 @@ class _TargetsListPageState extends State<TargetsListPage> {
 
     await widget.repo.remove(t.id);
 
-    await widget.server.loadActive();
+    await widget.client.loadActive();
     await _load();
   }
 
   Future<void> _setActive(MirrorTarget t) async {
-    await widget.server.setActiveTargetById(t.id);
+    await widget.client.setActiveTargetById(t.id);
 
-    await widget.server.loadActive();
+    await widget.client.loadActive();
     await _load();
 
     await _promptWifiSelection(t);

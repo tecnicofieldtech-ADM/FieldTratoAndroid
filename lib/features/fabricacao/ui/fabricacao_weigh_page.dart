@@ -1018,17 +1018,17 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     } else if (mirrorOk) {
       mirrorColor = Colors.green;
       mirrorIcon = Icons.cast_connected;
-      mirrorDetail = "Conectado";
+      final clients = MirrorService.instance.clientCount;
+      mirrorDetail = "Servidor ativo · $clients PA${clients != 1 ? 's' : ''}";
     } else {
       mirrorColor = Colors.orange;
       mirrorIcon = Icons.cast;
-      mirrorDetail = "Conectando…";
+      mirrorDetail = "Iniciando…";
     }
     if (mirrorOn) {
-      final host = MirrorService.instance.host.trim();
       final port = MirrorService.instance.port;
-      if (host.isNotEmpty) {
-        mirrorDetail = "$mirrorDetail · $host:$port";
+      if (port > 0) {
+        mirrorDetail = "$mirrorDetail · porta $port";
       }
     }
 

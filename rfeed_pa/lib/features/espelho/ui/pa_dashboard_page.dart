@@ -4,14 +4,14 @@ import "dart:async";
 import "package:flutter/material.dart";
 import "package:package_info_plus/package_info_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
-import "../controller/pa_server_controller.dart";
+import "../controller/pa_client_controller.dart";
 import "../data/mirror_targets_repo.dart";
 import "targets_list_page.dart";
 
 class PaDashboardPage extends StatefulWidget {
-  const PaDashboardPage({super.key, required this.repo, required this.server});
+  const PaDashboardPage({super.key, required this.repo, required this.client});
   final MirrorTargetsRepo repo;
-  final PaServerController server;
+  final PaClientController client;
 
   @override
   State<PaDashboardPage> createState() => _PaDashboardPageState();
@@ -29,14 +29,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   @override
   void initState() {
     super.initState();
-    widget.server.addListener(_on);
+    widget.client.addListener(_on);
     // ignore: discarded_futures
     _loadVersion();
     // ignore: discarded_futures
     _loadStyleMode();
 
     // ignore: unawaited_futures
-    _ensureServerStarted();
+    _ensureClientStarted();
 
     _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
@@ -69,7 +69,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   @override
   void dispose() {
     _ticker?.cancel();
-    widget.server.removeListener(_on);
+    widget.client.removeListener(_on);
     super.dispose();
   }
 
@@ -78,42 +78,42 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     setState(() {});
   }
 
-  Future<void> _ensureServerStarted() async {
-    await widget.server.loadActive();
+  Future<void> _ensureClientStarted() async {
+    await widget.client.loadActive();
     if (!mounted) return;
 
-    final active = widget.server.activeTarget;
+    final active = widget.client.activeTarget;
     final hasTarget = active != null && active.host.trim().isNotEmpty;
     if (!hasTarget) {
-      widget.server.status = "Selecione um Vagao para iniciar";
+      widget.client.status = "Selecione um Vagao para conectar";
       setState(() {});
       return;
     }
 
-    await widget.server.start();
+    await widget.client.start();
   }
 
   Future<void> _openTargets() async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => TargetsListPage(
-          repo: widget.repo,
-          server: widget.server,
+      repo: widget.repo,
+      client: widget.client,
           autoPopOnSelect: true,
         ),
       ),
     );
-    await _ensureServerStarted();
+    await _ensureClientStarted();
   }
 
   Future<void> _resetEspelho() async {
-    await widget.server.stop();
-    await _ensureServerStarted();
+    await widget.client.stop();
+    await _ensureClientStarted();
   }
 
-  Future<void> _restartServerOnly() async {
-    await widget.server.stop();
-    await _ensureServerStarted();
+  Future<void> _restartClientOnly() async {
+    await widget.client.stop();
+    await _ensureClientStarted();
   }
 
   void _toast(String msg) {
@@ -127,12 +127,12 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   }
 
   Future<void> _sendNext() async {
-    final ok = await widget.server.sendNextCommand();
+    final ok = await widget.client.sendNextCommand();
     _toast(ok ? "Comando enviado: pular ingrediente" : "Falha ao enviar comando");
   }
 
   Future<void> _sendPrev() async {
-    final ok = await widget.server.sendPrevCommand();
+    final ok = await widget.client.sendPrevCommand();
     _toast(ok ? "Comando enviado: voltar ingrediente" : "Falha ao enviar comando");
   }
 
@@ -159,7 +159,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         false;
 
     if (!confirm) return;
-    final ok = await widget.server.sendFinishCommand();
+    final ok = await widget.client.sendFinishCommand();
     _toast(ok ? "Comando enviado: finalizar fabricação" : "Falha ao enviar comando");
   }
 
@@ -195,8 +195,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final actionButtonFg = isMbTratos ? Colors.white : null;
     final vehicleNameColor = isMbTratos ? const Color(0xFF205B33) : Colors.black87;
 
-    final st = widget.server.lastState;
-    final active = widget.server.activeTarget;
+    final st = widget.client.lastState;
+    final active = widget.client.activeTarget;
     final activeName = active?.nome.trim().isNotEmpty == true
         ? active!.nome.trim()
         : "Sem Vagao selecionado";
@@ -260,11 +260,11 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       }
     }
 
-    final topStatus = widget.server.listening
-        ? "Escutando ${widget.server.listenBind}:${widget.server.port} - Clients ${widget.server.clientsCount}"
-        : widget.server.status;
+    final topStatus = widget.client.connected
+        ? "Conectado a ${widget.client.activeTarget?.host ?? ''}:${widget.client.activeTarget?.porta ?? 9000}"
+        : widget.client.status;
 
-    final lastAt = widget.server.lastMsgAt;
+    final lastAt = widget.client.lastMsgAt;
     final ageSec = lastAt == null
         ? null
         : DateTime.now().difference(lastAt).inMilliseconds / 1000.0;
@@ -281,7 +281,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     Color serverColor;
     String serverText;
 
-    if (!widget.server.listening) {
+    if (!widget.client.connected) {
       serverIcon = Icons.portable_wifi_off;
       serverColor = Colors.red;
       serverText = "Parado";
@@ -361,7 +361,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: _cardServerTopCompact(
               activeLabel: activeLabel,
-              localIp: widget.server.listenBind,
+              localIp: widget.client.lastFromIp.isEmpty ? "--" : widget.client.lastFromIp,
               versionLabel: _versionLabel,
               topStatus: topStatus,
               serverIcon: serverIcon,
@@ -453,7 +453,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                   ),
                 ),
                 OutlinedButton.icon(
-                  onPressed: _restartServerOnly,
+                  onPressed: _restartClientOnly,
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text("Reconectar"),
                 ),
@@ -512,7 +512,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                "IP da Pa: $localIp",
+                "Vagao: $localIp",
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -771,9 +771,9 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                     constraints: const BoxConstraints(maxWidth: 132),
                     child: _PulseChip(
                       icon: Icons.timer,
-                      active: widget.server.autoCountdown > 0,
-                      label: widget.server.autoCountdown > 0
-                          ? "Pulo: ${widget.server.autoCountdown}s"
+                      active: widget.client.autoCountdown > 0,
+                      label: widget.client.autoCountdown > 0
+                          ? "Pulo: ${widget.client.autoCountdown}s"
                           : "Pulo: pronto",
                     ),
                   ),
@@ -935,7 +935,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     required bool finalizada,
     required bool isLastIngredient,
   }) {
-    final canSend = widget.server.hasActiveClient;
+    final canSend = widget.client.hasConnection;
     final canNext = canSend && !finalizada && !isLastIngredient;
     final canFinish = canSend && !finalizada && isLastIngredient;
 
