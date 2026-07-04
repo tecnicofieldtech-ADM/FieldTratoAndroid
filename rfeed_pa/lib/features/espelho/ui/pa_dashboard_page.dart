@@ -187,6 +187,11 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenH = MediaQuery.of(context).size.height;
+    final screenW = MediaQuery.of(context).size.width;
+    final isPhone = screenW < 600 || screenH < 700;
+    final hPad = isPhone ? 10.0 : 16.0;
+
     final isMbTratos = _styleMode == _styleMbTratos;
     final screenBg = isMbTratos ? const Color(0xFFE6F0E8) : null;
     final appBarBg = isMbTratos ? const Color(0xFF2F7D45) : null;
@@ -269,13 +274,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         ? null
         : DateTime.now().difference(lastAt).inMilliseconds / 1000.0;
     final stale = ageSec != null && ageSec > 2.5;
-    final ageLabel = ageSec == null ? "--" : "${ageSec.toStringAsFixed(1)}s";
-    final badgeColor = lastAt == null
-        ? Colors.grey
-        : (stale ? Colors.orange : Colors.green);
-    final badgeText = lastAt == null
-        ? "Sem dados"
-        : (stale ? "Sem atualizacao ($ageLabel)" : "Atualizando ($ageLabel)");
 
     IconData serverIcon;
     Color serverColor;
@@ -284,7 +282,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     if (!widget.client.connected) {
       serverIcon = Icons.portable_wifi_off;
       serverColor = Colors.red;
-      serverText = "Parado";
+      serverText = "Desconectado";
     } else if (stale || lastAt == null) {
       serverIcon = Icons.sync_problem;
       serverColor = Colors.orange;
@@ -340,52 +338,72 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       ),
       body: Column(
         children: [
+          // Header compacto: nome do vagão + status inline
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                activeName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 34,
-                  height: 1.0,
-                  fontWeight: FontWeight.w900,
-                  color: vehicleNameColor,
+            padding: EdgeInsets.fromLTRB(hPad, isPhone ? 4 : 10, hPad, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    activeName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: isPhone ? 18 : 34,
+                      height: 1.0,
+                      fontWeight: FontWeight.w900,
+                      color: vehicleNameColor,
+                    ),
+                  ),
                 ),
+                const SizedBox(width: 8),
+                Icon(serverIcon, color: serverColor, size: isPhone ? 16 : 18),
+                const SizedBox(width: 4),
+                Text(
+                  serverText,
+                  style: TextStyle(
+                    fontSize: isPhone ? 11 : 13,
+                    fontWeight: FontWeight.w800,
+                    color: serverColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Card de conexão (escondido em phone, compacto em tablet)
+          if (!isPhone)
+            Padding(
+              padding: EdgeInsets.fromLTRB(hPad, 12, hPad, 0),
+              child: _cardServerTopCompact(
+                activeLabel: activeLabel,
+                localIp: widget.client.lastFromIp.isEmpty ? "--" : widget.client.lastFromIp,
+                versionLabel: _versionLabel,
+                topStatus: topStatus,
+                serverIcon: serverIcon,
+                serverColor: serverColor,
+                serverText: serverText,
+                lastAt: lastAt,
+                badgeColor: serverColor,
+                badgeText: topStatus,
               ),
             ),
-          ),
+          // Ingrediente atual
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _cardServerTopCompact(
-              activeLabel: activeLabel,
-              localIp: widget.client.lastFromIp.isEmpty ? "--" : widget.client.lastFromIp,
-              versionLabel: _versionLabel,
-              topStatus: topStatus,
-              serverIcon: serverIcon,
-              serverColor: serverColor,
-              serverText: serverText,
-              lastAt: lastAt,
-              badgeColor: badgeColor,
-              badgeText: badgeText,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: _cardIngredienteTop(
+            padding: EdgeInsets.fromLTRB(hPad, isPhone ? 6 : 10, hPad, 0),
+            child: _cardIngredienteResponsive(
               nomeAtual: nomeAtual,
               isPreNow: isPreNow,
               finalizada: finalizada,
               finalizacaoMsg: finalizacaoMsg,
               prox: prox,
+              isPhone: isPhone,
             ),
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 6 : 10),
+          // Card principal (peso/diferença)
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: EdgeInsets.fromLTRB(hPad, 0, hPad, isPhone ? 4 : 8),
               child: finalizada
                   ? _cardFinalizacaoPrincipalFill(
                       mensagem: finalizacaoMsg ??
@@ -393,8 +411,9 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                       bg: isMbTratos
                           ? const Color(0xFF2F7D45)
                           : Colors.blueGrey.shade700,
+                      isPhone: isPhone,
                     )
-                  : _cardDiferencaPrincipalFill(
+                  : _cardDiferencaResponsive(
                       prev: prev,
                       real: real,
                       difText: difText,
@@ -402,14 +421,16 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                       pctLabel: pctLabel,
                       barValue: barValue,
                       bg: bg,
+                      isPhone: isPhone,
                     ),
             ),
           ),
-          _bottomNav(
+          _bottomNavResponsive(
             actionButtonBg: actionButtonBg,
             actionButtonFg: actionButtonFg,
             finalizada: finalizada,
             isLastIngredient: isLastIngredient,
+            isPhone: isPhone,
           ),
         ],
       ),
@@ -553,23 +574,29 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     );
   }
 
-  Widget _cardIngredienteTop({
+  Widget _cardIngredienteResponsive({
     required String nomeAtual,
     required bool isPreNow,
     required bool finalizada,
     required String? finalizacaoMsg,
     required Map<String, dynamic>? prox,
+    required bool isPhone,
   }) {
+    final fontSize = isPhone ? 16.0 : 22.0;
+    final pad = isPhone
+        ? const EdgeInsets.fromLTRB(10, 8, 10, 8)
+        : const EdgeInsets.fromLTRB(14, 12, 14, 12);
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        padding: pad,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(Icons.inventory_2_outlined, size: 18),
-                const SizedBox(width: 8),
+                Icon(Icons.inventory_2_outlined, size: isPhone ? 14 : 18),
+                SizedBox(width: isPhone ? 6 : 8),
                 Expanded(
                   child: Text(
                     nomeAtual.isEmpty
@@ -577,80 +604,46 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                             ? "Fabricação finalizada"
                             : "(Aguardando dados...)")
                         : nomeAtual,
-                    maxLines: 2,
+                    maxLines: isPhone ? 1 : 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 22,
+                    style: TextStyle(
+                      fontSize: fontSize,
                       height: 1.05,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
                 if (isPreNow) ...[
-                  const SizedBox(width: 8),
-                  _chip(icon: Icons.verified, label: "Pre-pesado"),
-                ],
-                if (finalizada) ...[
-                  const SizedBox(width: 8),
-                  _chip(icon: Icons.task_alt, label: "Finalizada"),
+                  const SizedBox(width: 6),
+                  _chip(icon: Icons.verified, label: "Pre"),
                 ],
               ],
             ),
-            if (finalizada && finalizacaoMsg != null) ...[
-              const SizedBox(height: 10),
+            if (!isPhone && !finalizada && prox != null) ...[
+              const SizedBox(height: 8),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: Colors.green.shade50,
-                  border: Border.all(color: Colors.green.shade300),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.campaign, size: 18, color: Colors.green.shade800),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        finalizacaoMsg,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: Colors.green.shade900,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (!finalizada && prox != null) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   color: Colors.grey.shade100,
                   border: Border.all(color: Colors.grey.shade300),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.next_plan, size: 18),
-                    const SizedBox(width: 10),
+                    const Icon(Icons.next_plan, size: 16),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         "Proximo: ${(prox["nome"] ?? "").toString()}",
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
                       ),
                     ),
-                    const SizedBox(width: 10),
                     Text(
                       "${(prox["prev"] as num?)?.toInt() ?? 0} kg",
-                      style: const TextStyle(fontWeight: FontWeight.w900),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
                     ),
                   ],
                 ),
@@ -665,13 +658,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   Widget _cardFinalizacaoPrincipalFill({
     required String mensagem,
     required Color bg,
+    bool isPhone = false,
   }) {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      padding: EdgeInsets.all(isPhone ? 16 : 28),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(isPhone ? 18 : 26),
         color: bg,
         boxShadow: [
           BoxShadow(
@@ -685,25 +679,25 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.task_alt, color: Colors.white, size: 64),
-          const SizedBox(height: 18),
-          const Text(
+          Icon(Icons.task_alt, color: Colors.white, size: isPhone ? 40 : 64),
+          SizedBox(height: isPhone ? 10 : 18),
+          Text(
             "FABRICAÇÃO FINALIZADA",
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 34,
+              fontSize: isPhone ? 22 : 34,
               height: 1.05,
               fontWeight: FontWeight.w900,
               color: Colors.white,
               letterSpacing: 1.1,
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: isPhone ? 8 : 16),
           Text(
             mensagem,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 20,
+            style: TextStyle(
+              fontSize: isPhone ? 14 : 20,
               fontWeight: FontWeight.w700,
               color: Colors.white,
             ),
@@ -713,7 +707,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     );
   }
 
-  Widget _cardDiferencaPrincipalFill({
+  Widget _cardDiferencaResponsive({
     required int prev,
     required int real,
     required String difText,
@@ -721,13 +715,19 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     required String pctLabel,
     required double barValue,
     required Color bg,
+    required bool isPhone,
   }) {
+    final radius = isPhone ? 18.0 : 26.0;
+    final pad = isPhone
+        ? const EdgeInsets.fromLTRB(14, 14, 14, 14)
+        : const EdgeInsets.fromLTRB(24, 28, 24, 28);
+
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      padding: pad,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(radius),
         color: bg,
         boxShadow: [
           BoxShadow(
@@ -741,13 +741,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Header: título + pulo
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Row(
                   children: [
-                    Icon(Icons.scale, color: Colors.white, size: 28),
-                    SizedBox(width: 10),
+                    Icon(Icons.scale, color: Colors.white, size: isPhone ? 18 : 28),
+                    SizedBox(width: isPhone ? 6 : 10),
                     Flexible(
                       child: Text(
                         "A FABRICAR (kg)",
@@ -756,32 +757,23 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
-                          fontSize: 26,
+                          fontSize: isPhone ? 14 : 26,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 132),
-                    child: _PulseChip(
-                      icon: Icons.timer,
-                      active: widget.client.autoCountdown > 0,
-                      label: widget.client.autoCountdown > 0
-                          ? "Pulo: ${widget.client.autoCountdown}s"
-                          : "Pulo: pronto",
-                    ),
-                  ),
+              if (widget.client.autoCountdown > 0)
+                _PulseChip(
+                  icon: Icons.timer,
+                  active: true,
+                  label: "${widget.client.autoCountdown}s",
                 ),
-              ),
             ],
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: isPhone ? 4 : 6),
+          // Número principal
           Expanded(
             child: Center(
               child: FittedBox(
@@ -789,8 +781,8 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                 child: Text(
                   difText,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 200,
+                  style: TextStyle(
+                    fontSize: isPhone ? 120 : 200,
                     height: 0.90,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1.5,
@@ -800,41 +792,47 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 4 : 10),
+          // Barra de progresso
           Stack(
             alignment: Alignment.center,
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
-                  minHeight: 18,
+                  minHeight: isPhone ? 12 : 18,
                   value: barValue,
                 ),
               ),
               Text(
                 pctLabel,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w900,
-                  fontSize: 12,
+                  fontSize: isPhone ? 10 : 12,
                   color: Colors.white,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 6 : 10),
+          // Previsto / Realizado
           Row(
             children: [
-              Expanded(child: _midKvCenteredCompact("Previsto", "$prev kg")),
-              const SizedBox(width: 10),
-              Expanded(child: _midKvCenteredCompact("Realizado", "$real kg")),
+              Expanded(child: _midKvCenteredCompact("Previsto", "$prev kg", isPhone: isPhone)),
+              SizedBox(width: isPhone ? 6 : 10),
+              Expanded(child: _midKvCenteredCompact("Realizado", "$real kg", isPhone: isPhone)),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: isPhone ? 4 : 8),
+          // Status
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: isPhone ? 8 : 12,
+              vertical: isPhone ? 5 : 8,
+            ),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(isPhone ? 10 : 14),
               color: Colors.white.withValues(alpha: 0.16),
               border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
             ),
@@ -844,18 +842,18 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                   prev <= 0
                       ? Icons.help_outline
                       : (real < prev ? Icons.warning_amber : Icons.verified),
-                  size: 18,
+                  size: isPhone ? 14 : 18,
                   color: Colors.white,
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: isPhone ? 6 : 8),
                 Expanded(
                   child: Text(
                     status,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.w900,
-                      fontSize: 13,
+                      fontSize: isPhone ? 11 : 13,
                       color: Colors.white,
                     ),
                   ),
@@ -890,11 +888,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     );
   }
 
-  Widget _midKvCenteredCompact(String k, String v) {
+  Widget _midKvCenteredCompact(String k, String v, {bool isPhone = false}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: isPhone ? 6 : 10,
+        vertical: isPhone ? 6 : 10,
+      ),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(isPhone ? 10 : 14),
         border: Border.all(color: Colors.grey.shade300),
         color: _alpha(Colors.white, 0.70),
       ),
@@ -908,17 +909,17 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             style: TextStyle(
               color: Colors.grey.shade700,
               fontWeight: FontWeight.w800,
-              fontSize: 11,
+              fontSize: isPhone ? 9 : 11,
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: isPhone ? 2 : 4),
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
               v,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 22,
+              style: TextStyle(
+                fontSize: isPhone ? 16 : 22,
                 height: 1.0,
                 fontWeight: FontWeight.w900,
               ),
@@ -929,11 +930,12 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     );
   }
 
-  Widget _bottomNav({
+  Widget _bottomNavResponsive({
     required Color? actionButtonBg,
     required Color? actionButtonFg,
     required bool finalizada,
     required bool isLastIngredient,
+    required bool isPhone,
   }) {
     final canSend = widget.client.hasConnection;
     final canNext = canSend && !finalizada && !isLastIngredient;
@@ -941,9 +943,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.only(bottom: 8),
+      minimum: EdgeInsets.only(bottom: isPhone ? 4 : 8),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        padding: EdgeInsets.fromLTRB(
+          isPhone ? 8 : 12,
+          isPhone ? 6 : 10,
+          isPhone ? 8 : 12,
+          isPhone ? 6 : 12,
+        ),
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border(top: BorderSide(color: Colors.grey.shade200)),
@@ -951,61 +958,51 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         child: Row(
           children: [
             Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: canSend ? _sendPrev : null,
-                          icon: const Icon(Icons.skip_previous),
-                          label: const Text("Voltar"),
-                        ),
+                  Expanded(
+                    child: SizedBox(
+                      height: isPhone ? 36 : 44,
+                      child: OutlinedButton.icon(
+                        onPressed: canSend ? _sendPrev : null,
+                        icon: Icon(Icons.skip_previous, size: isPhone ? 16 : 20),
+                        label: Text("Voltar", style: TextStyle(fontSize: isPhone ? 11 : 14)),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: canNext ? _sendNext : null,
-                          icon: const Icon(Icons.skip_next),
-                          label: const Text("Pular"),
-                        ),
-                      ),
-                      if (isLastIngredient) ...[
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: canFinish ? _sendFinish : null,
-                            icon: const Icon(Icons.task_alt),
-                            label: const Text("Finalizar"),
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: _resetEspelho,
-                        icon: const Icon(Icons.restart_alt),
-                        tooltip: "Resetar",
+                  SizedBox(width: isPhone ? 4 : 8),
+                  Expanded(
+                    child: SizedBox(
+                      height: isPhone ? 36 : 44,
+                      child: OutlinedButton.icon(
+                        onPressed: canNext ? _sendNext : null,
+                        icon: Icon(Icons.skip_next, size: isPhone ? 16 : 20),
+                        label: Text("Pular", style: TextStyle(fontSize: isPhone ? 11 : 14)),
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
+                    ),
+                  ),
+                  if (isLastIngredient) ...[
+                    SizedBox(width: isPhone ? 4 : 8),
+                    Expanded(
+                      child: SizedBox(
+                        height: isPhone ? 36 : 44,
                         child: FilledButton.icon(
-                          onPressed: _openTargets,
-                          style: (actionButtonBg == null && actionButtonFg == null)
-                              ? null
-                              : FilledButton.styleFrom(
-                                  backgroundColor: actionButtonBg,
-                                  foregroundColor: actionButtonFg,
-                                ),
-                          icon: const Icon(Icons.swap_horiz),
-                          label: const Text("Trocar Vagao Carregamento"),
+                          onPressed: canFinish ? _sendFinish : null,
+                          icon: Icon(Icons.task_alt, size: isPhone ? 16 : 20),
+                          label: Text("Finalizar", style: TextStyle(fontSize: isPhone ? 11 : 14)),
                         ),
                       ),
-                    ],
+                    ),
+                  ],
+                  SizedBox(width: isPhone ? 4 : 8),
+                  SizedBox(
+                    height: isPhone ? 36 : 44,
+                    width: isPhone ? 36 : 44,
+                    child: IconButton(
+                      onPressed: _openTargets,
+                      icon: Icon(Icons.settings, size: isPhone ? 18 : 22),
+                      tooltip: "Config",
+                    ),
                   ),
                 ],
               ),
