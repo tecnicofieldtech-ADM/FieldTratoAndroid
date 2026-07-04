@@ -883,9 +883,14 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                     ? const Center(
                         child: Text("Nenhuma Fabricação encontrada."))
                     : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                        padding: EdgeInsets.fromLTRB(
+                          MediaQuery.of(context).size.width < 600 ? 8 : 12,
+                          8,
+                          MediaQuery.of(context).size.width < 600 ? 8 : 12,
+                          18,
+                        ),
                         itemCount: list.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (_, i) {
                           final it = list[i];
 

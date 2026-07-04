@@ -145,11 +145,60 @@ class ScalePesoHighlightCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
     final hasSecondary =
         secondaryLabel != null && secondaryLabel!.trim().isNotEmpty;
     final inline = pesoInlineActions ?? trailing;
     final slots = connectionSlots ?? const <Widget>[];
     final hasSlots = slots.isNotEmpty;
+
+    if (isPhone) {
+      return Card(
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _metricBox(
+                      label: pesoLabel,
+                      value: _formatPesoKg(pesoKg),
+                      align: CrossAxisAlignment.start,
+                      inlineActions: inline,
+                    ),
+                  ),
+                  if (hasSecondary) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _metricBox(
+                        label: secondaryLabel!,
+                        value: secondaryKg != null && secondaryKg! > 0
+                            ? "${secondaryKg!.toStringAsFixed(0)} kg"
+                            : "—",
+                        sub: secondarySubtitle,
+                        align: CrossAxisAlignment.start,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              if (hasSlots) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: slots.map((s) => SizedBox(width: 160, child: s)).toList(),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
 
     return Card(
       elevation: 2,

@@ -1299,8 +1299,12 @@ class _RightPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = selected;
     final hasSel = s != null;
+    final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
-    final cardH = (screenH * 0.28).clamp(180.0, 240.0);
+    final isPhone = screenW < 600 || screenH < 700;
+    final cardH = isPhone
+        ? (screenH * 0.26).clamp(140.0, 180.0)
+        : (screenH * 0.28).clamp(180.0, 240.0);
 
     String linhaTxt(String? l) {
       final t = (l ?? "").trim();
@@ -1392,14 +1396,14 @@ class _RightPanel extends StatelessWidget {
                   curralNome,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 46,
+                    fontSize: isPhone ? 24 : 46,
                     height: 0.98,
                     letterSpacing: 0.2,
                   ),
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: isPhone ? 4 : 6),
                 Row(
                   children: [
                     Icon(Icons.alt_route,
@@ -1478,10 +1482,9 @@ class _RightPanel extends StatelessWidget {
                 SizedBox(
                   height: cardH,
                   child: Container(
-                    padding:
-                        const EdgeInsets.fromLTRB(18, 18, 18, 18), // compacto
+                    padding: EdgeInsets.all(isPhone ? 12 : 18),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(26),
+                      borderRadius: BorderRadius.circular(isPhone ? 18 : 26),
                       color: _scoreBg(),
                       boxShadow: [
                         BoxShadow(
@@ -1496,48 +1499,48 @@ class _RightPanel extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.scale,
-                                color: Colors.white, size: 28),
-                            const SizedBox(width: 10),
-                            const Text(
+                            Icon(Icons.scale,
+                                color: Colors.white, size: isPhone ? 18 : 28),
+                            SizedBox(width: isPhone ? 6 : 10),
+                            Text(
                               "A FORNECER (kg)",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
-                                fontSize: 22,
+                                fontSize: isPhone ? 14 : 22,
                               ),
                             ),
                             const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(999),
-                                color: Colors.white.withValues(alpha: 0.16),
-                              ),
-                              child: Text(
-                                "estimado",
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.95),
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 14,
+                            if (!isPhone)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(999),
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                ),
+                                child: Text(
+                                  "estimado",
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.95),
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 14,
+                                  ),
                                 ),
                               ),
-                            ),
                           ],
                         ),
-                        const SizedBox(height: 14),
+                        SizedBox(height: isPhone ? 6 : 14),
 
-                        // 🔥 NÚMERO GIGANTE
                         Expanded(
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
                               aFornecerSigned(),
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 160,
+                                fontSize: isPhone ? 100 : 160,
                                 fontWeight: FontWeight.w900,
                                 height: 0.90,
                                 letterSpacing: 1.5,
@@ -1546,14 +1549,16 @@ class _RightPanel extends StatelessWidget {
                           ),
                         ),
 
-                        const SizedBox(height: 8),
+                        SizedBox(height: isPhone ? 4 : 8),
 
                         Text(
-                          "Real (est.): ${fmt(realizadoEstimadoKg, dec: 0)}  •  A fornecer: ${aFornecerSigned()}  •  Dif (est.): ${signed(difEst)}",
+                          isPhone
+                              ? "Real: ${fmt(realizadoEstimadoKg, dec: 0)}  •  Dif: ${signed(difEst)}"
+                              : "Real (est.): ${fmt(realizadoEstimadoKg, dec: 0)}  •  A fornecer: ${aFornecerSigned()}  •  Dif (est.): ${signed(difEst)}",
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.92),
                             fontWeight: FontWeight.w800,
-                            fontSize: 14,
+                            fontSize: isPhone ? 11 : 14,
                           ),
                         ),
                       ],

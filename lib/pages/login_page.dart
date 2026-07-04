@@ -147,6 +147,7 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
+    final isPhone = mq.size.width < 600 || mq.size.height < 700;
 
     return Scaffold(
       body: Stack(
@@ -168,18 +169,18 @@ class _LoginPageState extends State<LoginPage> {
                 ? const Center(child: CircularProgressIndicator())
                 : Center(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
+                      padding: EdgeInsets.all(isPhone ? 12 : 16),
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 520),
                         child: Card(
                           elevation: 10,
                           color: Colors.white.withValues(alpha: 0.90),
                           child: Padding(
-                            padding: const EdgeInsets.all(16),
+                            padding: EdgeInsets.all(isPhone ? 12 : 16),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const AppLogo(height: 150),
+                                AppLogo(height: isPhone ? 80 : 150),
                                 const SizedBox(height: 8),
                                 const AppVersionLabel(
                                   style: TextStyle(

@@ -13,6 +13,7 @@ import "ingredientes_modal.dart";
 import "mistura_timer_page.dart";
 import "fabricacao_list_page.dart";
 import "../../../helpers/mirror_service.dart";
+import "../../../helpers/responsive.dart";
 import "../../../widgets/scale_peso_highlight_card.dart";
 
 class FabricacaoWeighPage extends StatefulWidget {
@@ -796,10 +797,15 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             ),
           ],
         ),
-        body: Column(
+        body: LayoutBuilder(builder: (ctx, constraints) {
+          final r = Responsive.of(ctx);
+          final hp = r.hPad;
+          final vg = r.vGap;
+
+          return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              padding: EdgeInsets.fromLTRB(hp, r.isPhone ? 6 : 12, hp, 0),
               child: _cardBalancaTopCompact(
                 totalPrevistoFabricacaoKg: header.qtdPrevista,
                 previstoIngredienteKg: prev,
@@ -807,13 +813,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              padding: EdgeInsets.fromLTRB(hp, vg, hp, 0),
               child: _cardIngredienteTop(ing: ing, nextIng: nextIng),
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: vg),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                padding: EdgeInsets.fromLTRB(hp, 0, hp, vg),
                 child: _cardDiferencaPrincipalFill(
                   prev: prev,
                   real: real,
@@ -947,7 +953,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               highlightFinalize: dentroTol,
             ),
           ],
-        ),
+        );
+        }),
       ),
     );
   }
@@ -1085,23 +1092,31 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     required FabIngrediente ing,
     required FabIngrediente? nextIng,
   }) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        padding: EdgeInsets.fromLTRB(
+          isPhone ? 10 : 14,
+          isPhone ? 8 : 12,
+          isPhone ? 10 : 14,
+          isPhone ? 8 : 12,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(Icons.inventory_2_outlined, size: 18),
-                const SizedBox(width: 8),
+                Icon(Icons.inventory_2_outlined, size: isPhone ? 14 : 18),
+                SizedBox(width: isPhone ? 6 : 8),
                 Expanded(
                   child: Text(
                     ing.insumoNome.isEmpty ? "(Sem nome)" : ing.insumoNome,
-                    maxLines: 2,
+                    maxLines: isPhone ? 1 : 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 22,
+                    style: TextStyle(
+                      fontSize: isPhone ? 15 : 22,
                       height: 1.05,
                       fontWeight: FontWeight.w900,
                     ),
@@ -1113,7 +1128,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                 ],
               ],
             ),
-            if (nextIng != null) ...[
+            if (nextIng != null && !isPhone) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -1193,12 +1208,17 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       bg = Colors.black;
     }
 
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
+
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      padding: isPhone
+          ? const EdgeInsets.fromLTRB(14, 14, 14, 14)
+          : const EdgeInsets.fromLTRB(24, 28, 24, 28),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(isPhone ? 18 : 26),
         color: bg,
         boxShadow: [
           BoxShadow(
@@ -1217,9 +1237,9 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               Expanded(
                 child: Row(
                   children: [
-                    const Icon(Icons.scale, color: Colors.white, size: 28),
-                    const SizedBox(width: 10),
-                    const Flexible(
+                    Icon(Icons.scale, color: Colors.white, size: isPhone ? 18 : 28),
+                    SizedBox(width: isPhone ? 6 : 10),
+                    Flexible(
                       child: Text(
                         "A FABRICAR (kg)",
                         maxLines: 1,
@@ -1227,32 +1247,22 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
-                          fontSize: 26,
+                          fontSize: isPhone ? 14 : 26,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 132),
-                    child: _PulseChip(
-                      icon: Icons.timer,
-                      active: c.autoCountdown > 0,
-                      label: c.autoCountdown > 0
-                          ? "Pulo: ${c.autoCountdown}s"
-                          : "Pulo: pronto",
-                    ),
-                  ),
+              if (c.autoCountdown > 0)
+                _PulseChip(
+                  icon: Icons.timer,
+                  active: true,
+                  label: "${c.autoCountdown}s",
                 ),
-              ),
             ],
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: isPhone ? 4 : 6),
           Expanded(
             child: Center(
               child: FittedBox(
@@ -1261,7 +1271,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                   difText,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 200,
+                    fontSize: isPhone ? 120 : 200,
                     height: 0.90,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1.5,
@@ -1271,41 +1281,44 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 4 : 10),
           Stack(
             alignment: Alignment.center,
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
-                  minHeight: 18,
+                  minHeight: isPhone ? 12 : 18,
                   value: barValue,
                 ),
               ),
               Text(
                 pctLabel,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w900,
-                  fontSize: 12,
+                  fontSize: isPhone ? 10 : 12,
                   color: Colors.white,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 6 : 10),
           Row(
             children: [
               Expanded(child: _midKvCenteredCompact("Previsto", "$prev kg")),
-              const SizedBox(width: 10),
+              SizedBox(width: isPhone ? 6 : 10),
               Expanded(child: _midKvCenteredCompact("Realizado", "$real kg")),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: isPhone ? 4 : 8),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: isPhone ? 8 : 12,
+              vertical: isPhone ? 5 : 8,
+            ),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(isPhone ? 10 : 14),
               color: Colors.white.withValues(alpha: 0.16),
               border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
             ),
@@ -1319,16 +1332,16 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                           : (real < prev
                               ? Icons.warning_amber
                               : Icons.error_outline)),
-                  size: 18,
+                  size: isPhone ? 14 : 18,
                   color: Colors.white,
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: isPhone ? 6 : 8),
                 Expanded(
                   child: Text(
                     status,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.w900,
                       fontSize: 13,
                       color: Colors.white,
@@ -1402,10 +1415,16 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   }
 
   Widget _midKvCenteredCompact(String k, String v) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: isPhone ? 6 : 10,
+        vertical: isPhone ? 6 : 10,
+      ),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(isPhone ? 10 : 14),
         border: Border.all(color: Colors.grey.shade300),
         color: _alpha(Colors.white, 0.70),
       ),
@@ -1419,17 +1438,17 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             style: TextStyle(
               color: Colors.grey.shade700,
               fontWeight: FontWeight.w800,
-              fontSize: 11,
+              fontSize: isPhone ? 9 : 11,
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: isPhone ? 2 : 4),
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
               v,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 22,
+              style: TextStyle(
+                fontSize: isPhone ? 16 : 22,
                 height: 1.0,
                 fontWeight: FontWeight.w900,
               ),
@@ -1444,12 +1463,19 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     required bool isLast,
     required bool highlightFinalize,
   }) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
     final pulse = (DateTime.now().millisecond < 500);
     final destacar = isLast && highlightFinalize && !_finishing;
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        padding: EdgeInsets.fromLTRB(
+          isPhone ? 8 : 12,
+          isPhone ? 6 : 10,
+          isPhone ? 8 : 12,
+          isPhone ? 8 : 12,
+        ),
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border(top: BorderSide(color: Colors.grey.shade200)),
@@ -1471,8 +1497,9 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
                     },
               icon: const Icon(Icons.arrow_back),
               tooltip: "Anterior",
+              iconSize: isPhone ? 20 : 24,
             ),
-            const SizedBox(width: 6),
+            SizedBox(width: isPhone ? 4 : 6),
             Expanded(
               child: AnimatedScale(
                 scale: destacar ? (pulse ? 1.03 : 1.0) : 1.0,

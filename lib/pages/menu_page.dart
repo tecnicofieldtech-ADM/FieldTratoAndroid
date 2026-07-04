@@ -269,8 +269,11 @@ class _MenuPageState extends State<MenuPage> {
 
   @override
   Widget build(BuildContext context) {
-    const padding = 18.0;
-    const gap = 12.0;
+    final screenW = MediaQuery.of(context).size.width;
+    final screenH = MediaQuery.of(context).size.height;
+    final isPhone = screenW < 600 || screenH < 700;
+    final padding = isPhone ? 12.0 : 18.0;
+    final gap = isPhone ? 8.0 : 12.0;
 
     // â ajuste pro seu caminho real
     const bgAsset = "assets/images/bg_boi_tech.png";
@@ -293,7 +296,7 @@ class _MenuPageState extends State<MenuPage> {
 
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(padding),
+              padding: EdgeInsets.all(padding),
               child: LayoutBuilder(
                 builder: (context, c) {
                   final w = c.maxWidth;
@@ -302,7 +305,9 @@ class _MenuPageState extends State<MenuPage> {
                   final tileW = (w - gap) / 2;
 
                   // â altura um pouco maior (antes ~56-70)
-                  final tileH = (w * 0.18).clamp(66.0, 86.0);
+                  final tileH = isPhone
+                      ? (w * 0.15).clamp(52.0, 68.0)
+                      : (w * 0.18).clamp(66.0, 86.0);
 
                   final t = _tipoTrabalho;
                   final hibrido = _modoHibrido;
@@ -374,15 +379,16 @@ class _MenuPageState extends State<MenuPage> {
 
                               // LOGO grande
                               ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxHeight: 260),
-                                child:
-                                    const Center(child: AppLogo(height: 230)),
+                                constraints: BoxConstraints(
+                                    maxHeight: isPhone ? 120 : 260),
+                                child: Center(
+                                    child: AppLogo(
+                                        height: isPhone ? 100 : 230)),
                               ),
 
                               const SizedBox(height: 6),
                               const AppVersionLabel(),
-                              const SizedBox(height: 10),
+                              SizedBox(height: isPhone ? 6 : 10),
 
                               // ===== LINHA 1 =====
                               Row(
@@ -400,7 +406,7 @@ class _MenuPageState extends State<MenuPage> {
                                               context, "/config"),
                                     ),
                                   ),
-                                  const SizedBox(width: gap),
+                                  SizedBox(width: gap),
                                   SizedBox(
                                     width: tileW,
                                     height: tileH,
@@ -415,7 +421,7 @@ class _MenuPageState extends State<MenuPage> {
                                 ],
                               ),
 
-                              const SizedBox(height: gap),
+                              SizedBox(height: gap),
 
                               // ===== LINHA 2 =====
                               Row(
@@ -454,7 +460,7 @@ class _MenuPageState extends State<MenuPage> {
                                             ),
                                           ),
                                   ),
-                                  const SizedBox(width: gap),
+                                  SizedBox(width: gap),
                                   SizedBox(
                                     width: tileW,
                                     height: tileH,
@@ -475,7 +481,7 @@ class _MenuPageState extends State<MenuPage> {
                                 ],
                               ),
 
-                              const SizedBox(height: gap),
+                              SizedBox(height: gap),
 
                               // ===== LINHA 3 =====
                               if (!distribuidorPuro)
@@ -500,7 +506,7 @@ class _MenuPageState extends State<MenuPage> {
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: gap),
+                                    SizedBox(width: gap),
                                     SizedBox(
                                       width: tileW,
                                       height: tileH,
@@ -530,7 +536,7 @@ class _MenuPageState extends State<MenuPage> {
                                             _go(context, "/dashboard"),
                                       ),
                                     ),
-                                    const SizedBox(width: gap),
+                                    SizedBox(width: gap),
                                     SizedBox(
                                       width: tileW,
                                       height: tileH,
@@ -547,7 +553,7 @@ class _MenuPageState extends State<MenuPage> {
                                 ),
 
                               if (!distribuidorPuro) ...[
-                              const SizedBox(height: gap),
+                              SizedBox(height: gap),
 
                               // ===== LINHA 4 =====
                               Row(
@@ -563,7 +569,7 @@ class _MenuPageState extends State<MenuPage> {
                                       onTap: () => _go(context, "/grava-tag"),
                                     ),
                                   ),
-                                  const SizedBox(width: gap),
+                                  SizedBox(width: gap),
                                   SizedBox(
                                     width: tileW,
                                     height: tileH,

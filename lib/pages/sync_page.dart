@@ -444,7 +444,9 @@ class _SyncPageState extends State<SyncPage> {
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(
+          MediaQuery.of(context).size.width < 600 ? 10 : 16,
+        ),
         child: Column(
           children: [
             // ✅ CARDS DE PENDÊNCIA

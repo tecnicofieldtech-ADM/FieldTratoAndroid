@@ -1211,16 +1211,17 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
         : (c.racao ?? c.idRacao)!.trim();
 
     final linhaTxt = _resolveLinha(c);
+    final isPhone = MediaQuery.of(context).size.width < 600;
 
     return Card(
       elevation: 0,
-      margin: const EdgeInsets.symmetric(horizontal: 12),
+      margin: EdgeInsets.symmetric(horizontal: isPhone ? 8 : 12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: EdgeInsets.all(isPhone ? 8 : 10),
         child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
