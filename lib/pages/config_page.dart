@@ -15,10 +15,15 @@ import "../constants/config_options.dart";
 
 // ✅ helper da balança
 import "../helpers/scale_comm.dart";
+import "../helpers/scale_model_config.dart";
 
 // ✅ helper do RFID
 import "../helpers/rfid_comm.dart";
+import "../helpers/led_service.dart";
+import "../helpers/bt_permissions.dart";
 import "../utils/rfid_tag_utils.dart";
+import "../widgets/led_pair_dialog.dart";
+import "package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart";
 
 class ConfigPage extends StatefulWidget {
   const ConfigPage({super.key});
@@ -117,6 +122,16 @@ class _ConfigPageState extends State<ConfigPage> {
 
   bool _testingStation = false;
   bool _connectingStationWifi = false;
+
+  // ✅ LED BLUETOOTH
+  int _modoSaidaFab = 0;
+  String _ledBtAddress = "";
+  String _ledBtName = "";
+  List<BluetoothDevice> _ledBondedDevices = [];
+  bool _loadingLedDevices = false;
+  bool _testingLed = false;
+  String _ledTestStatus = "—";
+
   bool get _isDistribuidor => _operacao == 2;
   bool get _mostrarConfigEstacionario => _isDistribuidor;
   bool get _mostrarEspelhamento => true;
@@ -280,9 +295,11 @@ class _ConfigPageState extends State<ConfigPage> {
     final cfg = await _cfgRepo.getConfig();
     if (cfg != null) {
       _hostCtrl.text = _asStr(cfg["HOST"]);
-      _portaCtrl.text = _asStr(cfg["PORTA"]);
+      final portaCfg = _asStr(cfg["PORTA"]);
+      _portaCtrl.text =
+          portaCfg.isEmpty ? "${ConfigOptions.defaultApiPort}" : portaCfg;
 
-      _backend = _asInt(cfg["BACKEND"], 0);
+      _backend = ConfigOptions.normalizeBackend(_asInt(cfg["BACKEND"], 0));
       _operacao = _asInt(cfg["TIPO_TRABALHO"], 0);
 
       _modeloBalanca = _asInt(cfg["MODELO_BALANCA"], 0);
@@ -300,6 +317,9 @@ class _ConfigPageState extends State<ConfigPage> {
 
       _ipEspelhoCtrl.text = _asStr(cfg["IP_ESPELHO"]);
       _portaEspelhoCtrl.text = _asStr(cfg["PORTA_ESPELHO"]);
+      _modoSaidaFab = _asInt(cfg["MODO_SAIDA_FAB"], 0);
+      _ledBtAddress = _asStr(cfg["LED_BT_ADDRESS"]).trim();
+      _ledBtName = _asStr(cfg["LED_BT_NAME"]).trim();
       _hostEstacionarioCtrl.text = _asStr(cfg["HOST_ESTACIONARIO"]);
       _portaEstacionarioCtrl.text = _asStr(cfg["PORTA_ESTACIONARIO"]);
       _stationWifiSsidCtrl.text = _asStr(cfg["STATION_WIFI_SSID"]);
@@ -362,6 +382,7 @@ class _ConfigPageState extends State<ConfigPage> {
     }
 
     await _reloadCombos();
+    unawaited(_loadLedBondedDevices());
     if (mounted) setState(() {});
   }
 
@@ -445,7 +466,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
     return {
       "HOST": _hostCtrl.text.trim(),
-      "PORTA": int.tryParse(_portaCtrl.text.trim()) ?? 0,
+      "PORTA": int.tryParse(_portaCtrl.text.trim()) ?? ConfigOptions.defaultApiPort,
       "BACKEND": _backend,
       "TIPO_TRABALHO": _operacao,
       "MODELO_BALANCA": _modeloBalanca,
@@ -459,7 +480,9 @@ class _ConfigPageState extends State<ConfigPage> {
       "ID_VAGAO": _idVagao ?? "",
       "NOME_VAGAO": _nomeVagao ?? "",
       "ID_FAZENDA": _idFazenda ?? "",
-      "MODO_SAIDA_FAB": 0,
+      "MODO_SAIDA_FAB": _modoSaidaFab,
+      "LED_BT_ADDRESS": _ledBtAddress,
+      "LED_BT_NAME": _ledBtName,
       "IP_ESPELHO": _ipEspelhoCtrl.text.trim(),
       "PORTA_ESPELHO": int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 9000,
       "HOST_ESTACIONARIO": hostEst,
@@ -529,24 +552,18 @@ class _ConfigPageState extends State<ConfigPage> {
       }
     }
 
+    if (_modoSaidaFab == 1 && _ledBtAddress.trim().isEmpty) {
+      _toast("Selecione ou pareie um LED Bluetooth.");
+      return false;
+    }
+
     return true;
   }
 
   // ============================
   // ✅ TESTE BALANÇA
   // ============================
-  ScaleModel _mapModeloBalanca(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      default:
-        return ScaleModel.raw;
-    }
-  }
+  ScaleModel _mapModeloBalanca(int v) => scaleModelFromConfigInt(v);
 
   Future<void> _stopScaleTestComm() async {
     _scaleTestTimeout?.cancel();
@@ -652,6 +669,86 @@ class _ConfigPageState extends State<ConfigPage> {
     });
 
     await comm.connect();
+  }
+
+  // ============================
+  // ✅ LED BLUETOOTH
+  // ============================
+
+  Future<void> _loadLedBondedDevices() async {
+    setState(() => _loadingLedDevices = true);
+    try {
+      final allowed = await BtPermissions.ensureBluetoothPermissions();
+      if (!allowed) {
+        if (!mounted) return;
+        setState(() {
+          _ledBondedDevices = [];
+          _loadingLedDevices = false;
+        });
+        return;
+      }
+
+      final bonded = await FlutterBluetoothSerial.instance.getBondedDevices();
+      if (!mounted) return;
+      setState(() {
+        _ledBondedDevices = bonded;
+        _loadingLedDevices = false;
+        if (_ledBtAddress.isNotEmpty &&
+            !_ledBondedDevices.any((d) => d.address == _ledBtAddress)) {
+          // mantém seleção salva mesmo fora da lista pareada
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _ledBondedDevices = [];
+        _loadingLedDevices = false;
+      });
+    }
+  }
+
+  Future<void> _onPairLed() async {
+    final dev = await LedPairDialog.show(context);
+    if (dev == null || !mounted) return;
+
+    setState(() {
+      _ledBtAddress = dev.address;
+      _ledBtName = (dev.name ?? "").trim();
+    });
+    await _loadLedBondedDevices();
+  }
+
+  Future<void> _onTestLed() async {
+    if (_ledBtAddress.trim().isEmpty) {
+      _toast("Selecione ou pareie um LED Bluetooth.");
+      return;
+    }
+
+    setState(() {
+      _testingLed = true;
+      _ledTestStatus = "Enviando teste…";
+    });
+
+    try {
+      await LedService.instance.sendTest("123");
+      if (!mounted) return;
+      setState(() {
+        _ledTestStatus = "OK — comando de teste enviado (123)";
+        _testingLed = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _ledTestStatus = "Erro: $e";
+        _testingLed = false;
+      });
+    }
+  }
+
+  String _ledDeviceLabel(BluetoothDevice d) {
+    final name = (d.name ?? "").trim();
+    if (name.isEmpty) return d.address;
+    return "$name (${d.address})";
   }
 
   // ============================
@@ -846,7 +943,10 @@ class _ConfigPageState extends State<ConfigPage> {
       _toast("Selecione o Vagão (ou baixe primeiro).");
       return;
     }
-    if (_idFazenda == null || _idFazenda!.isEmpty) {
+    final ignoresFazenda =
+        ConfigOptions.ignoresFazendaId(ConfigOptions.normalizeBackend(_backend));
+    if (!ignoresFazenda &&
+        (_idFazenda == null || _idFazenda!.isEmpty)) {
       _toast("Selecione a Fazenda (ou baixe primeiro).");
       return;
     }
@@ -860,7 +960,7 @@ class _ConfigPageState extends State<ConfigPage> {
       if (!mounted) return;
 
       if (!hasUser) {
-        await _bootstrap.baixarUsuarios(cfg, _idFazenda!);
+        await _bootstrap.baixarUsuarios(cfg, _idFazenda ?? "");
         if (!mounted) return;
         Navigator.of(context).pushNamedAndRemoveUntil("/login", (_) => false);
       } else {
@@ -989,7 +1089,9 @@ class _ConfigPageState extends State<ConfigPage> {
                                   child: Text(e.value),
                                 ))
                             .toList(),
-                        onChanged: (v) => setState(() => _backend = v ?? 0),
+                        onChanged: (v) => setState(
+                          () => _backend = ConfigOptions.normalizeBackend(v),
+                        ),
                         decoration: const InputDecoration(
                           labelText: "Back-end",
                           border: OutlineInputBorder(),
@@ -1451,29 +1553,132 @@ class _ConfigPageState extends State<ConfigPage> {
                 const SizedBox(height: 16),
 
                 if (_mostrarEspelhamento) ...[
-                _sectionTitle("Espelhamento da pa"),
-                Text(
-                  "Opcional. Preencha apenas se usar espelhamento da PA.",
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _ipEspelhoCtrl,
+                _sectionTitle("Saída fabricação"),
+                DropdownButtonFormField<int>(
+                  value: _modoSaidaFab,
                   decoration: const InputDecoration(
-                    labelText: "IP da pa (opcional)",
+                    labelText: "Modo de saída",
                     border: OutlineInputBorder(),
                   ),
+                  items: ConfigOptions.saidaFabricacao.entries
+                      .map(
+                        (e) => DropdownMenuItem<int>(
+                          value: e.key,
+                          child: Text(e.value),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) => setState(() => _modoSaidaFab = v ?? 0),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _portaEspelhoCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: "Porta do espelhamento",
-                    helperText: "Padrao: 9000",
-                    border: OutlineInputBorder(),
+                if (_modoSaidaFab == 0) ...[
+                  Text(
+                    "Espelhamento da pá (Wi‑Fi). Preencha IP e porta do espelho.",
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _ipEspelhoCtrl,
+                    decoration: const InputDecoration(
+                      labelText: "IP da pá (opcional)",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _portaEspelhoCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Porta do espelhamento",
+                      helperText: "Padrao: 9000",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    "Conversor serial Bluetooth BS1C (TGY Cyber) entre o tablet e o painel LED.\n"
+                    "Pareie o BS1C no Android (PIN padrão 1234). "
+                    "Configure o módulo como Slave e baud igual ao painel (geralmente 9600).",
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    "O app envia os mesmos comandos seriais de antes (&1000texto#); "
+                    "o BS1C repassa para a RS232 do LED.",
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontStyle: FontStyle.italic,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_loadingLedDevices)
+                    const LinearProgressIndicator()
+                  else
+                    DropdownButtonFormField<String>(
+                      value: _ledBtAddress.isEmpty ? null : _ledBtAddress,
+                      decoration: const InputDecoration(
+                        labelText: "Conversor BS1C (pareados)",
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        ..._ledBondedDevices.map(
+                          (d) => DropdownMenuItem<String>(
+                            value: d.address,
+                            child: Text(_ledDeviceLabel(d)),
+                          ),
+                        ),
+                        if (_ledBtAddress.isNotEmpty &&
+                            !_ledBondedDevices
+                                .any((d) => d.address == _ledBtAddress))
+                          DropdownMenuItem<String>(
+                            value: _ledBtAddress,
+                            child: Text(
+                              _ledBtName.isNotEmpty
+                                  ? "$_ledBtName ($_ledBtAddress)"
+                                  : _ledBtAddress,
+                            ),
+                          ),
+                      ],
+                      onChanged: (addr) {
+                        if (addr == null) return;
+                        BluetoothDevice? dev;
+                        for (final d in _ledBondedDevices) {
+                          if (d.address == addr) {
+                            dev = d;
+                            break;
+                          }
+                        }
+                        setState(() {
+                          _ledBtAddress = addr;
+                          _ledBtName = (dev?.name ?? _ledBtName).trim();
+                        });
+                      },
+                    ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _onPairLed,
+                        icon: const Icon(Icons.bluetooth_searching),
+                        label: const Text("Buscar / Parear"),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _loadingLedDevices ? null : _loadLedBondedDevices,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Atualizar"),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _testingLed ? null : _onTestLed,
+                        icon: const Icon(Icons.send),
+                        label: Text(_testingLed ? "Testando…" : "Testar LED"),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text("Status teste: $_ledTestStatus"),
+                ],
                 const SizedBox(height: 22),
                 ],
 

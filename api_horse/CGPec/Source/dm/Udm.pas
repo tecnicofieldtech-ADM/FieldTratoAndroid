@@ -179,15 +179,18 @@ type
     function  GetApiListenPort: Integer;
     procedure ReadCgpecIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure ReadFieldPecIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
+    procedure ReadTGCIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure ReadPostgresIni(out AHost, AUser, APassword, APort, ADatabase, AEnabled: string);
     procedure ReadMirrorIni(out AEnabled, AUrl, ANextApiBase: string);
     procedure WriteCgpecIni(const AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure WriteFieldPecIni(const AServer, AUser, APassword, APort, ADatabase, ARole: string);
+    procedure WriteTGCIni(const AServer, AUser, APassword, APort, ADatabase, ARole: string);
     procedure WritePostgresIni(const AHost, AUser, APassword, APort, ADatabase, AEnabled: string);
     procedure WriteApiConfigIni(
       const ActiveClient: string;
       const CgServer, CgUser, CgPassword, CgPort, CgDatabase, CgRole: string;
       const FpServer, FpUser, FpPassword, FpPort, FpDatabase, FpRole: string;
+      const TgServer, TgUser, TgPassword, TgPort, TgDatabase, TgRole: string;
       const PgHost, PgUser, PgPassword, PgPort, PgDatabase, PgEnabled: string;
       const MirrorEnabled, MirrorUrl, MirrorNextApiBase: string;
       const FornecimentoAcumulativo: string = '1';
@@ -195,6 +198,8 @@ type
     procedure TestCgpecConnection(const AServer, AUser, APassword, APort, ADatabase: string;
       out AOk: Boolean; out AError: string);
     procedure TestFieldPecConnection(const AServer, AUser, APassword, APort, ADatabase: string;
+      out AOk: Boolean; out AError: string);
+    procedure TestTGCConnection(const AServer, AUser, APassword, APort, ADatabase: string;
       out AOk: Boolean; out AError: string);
     procedure TestPostgresConnection(const AHost, AUser, APassword, APort, ADatabase: string;
       out AOk: Boolean; out AError: string);
@@ -650,15 +655,34 @@ begin
   end;
 end;
 
+procedure Tdmdb.ReadTGCIni(out AServer, AUser, APassword, APort, ADatabase, ARole: string);
+var
+  LIni: string;
+begin
+  LIni := ConfigIniFilePath;
+  AServer := Trim(ReadIniValue(LIni, 'TGC', 'Server', ''));
+  AUser := Trim(ReadIniValue(LIni, 'TGC', 'User', ''));
+  APassword := ReadIniValue(LIni, 'TGC', 'Password', '');
+  APort := Trim(ReadIniValue(LIni, 'TGC', 'Port', ''));
+  ADatabase := Trim(ReadIniValue(LIni, 'TGC', 'DB', ''));
+  ARole := Trim(ReadIniValue(LIni, 'TGC', 'Role', ''));
+end;
+
 function Tdmdb.GetActiveClient: string;
 var
   LVal: string;
 begin
-  LVal := LowerCase(Trim(ReadIniValue(ConfigIniFilePath, 'API', 'ActiveClient', 'cgpec')));
-  if (LVal = 'fieldpec') or (LVal = 'field') then
+  LVal := LowerCase(Trim(ReadIniValue(ConfigIniFilePath, 'API', 'ActiveClient', 'fieldpec')));
+  if (LVal = 'tgc') or (LVal = 'outros') then
+    Result := 'tgc'
+  else if (LVal = 'fieldpec') or (LVal = 'field') then
     Result := 'fieldpec'
+  else if LVal = 'spreadsheet_import' then
+    Result := 'spreadsheet_import'
+  else if LVal = 'cgpec' then
+    Result := 'cgpec'
   else
-    Result := 'cgpec';
+    Result := 'fieldpec';
 end;
 
 function Tdmdb.GetFornecimentoAcumulativo: Boolean;
@@ -707,6 +731,7 @@ procedure Tdmdb.WriteApiConfigIni(
   const ActiveClient: string;
   const CgServer, CgUser, CgPassword, CgPort, CgDatabase, CgRole: string;
   const FpServer, FpUser, FpPassword, FpPort, FpDatabase, FpRole: string;
+  const TgServer, TgUser, TgPassword, TgPort, TgDatabase, TgRole: string;
   const PgHost, PgUser, PgPassword, PgPort, PgDatabase, PgEnabled: string;
   const MirrorEnabled, MirrorUrl, MirrorNextApiBase: string;
   const FornecimentoAcumulativo: string = '1';
@@ -718,8 +743,11 @@ var
 begin
   LPath := ConfigIniFilePath;
   LClient := LowerCase(Trim(ActiveClient));
-  if (LClient <> 'fieldpec') and (LClient <> 'spreadsheet_import') then
-    LClient := 'cgpec';
+  if (LClient <> 'fieldpec') and (LClient <> 'tgc') and (LClient <> 'outros') and
+     (LClient <> 'spreadsheet_import') and (LClient <> 'cgpec') then
+    LClient := 'fieldpec';
+  if LClient = 'outros' then
+    LClient := 'tgc';
   LFornAcum := Trim(FornecimentoAcumulativo);
   if (LFornAcum <> '0') and (LFornAcum <> '1') then
     LFornAcum := '1';
@@ -758,6 +786,15 @@ begin
     if Trim(FpRole) <> '' then
       LLines.Add('Role=' + Trim(FpRole));
     LLines.Add('');
+    LLines.Add('[TGC]');
+    LLines.Add('Server=' + Trim(TgServer));
+    LLines.Add('User=' + Trim(TgUser));
+    LLines.Add('Password=' + TgPassword);
+    LLines.Add('Port=' + Trim(TgPort));
+    LLines.Add('DB=' + Trim(TgDatabase));
+    if Trim(TgRole) <> '' then
+      LLines.Add('Role=' + Trim(TgRole));
+    LLines.Add('');
     LLines.Add('[POSTGRES]');
     LLines.Add('Host=' + Trim(PgHost));
     LLines.Add('Port=' + Trim(PgPort));
@@ -779,13 +816,35 @@ end;
 procedure Tdmdb.WriteFieldPecIni(const AServer, AUser, APassword, APort, ADatabase, ARole: string);
 var
   LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole: string;
+  LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole: string;
   LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled: string;
   LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase: string;
 begin
   ReadCgpecIni(LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole);
+  ReadTGCIni(LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole);
   ReadPostgresIni(LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled);
   ReadMirrorIni(LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase);
   WriteApiConfigIni('fieldpec', LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole,
+    AServer, AUser, APassword, APort, ADatabase, ARole,
+    LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole,
+    LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled,
+    LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase,
+    AcumIniStr(GetFornecimentoAcumulativo));
+end;
+
+procedure Tdmdb.WriteTGCIni(const AServer, AUser, APassword, APort, ADatabase, ARole: string);
+var
+  LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole: string;
+  LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole: string;
+  LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled: string;
+  LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase: string;
+begin
+  ReadCgpecIni(LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole);
+  ReadFieldPecIni(LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole);
+  ReadPostgresIni(LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled);
+  ReadMirrorIni(LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase);
+  WriteApiConfigIni('tgc', LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole,
+    LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole,
     AServer, AUser, APassword, APort, ADatabase, ARole,
     LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled,
     LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase,
@@ -796,11 +855,13 @@ procedure Tdmdb.WritePostgresIni(const AHost, AUser, APassword, APort, ADatabase
 var
   LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole: string;
   LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole: string;
+  LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole: string;
   LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase: string;
   LPgPass, LPgEnabled: string;
 begin
   ReadCgpecIni(LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole);
   ReadFieldPecIni(LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole);
+  ReadTGCIni(LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole);
   ReadMirrorIni(LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase);
   LPgPass := APassword;
   LPgEnabled := AEnabled;
@@ -808,6 +869,7 @@ begin
     LPgEnabled := '1';
   WriteApiConfigIni(GetActiveClient, LCgServer, LCgUser, LCgPass, LCgPort, LCgDb, LCgRole,
     LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole,
+    LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole,
     AHost, AUser, LPgPass, APort, ADatabase, LPgEnabled,
     LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase,
     AcumIniStr(GetFornecimentoAcumulativo));
@@ -817,19 +879,28 @@ procedure Tdmdb.WriteCgpecIni(const AServer, AUser, APassword, APort, ADatabase,
 var
   LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled: string;
   LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole: string;
+  LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole: string;
   LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase: string;
 begin
   ReadPostgresIni(LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled);
   ReadFieldPecIni(LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole);
+  ReadTGCIni(LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole);
   ReadMirrorIni(LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase);
   WriteApiConfigIni(GetActiveClient, AServer, AUser, APassword, APort, ADatabase, ARole,
     LFpServer, LFUser, LFPass, LFPort, LFDb, LFRole,
+    LTgServer, LTgUser, LTgPass, LTgPort, LTgDb, LTgRole,
     LPgHost, LPgUser, LPgPass, LPgPort, LPgDb, LPgEnabled,
     LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase,
     AcumIniStr(GetFornecimentoAcumulativo));
 end;
 
 procedure Tdmdb.TestFieldPecConnection(const AServer, AUser, APassword, APort, ADatabase: string;
+  out AOk: Boolean; out AError: string);
+begin
+  TestCgpecConnection(AServer, AUser, APassword, APort, ADatabase, AOk, AError);
+end;
+
+procedure Tdmdb.TestTGCConnection(const AServer, AUser, APassword, APort, ADatabase: string;
   out AOk: Boolean; out AError: string);
 begin
   TestCgpecConnection(AServer, AUser, APassword, APort, ADatabase, AOk, AError);
@@ -1037,7 +1108,7 @@ end;
 
 procedure Tdmdb.DisconnectCgpec;
 begin
-  if FBCon.Connected then
+  if Assigned(FBCon) and FBCon.Connected then
     FBCon.Close;
 end;
 

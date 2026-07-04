@@ -5,6 +5,7 @@ import "package:flutter/material.dart";
 import "package:permission_handler/permission_handler.dart";
 
 import "../../../helpers/scale_comm.dart";
+import "../../../constants/config_options.dart";
 import "../../../repo/config_repo.dart";
 import "../../../repo/dieta_repo.dart";
 import "../../../services/wifi_guard.dart";
@@ -210,12 +211,12 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
     setState(() => _loadingDietas = true);
     try {
       final backend = await _cfg.getBackend();
-      final isFieldpec = backend == 1;
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
       final idFazenda = await _cfg.getIdFazendaSelecionada();
       var dietas = await _dietaRepo.listAll(
-        idFazenda: isFieldpec ? null : idFazenda,
+        idFazenda: skipFazendaFilter ? null : idFazenda,
       );
-      if (!isFieldpec && dietas.isEmpty && idFazenda.trim().isNotEmpty) {
+      if (!skipFazendaFilter && dietas.isEmpty && idFazenda.trim().isNotEmpty) {
         dietas = await _dietaRepo.listAll();
       }
       if (!mounted) return;
@@ -476,11 +477,13 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
       if (!mounted) return;
 
       final minutos = await _cfg.getTempoMisturaMinutos();
+      final semTempoMistura = minutos <= 0;
       await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => MisturaTimerPage(
             minutos: minutos,
             segundosQuandoMinutosZero: 10,
+            autoFinishWhenDone: semTempoMistura,
             titulo: minutos > 0 ? "Mistura" : "Aguardando",
             onDonePopToRoot: false,
           ),

@@ -111,10 +111,7 @@ AND $cf.$cfTrato = $a.$pvTrato
 AND substr(COALESCE($cf.$cfData, ''), 1, 10) = substr(COALESCE($a.$pvData, ''), 1, 10)
 AND (
   TRIM(COALESCE($cf.$cfIdDieta, '')) = TRIM(COALESCE($a.$pvIdRacao, ''))
-  OR (
-    TRIM(COALESCE($cf.$cfIdDieta, '')) = ''
-    AND TRIM(COALESCE($cf.$cfIdFornecimento, '')) = TRIM(COALESCE($a.$pvIdFornecimento, ''))
-  )
+  OR TRIM(COALESCE($cf.$cfIdFornecimento, '')) = TRIM(COALESCE($a.$pvIdFornecimento, ''))
 )""";
   }
 
@@ -123,22 +120,19 @@ AND (
     final match = sqlChaveCadastroMatchPrevisao(a, "cf");
     return """
 (
-  SELECT MAX(v) FROM (
-    SELECT CASE
-      WHEN (
-        SELECT COUNT(*)
-        FROM $cadastroFornecimento cf
-        WHERE $match
-      ) > 0 THEN (
-        SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
-        FROM $cadastroFornecimento cf
-        WHERE $match
-      )
-      ELSE 0
-    END AS v
-    UNION ALL
-    SELECT COALESCE($a.$pvRealizadoKg, 0) AS v
-  )
+  SELECT CASE
+    WHEN (
+      SELECT COUNT(*)
+      FROM $cadastroFornecimento cf
+      WHERE $match
+        AND COALESCE(cf.$cfRealizado, 0) > 0
+    ) > 0 THEN (
+      SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
+      FROM $cadastroFornecimento cf
+      WHERE $match
+    )
+    ELSE COALESCE($a.$pvRealizadoKg, 0)
+  END
 )""";
   }
 

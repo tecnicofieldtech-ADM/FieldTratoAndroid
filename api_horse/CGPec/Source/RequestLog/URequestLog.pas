@@ -187,7 +187,10 @@ begin
   if (LMethod = 'POST') or (LMethod = 'PUT') or (LMethod = 'PATCH') then
   begin
     try
-      LBody := ClipText(Trim(Req.Body), MAX_BODY_PREVIEW);
+      if (Pos('/post/', LowerCase(LPath)) > 0) then
+        LBody := ClipText(Trim(Req.Body), 2000)
+      else
+        LBody := ClipText(Trim(Req.Body), MAX_BODY_PREVIEW);
     except
       LBody := '';
     end;

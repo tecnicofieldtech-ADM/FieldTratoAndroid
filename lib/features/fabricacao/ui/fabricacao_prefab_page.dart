@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
+import "../../../constants/config_options.dart";
 import "../../../repo/user_repo.dart";
 import "../../../repo/dieta_repo.dart";
 import "../../../repo/config_repo.dart";
@@ -47,15 +48,15 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     if (mounted) setState(() => _loading = true);
     try {
       final backend = await _cfg.getBackend();
-      final isFieldpec = backend == 1;
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
       final idFazendaSel = await _cfg.getIdFazendaSelecionada();
 
       var dietas = await _dietaRepo.listAll(
-        idFazenda: isFieldpec ? null : idFazendaSel,
+        idFazenda: skipFazendaFilter ? null : idFazendaSel,
       );
       final dietasPorFazenda = dietas.length;
 
-      if (!isFieldpec && dietas.isEmpty && idFazendaSel.trim().isNotEmpty) {
+      if (!skipFazendaFilter && dietas.isEmpty && idFazendaSel.trim().isNotEmpty) {
         debugPrint(
           "[FAB_PREFAB] nenhuma dieta para fazenda='$idFazendaSel' (filtrado). Tentando sem filtro...",
         );
@@ -73,7 +74,7 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
           .join(" ; ");
 
       debugPrint(
-        "[FAB_PREFAB] backend=$backend isFieldpec=$isFieldpec fazendaSel='$idFazendaSel' dietasFiltradas=$dietasPorFazenda dietasFinal=${dietas.length} users=${users.length}",
+        "[FAB_PREFAB] backend=$backend skipFazendaFilter=$skipFazendaFilter fazendaSel='$idFazendaSel' dietasFiltradas=$dietasPorFazenda dietasFinal=${dietas.length} users=${users.length}",
       );
       if (amostra.isNotEmpty) {
         debugPrint("[FAB_PREFAB] amostra dietas: $amostra");
@@ -120,11 +121,11 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     if (mounted) setState(() => _loadingResumo = true);
     try {
       final backend = await _cfg.getBackend();
-      final isFieldpec = backend == 1;
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
       final idFazendaSel = await _cfg.getIdFazendaSelecionada();
       final rows = await widget.repo.listResumoPorDietaDataTrato(
         idDieta: id,
-        idFazenda: isFieldpec ? null : idFazendaSel,
+        idFazenda: skipFazendaFilter ? null : idFazendaSel,
       );
       final list = rows.map(_ResumoTrato.fromMap).toList();
       if (!mounted) return;
@@ -255,7 +256,8 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
     if (mounted) setState(() => _loading = true);
     try {
       final idFazenda = await _cfg.getIdFazendaSelecionada();
-      if (idFazenda.isEmpty) {
+      final backend = await _cfg.getBackend();
+      if (!ConfigOptions.ignoresFazendaId(backend) && idFazenda.isEmpty) {
         throw Exception("Nenhuma fazenda selecionada na CONFIG.");
       }
 

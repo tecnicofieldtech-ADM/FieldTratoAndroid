@@ -1,4 +1,6 @@
-﻿import "package:flutter/material.dart";
+﻿import "dart:async";
+
+import "package:flutter/material.dart";
 
 import "../../../helpers/scale_comm.dart";
 import "../../../helpers/rfid_comm.dart";
@@ -66,7 +68,18 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     super.initState();
     _tabCtrl = TabController(length: 2, vsync: this);
     _tabCtrl.addListener(_onTabChanged);
-    _buscar().then((_) => _maybeAutoOpenNovoFornecimento());
+    if (widget.autoOpenNovoFornecimento) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_fluxoPosFabricacao());
+      });
+    } else {
+      _buscar();
+    }
+  }
+
+  Future<void> _fluxoPosFabricacao() async {
+    await _maybeAutoOpenNovoFornecimento();
+    if (mounted) await _buscar();
   }
 
   void _onTabChanged() {
@@ -149,31 +162,38 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
   // =========================================================
   // NOVO FLUXO
-  // - item tap: abre Dashboard no trato do item e filtra por idRacao do item
   // - novo fornecimento: escolhe trato e abre Dashboard (sem idRacao filtro)
+  // - lista: somente consulta (sem abrir dashboard ao tocar no item)
   // =========================================================
 
   void _openDashboard({
-    required int trato,
+    int? trato,
     String? idRacaoFiltro,
     bool startCleared = false,
+    bool replace = false,
   }) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => FornecimentoDashboardPage(
-          idFazenda: widget.idFazenda,
-          idUsuario: widget.idUsuario,
-          trato: trato,
-          repo: widget.repo,
-          scale: widget.scale,
-          rfid: widget.rfid,
-          data: _date,
-          idRacaoFiltro: idRacaoFiltro,
-          startCleared: startCleared,
-        ),
+    final racao = (idRacaoFiltro ?? "").trim();
+    if (racao.isNotEmpty) {
+      widget.repo.setIdRacaoAtual(racao);
+    }
+    final route = MaterialPageRoute(
+      builder: (_) => FornecimentoDashboardPage(
+        idFazenda: widget.idFazenda,
+        idUsuario: widget.idUsuario,
+        trato: trato,
+        repo: widget.repo,
+        scale: widget.scale,
+        rfid: widget.rfid,
+        data: _date,
+        idRacaoFiltro: idRacaoFiltro,
+        startCleared: startCleared,
       ),
     );
+    if (replace) {
+      Navigator.pushReplacement(context, route);
+    } else {
+      Navigator.push(context, route);
+    }
   }
 
   Future<int?> _pickTratoModal() async {
@@ -231,14 +251,6 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     );
   }
 
-  // item da lista agora vai pro dashboard
-  void _open(CurralPrev c) {
-    _openDashboard(
-      trato: c.trato,
-      idRacaoFiltro:
-          (c.idRacao ?? "").trim().isEmpty ? null : c.idRacao!.trim(),
-    );
-  }
 
   Future<void> _verSessoes(CurralPrev c) async {
     if (c.qtdSessoes <= 1) return;
@@ -260,11 +272,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
   }
 
   Future<void> _onNovoFornecimento() async {
-    final trato = await _pickTratoModal();
-    if (trato == null) return;
-
-    // abre dashboard no trato escolhido
-    _openDashboard(trato: trato, startCleared: true);
+    _openDashboard(startCleared: true);
   }
 
   Future<void> _habilitarSyncFiltrados() async {
@@ -442,24 +450,36 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     if (!widget.autoOpenNovoFornecimento) return;
     _autoNovoTriggered = true;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      final sugerido = widget.tratoSugerido;
-      final trato = (sugerido != null && sugerido > 0)
-          ? sugerido
-          : await _pickTratoModal();
-      if (!mounted || trato == null) return;
+    if (!mounted) return;
+    final sugerido = widget.tratoSugerido;
 
-      try {
-        await widget.repo.prefetchMapaDoDia(
-          idFazenda: widget.idFazenda,
-          data: _date,
-        );
-      } catch (_) {}
+    try {
+      final tratoPrefetch =
+          (sugerido != null && sugerido > 0) ? sugerido : null;
+      if (tratoPrefetch != null) {
+        widget.repo.setTrato(tratoPrefetch);
+      }
 
-      if (!mounted) return;
-      _openDashboard(trato: trato, startCleared: true);
-    });
+      final car = await widget.repo.getCarregamentoAberto(data: _date);
+      final idDieta = (car?.idDieta ?? "").trim();
+      if (idDieta.isNotEmpty) {
+        widget.repo.setIdRacaoAtual(idDieta);
+      }
+
+      await widget.repo.prefetchMapaDoDia(
+        idFazenda: widget.idFazenda,
+        data: _date,
+        trato: tratoPrefetch,
+      );
+    } catch (_) {}
+
+    if (!mounted) return;
+    _openDashboard(
+      trato: (sugerido != null && sugerido > 0) ? sugerido : null,
+      idRacaoFiltro: widget.repo.idRacaoAtual,
+      startCleared: true,
+      replace: true,
+    );
   }
 
   Future<void> _replicarPrevisaoDiaAnterior() async {
@@ -1192,18 +1212,16 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
     final linhaTxt = _resolveLinha(c);
 
-    return InkWell(
-      onTap: () => _open(c),
-      child: Card(
-        elevation: 0,
-        margin: const EdgeInsets.symmetric(horizontal: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Column(
@@ -1283,26 +1301,22 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
                           ),
                         ),
                       ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Icon(
-                        c.concluido
-                            ? Icons.check_circle
-                            : Icons.arrow_forward_ios,
-                        size: 18,
-                        color: c.concluido
-                            ? Colors.green
-                            : Colors.black.withValues(alpha: 0.35),
+                    if (c.concluido)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Icon(
+                          Icons.check_circle,
+                          size: 18,
+                          color: Colors.green,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _totaisBar() {

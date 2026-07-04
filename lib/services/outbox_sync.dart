@@ -1,5 +1,6 @@
 import "package:uuid/uuid.dart";
 
+import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../services/api_service.dart";
@@ -69,6 +70,24 @@ class OutboxSync {
           AND IFNULL(cfr_gate.FLAG_SYNC, 0) = 1
       )
     )""";
+
+  /// Lote TGC (max 20) derivado do handoff/UUID — vincula CAD_BATIDA e CAD_FORNECIMENTO.
+  String _tgcLoteFabricacao(String handoffOrUuid) {
+    final compact =
+        handoffOrUuid.replaceAll(RegExp(r"[\s\-]"), "").toUpperCase();
+    if (compact.isEmpty) return "";
+    final maxLen = ConfigOptions.tgcLoteFabricacaoMaxLen;
+    if (compact.length <= maxLen) return compact;
+    return compact.substring(0, maxLen);
+  }
+
+  void _putLoteTgc(Map<String, dynamic> map, String handoffId) {
+    final lote = _tgcLoteFabricacao(handoffId);
+    if (lote.isEmpty) return;
+    map["lote_fabricacao"] = lote;
+    map["CBT_LOTE_FABRICACAO"] = lote;
+    map["CFORN_LOTE_FABRICACAO"] = lote;
+  }
 
   Future<void> _marcarFornecimentoSyncOk(dynamic db, String idCadastro) async {
     final id = idCadastro.trim();
@@ -185,6 +204,7 @@ class OutboxSync {
 
   static const Set<String> _decimalKeys = {
     "qtde_prevista",
+    "qtde_realizada",
     "qtd_realizada",
     "ms_insumo",
     "realizado",
@@ -199,17 +219,24 @@ class OutboxSync {
     return d.toStringAsFixed(decimals).replaceAll(".", ",");
   }
 
+  String _fixDecimalToDot(dynamic v, {int decimals = 3}) {
+    final d = _toDouble(v);
+    if (d == 0) return "0";
+    return d.toStringAsFixed(decimals);
+  }
+
   dynamic _fixBodyDecimals(dynamic node) {
     if (node is List) {
       return node.map(_fixBodyDecimals).toList();
     }
     if (node is Map) {
       final out = <String, dynamic>{};
+      // Horse/Firebird: ponto decimal (vírgula gera SQL error -303).
       node.forEach((k, v) {
         final key = k.toString();
         if (_decimalKeys.contains(key)) {
           final dec = (key == "ms_prevista" || key == "ms_realizada") ? 2 : 3;
-          out[key] = _fixDecimalToBr(v, decimals: dec);
+          out[key] = _fixDecimalToDot(v, decimals: dec);
         } else {
           out[key] = _fixBodyDecimals(v);
         }
@@ -287,19 +314,14 @@ class OutboxSync {
     );
 
     log(
-      "Sync fabricacao: ${api.isFieldpec ? "Fieldpec (POST /Post/Fabricacao pacote)" : "CGPec (cabecalho + /Post/Fabricacao_Insumo)"}",
+      "Sync fabricacao: ${api.usesFabricacaoPacote ? "Pacote (POST /Post/Fabricacao)" : "Cabecalho + /Post/Fabricacao_Insumo"}",
     );
-    if (!api.isFieldpec) {
-      log(
-        "Se o servidor for Fieldpec, configure BACKEND=Fieldpec (1) na Config.",
-      );
-    }
 
     for (final f in fab) {
       final idFabricacao = _s(f["ID"]);
       final idFazenda = _s(f["ID_FAZENDA"]);
       var handoffId = _s(f["HANDOFF_ID"]);
-      final isFieldpec = api.isFieldpec;
+      final usePacote = api.usesFabricacaoPacote;
 
       if (idFabricacao.isEmpty) {
         log("Pulando fabricacao sem ID");
@@ -328,13 +350,29 @@ class OutboxSync {
         msDieta: await _fetchDietaMs(db, _s(f["ID_DIETA"])),
       );
 
+      final idOperadorFab = _s(f["ID_OPERADOR"]);
+      final idUsuarioFab =
+          api.isTgc ? "1" : _s(f["ID_USUARIO"]);
+
+      if (api.isTgc && idOperadorFab.isEmpty) {
+        log(
+          "TGC fab $idFabricacao: ID_OPERADOR vazio em CADASTRO_FABRICA_RACAO — "
+          "refaca a fabricacao selecionando o operador.",
+        );
+        continue;
+      }
+
       final payloadFab = <String, dynamic>{
         "handoff_id": handoffId,
-        "id_fazenda": idFazenda,
+        if (!api.ignoresFazendaId) "id_fazenda": idFazenda,
         "id_dieta": _s(f["ID_DIETA"]),
         "data": _toBrDate(f["DATA_FABRICACAO"]),
-        "id_usuario": _s(f["ID_USUARIO"]),
-        "id_operador": _s(f["ID_OPERADOR"]),
+        "id_usuario": idUsuarioFab,
+        "id_operador": idOperadorFab,
+        if (api.isTgc) ...{
+          "CBT_USUARIO": "1",
+          "CBT_COD_OPERADOR_PA": idOperadorFab,
+        },
         "id_vagao": idVagaoCfg,
         "qtde_prevista": _toBrIntStr(f["QTD_PREVISTA"]),
         "qtde_realizada": _toBrIntStr(f["QTD_REALIZADA"]),
@@ -346,8 +384,11 @@ class OutboxSync {
         horaInicio: _toHora(f["HORA_INICIO"]),
         horaFim: _toHora(f["HORA_FIM"]),
       );
-      if (isFieldpec) {
+      if (usePacote) {
         payloadFab["id_local"] = idFabricacao;
+        if (api.isTgc) {
+          _putLoteTgc(payloadFab, handoffId);
+        }
       } else {
         payloadFab["id"] = idFabricacao;
       }
@@ -364,6 +405,8 @@ class OutboxSync {
 
       log("insumos encontrados=${insumos.length} fab=$idFabricacao");
 
+      final dataFabBr = _toBrDate(f["DATA_FABRICACAO"]);
+
       if (insumos.isNotEmpty) {
         for (final i in insumos) {
           final prevD = _toDouble(i["QTD_PREVISTA"]);
@@ -373,15 +416,22 @@ class OutboxSync {
           }
 
           final item = <String, dynamic>{
-            if (!isFieldpec) "id": _s(i["ID"]),
-            if (isFieldpec) "id_local": _s(i["ID"]),
-            "id_fazenda": idFazenda,
+            if (!usePacote) "id": _s(i["ID"]),
+            if (usePacote) "id_local": _s(i["ID"]),
+            if (!api.ignoresFazendaId) "id_fazenda": idFazenda,
             "id_insumo": _s(i["ID_INSUMO"]),
             "qtde_prevista": _br3(i["QTD_PREVISTA"]),
             "qtd_realizada": _br3(i["QTD_REALIZADA"]),
             "ms_insumo": _br3(i["MS_INSUMO"]),
-            "id_operador": _s(i["ID_OPERADOR"]),
-            "id_usuario": _s(i["ID_USUARIO"]),
+            "id_operador": idOperadorFab,
+            "id_usuario": idUsuarioFab,
+            if (api.isTgc) ...{
+              "data": dataFabBr,
+              "DBT_MS": _br3(i["MS_INSUMO"]),
+              "DBT_CODOPERADOR": idOperadorFab,
+              "DBT_USUARIO": "1",
+              "DBT_CODALIMENTO": _s(i["ID_INSUMO"]),
+            },
           };
           _putHorasPayload(
             item,
@@ -431,10 +481,15 @@ class OutboxSync {
           continue;
         }
 
+        final loteVinc = api.isTgc ? _tgcLoteFabricacao(handoffId) : "";
         fornecimentos.add({
           "id": idPrev,
           "id_fabricacao": idFabricacao,
           "handoff_id_fabricacao": handoffId,
+          if (loteVinc.isNotEmpty) ...{
+            "lote_fabricacao": loteVinc,
+            "CFORN_LOTE_FABRICACAO": loteVinc,
+          },
           "IDCURRAL": _s(r["id_curral"]),
           "id_baia": _s(r["id_curral"]),
           "id_racao": _s(r["id_racao"]),
@@ -459,7 +514,7 @@ class OutboxSync {
         "fornecimentos vinculados=${fornecimentos.length} fab=$idFabricacao",
       );
 
-      if (isFieldpec) {
+      if (usePacote) {
         // FieldTrato: fabricação sobe só cabeçalho+insumos; tratos vão em syncFornecimento.
         final pacoteCompleto = <String, dynamic>{
           ...payloadFabFixed,
@@ -467,8 +522,11 @@ class OutboxSync {
         };
 
         log(
-          "Fieldpec: enviando fab sem fornecimentos no pacote "
-          "(tratos=${fornecimentos.length} sobem separado).",
+          api.isTgc
+              ? "TGC: enviando fab lote=${_tgcLoteFabricacao(handoffId)} "
+                  "(tratos=${fornecimentos.length} sobem apos fab)."
+              : "Fieldpec: enviando fab sem fornecimentos no pacote "
+                  "(tratos=${fornecimentos.length} sobem separado).",
         );
 
         final pacoteCompletoFixed =
@@ -478,14 +536,23 @@ class OutboxSync {
             await api.postFabricacao(pacoteCompletoFixed, log: log);
 
         if (!okPacote) {
-          log("Falha Fabricacao (pacote completo Fieldpec) id=$idFabricacao");
+          log(
+            api.isTgc
+                ? "Falha Fabricacao TGC id=$idFabricacao "
+                    "(verifique log HTTP /Post/Fabricacao)"
+                : "Falha Fabricacao (pacote) id=$idFabricacao",
+          );
           continue;
         }
 
         if (fornecimentos.isNotEmpty) {
           log(
-            "Fieldpec: ${fornecimentos.length} trato(s) vinculado(s) a fab $idFabricacao "
-            "serao enviados no passo Fornecimento (POST /Post/Fornecimento).",
+            api.isTgc
+                ? "TGC: ${fornecimentos.length} trato(s) vinculado(s) a fab "
+                    "$idFabricacao (lote=${_tgcLoteFabricacao(handoffId)}) — "
+                    "serao enviados apos sync da fabricacao."
+                : "Fieldpec: ${fornecimentos.length} trato(s) vinculado(s) a fab $idFabricacao "
+                    "serao enviados no passo Fornecimento (POST /Post/Fornecimento).",
           );
         }
       } else {
@@ -566,12 +633,23 @@ class OutboxSync {
       );
 
       log("Fabricacao sync OK $idFabricacao");
+
+      if (api.isTgc) {
+        await _syncFornecimentoTgc(
+          log,
+          onlyFabricacaoId: idFabricacao,
+        );
+      }
     }
   }
 
   Future<void> syncFornecimento(void Function(String) log) async {
     if (api.isFieldpec) {
       await _syncFornecimentoFieldpec(log);
+      return;
+    }
+    if (api.isTgc) {
+      await _syncFornecimentoTgc(log);
       return;
     }
 
@@ -837,6 +915,190 @@ class OutboxSync {
       log(
         "Fieldpec: ${rows.length} pendente(s), nenhum enviado "
         "(verifique MS da dieta ou chave baia/racao/trato/data).",
+      );
+    }
+  }
+
+  /// TGC: sem vinculo sobe livre; com vinculo exige fabricacao FLAG_SYNC=1 e envia lote (20).
+  Future<void> _syncFornecimentoTgc(
+    void Function(String) log, {
+    String? onlyFabricacaoId,
+  }) async {
+    final db = await AppDb.instance.db;
+    final fabFilter = (onlyFabricacaoId ?? "").trim();
+    final fabWhere = fabFilter.isEmpty
+        ? ""
+        : " AND TRIM(COALESCE(cf.ID_FABRICACAO,'')) = TRIM(?)";
+    final fabArgs = fabFilter.isEmpty ? <Object?>[] : <Object?>[fabFilter];
+
+    final diag = await db.rawQuery("""
+      SELECT COUNT(*) AS qtd
+      FROM CADASTRO_FORNECIMENTO cf
+      WHERE IFNULL(REALIZADO,0) > 0 AND IFNULL(FLAG_SYNC,0) = 0$fabWhere
+    """, fabArgs);
+    final qtdPend =
+        diag.isNotEmpty ? int.tryParse("${diag.first["qtd"]}") ?? 0 : 0;
+    log("TGC: CADASTRO_FORNECIMENTO pendentes = $qtdPend");
+
+    final blockedRows = await db.rawQuery("""
+      SELECT
+        cf.ID AS id_cadastro,
+        cf.ID_FABRICACAO AS id_fabricacao,
+        cfr.HANDOFF_ID AS handoff_id
+      FROM CADASTRO_FORNECIMENTO cf
+      LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND TRIM(COALESCE(cf.ID_FABRICACAO, '')) <> ''
+        AND NOT $_sqlFornecFabSyncGate$fabWhere
+      ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
+    """, fabArgs);
+    if (blockedRows.isNotEmpty) {
+      log(
+        "TGC: ${blockedRows.length} fornecimento(s) vinculado(s) aguardando "
+        "fabricacao no servidor:",
+      );
+      for (final b in blockedRows) {
+        final idCad = _s(b["id_cadastro"]);
+        final idFab = _s(b["id_fabricacao"]);
+        final lote = _tgcLoteFabricacao(_s(b["handoff_id"]));
+        log(
+          "  - cadastro=$idCad fab=$idFab "
+          "lote=${lote.isEmpty ? '(sem handoff)' : lote}",
+        );
+      }
+    }
+
+    final rows = await db.rawQuery('''
+      SELECT
+        cf.ID                                                       AS id_cadastro,
+        cf.ID_FORNECIMENTO                                          AS id_fornecimento,
+        cf.ID_BAIA                                                  AS id_baia,
+        cf.DATA                                                     AS data_forn,
+        cf.HORA_INICIO                                              AS hora_inicio,
+        cf.HORA_FIM                                                 AS hora_fim,
+        cf.TRATO                                                    AS trato,
+        cf.ID_FABRICACAO                                            AS id_fabricacao,
+        cfr.HANDOFF_ID                                              AS handoff_id_fab,
+        cf.ID_USUARIO                                               AS id_usuario_lancamento,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_dieta_realizada,
+        COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_racao,
+        COALESCE(cf.REALIZADO, 0)                                   AS delta_sessao,
+        COALESCE(p.REALIZADO_KG, 0)                                 AS total_mapa,
+        $_sqlMsFornecResolved                                        AS ms_dieta_realizada
+      FROM CADASTRO_FORNECIMENTO cf
+      LEFT JOIN CADASTRO_FABRICA_RACAO cfr ON cfr.ID = cf.ID_FABRICACAO
+      LEFT JOIN DIETA d ON TRIM(d.ID) = TRIM(COALESCE(cf.ID_DIETA, cfr.ID_DIETA))
+      LEFT JOIN PREVISAO p
+        ON TRIM(p.ID_FORNECIMENTO) = TRIM(cf.ID_FORNECIMENTO)
+       AND TRIM(p.ID_BAIA) = TRIM(cf.ID_BAIA)
+       AND substr(p.DATA, 1, 10) = substr(cf.DATA, 1, 10)
+       AND p.TRATO = cf.TRATO
+      WHERE COALESCE(cf.REALIZADO, 0) > 0
+        AND IFNULL(cf.FLAG_SYNC, 0) = 0
+        AND TRIM(COALESCE(cf.ID_FORNECIMENTO, '')) <> ''
+        AND $_sqlFornecFabSyncGate$fabWhere
+      ORDER BY cf.HORA_INICIO ASC, cf.ID ASC
+    ''', fabArgs);
+
+    if (rows.isEmpty) {
+      if (blockedRows.isNotEmpty) {
+        log(
+          "TGC: nenhum fornecimento elegivel — vinculados aguardam fabricacao.",
+        );
+      } else if (fabFilter.isNotEmpty) {
+        log("TGC: nenhum fornecimento pendente para fab=$fabFilter.");
+      } else {
+        log("TGC: nenhum fornecimento pendente para enviar.");
+      }
+      return;
+    }
+
+    var syncedCount = 0;
+    for (final r in rows) {
+      final idPrev = _s(r["id_fornecimento"]);
+      final idCad = _s(r["id_cadastro"]);
+      final idBaia = _s(r["id_baia"]);
+      final idRacao = _s(r["id_racao"]);
+      final idFab = _s(r["id_fabricacao"]);
+      final trato = int.tryParse(_s(r["trato"])) ?? 0;
+      final dataRef = _toBrDate(r["data_forn"]);
+      final deltaSessao = _toDouble(r["delta_sessao"]);
+      if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) continue;
+      if (idBaia.isEmpty || idRacao.isEmpty || trato <= 0 || dataRef.isEmpty) {
+        log(
+          "TGC fornecimento chave incompleta: cadastro=$idCad "
+          "baia=$idBaia racao=$idRacao trato=$trato data=$dataRef",
+        );
+        continue;
+      }
+
+      final msResolved = _toDouble(r["ms_dieta_realizada"]);
+      if (!MsPercent.isValid(msResolved)) {
+        log(
+          "TGC fornecimento cadastro=$idCad: MS invalida "
+          "(fab/dieta; deve ser > 0 e <= 100). Pulando.",
+        );
+        continue;
+      }
+
+      final payload = <String, dynamic>{
+        "id": idPrev,
+        "id_cadastro": idCad,
+        "id_fornecimento": idPrev,
+        "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
+        "id_tratador": _s(r["id_usuario_lancamento"]),
+        "id_dieta_realizada": _s(r["id_dieta_realizada"]),
+        "id_baia": idBaia,
+        "id_racao": idRacao,
+        "trato": trato.toString(),
+        "data": dataRef,
+        "realizado": _br3(deltaSessao),
+        "ms_dieta_realizada": _br3(msResolved),
+      };
+
+      if (idFab.isNotEmpty) {
+        final handoffFab = _s(r["handoff_id_fab"]);
+        final lote = _tgcLoteFabricacao(handoffFab);
+        payload["id_fabricacao"] = idFab;
+        payload["handoff_id_fabricacao"] = handoffFab;
+        if (lote.isNotEmpty) {
+          payload["lote_fabricacao"] = lote;
+          payload["CFORN_LOTE_FABRICACAO"] = lote;
+        }
+        log(
+          "TGC fornecimento cadastro=$idCad VINCULADO fab=$idFab lote=$lote",
+        );
+      } else {
+        log("TGC fornecimento cadastro=$idCad SEM vinculo de fabricacao.");
+      }
+
+      _putHorasFornecimento(
+        payload,
+        horaInicio: _toHora(r["hora_inicio"]),
+        horaFim: _toHora(r["hora_fim"]),
+      );
+
+      final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
+      final ok = await api.postFornecimento(payloadFixed, log: log);
+      if (ok) {
+        await _marcarFornecimentoSyncOk(db, idCad);
+        syncedCount++;
+      } else {
+        log(
+          "TGC falha fornecimento cadastro=$idCad "
+          "chave=$idBaia|$idRacao|$dataRef|$trato",
+        );
+      }
+    }
+
+    if (syncedCount > 0) {
+      log("TGC: $syncedCount fornecimento(s) sincronizado(s).");
+    } else if (rows.isNotEmpty) {
+      log(
+        "TGC: ${rows.length} pendente(s), nenhum enviado "
+        "(verifique MS ou resposta da API).",
       );
     }
   }

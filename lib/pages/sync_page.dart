@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 import "../domain/sync_pendencia_registro.dart";
 import "../repo/config_repo.dart";
@@ -97,6 +98,13 @@ class _SyncPageState extends State<SyncPage> {
     final hhmmss = DateTime.now().toIso8601String().substring(11, 19);
     if (!mounted) return;
     setState(() => _log.insert(0, "$hhmmss - $msg"));
+  }
+
+  Future<void> _copyLog() async {
+    if (_log.isEmpty) return;
+    final text = _log.reversed.join("\n");
+    await Clipboard.setData(ClipboardData(text: text));
+    _toast("Log copiado — cole no WhatsApp ou e-mail");
   }
 
   void _toast(String msg) {
@@ -418,6 +426,13 @@ class _SyncPageState extends State<SyncPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: "Copiar log",
+            onPressed: (_running || _auditRunning || _log.isEmpty)
+                ? null
+                : _copyLog,
+            icon: const Icon(Icons.copy_outlined),
           ),
           IconButton(
             tooltip: "Limpar log",

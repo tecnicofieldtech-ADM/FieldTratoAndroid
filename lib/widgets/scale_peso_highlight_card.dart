@@ -41,6 +41,12 @@ class ScalePesoHighlightCard extends StatelessWidget {
 
   static const double _valorRowHeight = 52;
 
+  static String _formatPesoKg(double kg) {
+    final abs = kg.abs().toStringAsFixed(0);
+    if (kg < 0) return "-$abs kg";
+    return "$abs kg";
+  }
+
   Widget _metricBox({
     required String label,
     required String value,
@@ -173,7 +179,7 @@ class ScalePesoHighlightCard extends StatelessWidget {
                     flex: hasSlots ? 2 : 1,
                     child: _metricBox(
                       label: pesoLabel,
-                      value: "${pesoKg.toStringAsFixed(0)} kg",
+                      value: _formatPesoKg(pesoKg),
                       align: CrossAxisAlignment.start,
                       inlineActions: inline,
                       bottom: !hasSlots && statusBar != null

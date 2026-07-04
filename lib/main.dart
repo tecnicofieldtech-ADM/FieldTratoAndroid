@@ -17,6 +17,7 @@ import "features/fabricacao/data/fabricacao_repo.dart";
 
 // FORNECIMENTO
 import "features/fornecimento/ui/fornecimento_list_page.dart";
+import "features/fornecimento/ui/fornecimento_dashboard_page.dart";
 import "features/fornecimento/ui/fornecimento_pre_page.dart";
 import "features/fornecimento/ui/fornecimento_weigh_page.dart";
 import "features/fornecimento/domain/fornecimento_models.dart";
@@ -125,6 +126,7 @@ class RFeedApp extends StatelessWidget {
         bool requireLogin() {
           const protected = {
             "/fornecimento",
+            "/fornecimento/dashboard",
             "/fornecimento/pre",
             "/fornecimento/pesagem",
           };
@@ -139,6 +141,28 @@ class RFeedApp extends StatelessWidget {
         }
 
         switch (settings.name) {
+          case "/fornecimento/dashboard":
+            {
+              final args = (settings.arguments as Map?) ?? const {};
+              final idFazenda = (args["idFazenda"] ?? "").toString();
+              final trato = args["trato"] as int?;
+              final idRacaoFiltro = (args["idRacaoFiltro"] as String?);
+              final startCleared = (args["startCleared"] == true);
+              return MaterialPageRoute(
+                builder: (_) => FornecimentoDashboardPage(
+                  idFazenda: idFazenda,
+                  idUsuario: SessionService.instance.userId ?? "",
+                  trato: trato,
+                  repo: fornRepo,
+                  scale: scale,
+                  rfid: rfid,
+                  idRacaoFiltro: idRacaoFiltro,
+                  startCleared: startCleared,
+                ),
+                settings: settings,
+              );
+            }
+
           case "/fornecimento":
             {
               final args = (settings.arguments as Map?) ?? const {};

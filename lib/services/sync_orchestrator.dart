@@ -1,3 +1,4 @@
+import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../repo/config_repo.dart";
@@ -31,14 +32,14 @@ class SyncOrchestrator {
     final baseUrl = cfgRepo.buildBaseUrl(cfg);
     if (baseUrl.isEmpty) throw Exception("HOST/PORTA invalidos.");
 
+    final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
     final idFazenda = (cfg["ID_FAZENDA"] ?? "").toString().trim();
-    if (idFazenda.isEmpty) {
+    if (idFazenda.isEmpty && !ConfigOptions.ignoresFazendaId(backend)) {
       throw Exception("ID_FAZENDA vazio (selecione e confirme).");
     }
 
     final idVagao = (cfg["ID_VAGAO"] ?? "").toString().trim();
     final tipoTrabalho = int.tryParse((cfg["TIPO_TRABALHO"] ?? "0").toString()) ?? 0;
-    final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
     final flowMode = fabricacaoFlowModeFromDb(cfg["FLOW_MODE"]);
 
     final api = ApiService(baseUrl: baseUrl, backend: backend);
@@ -54,10 +55,20 @@ class SyncOrchestrator {
           final ok = await api.getTeste();
           if (!ok) throw Exception("Servidor indisponivel.");
           log("Servidor online");
+          final backendName =
+              ConfigOptions.backends[backend] ?? "Backend $backend";
+          log("Backend app: $backendName");
+          if (!ConfigOptions.isTgcBackend(backend)) {
+            log(
+              "AVISO: cliente TGC deve usar Config > Backend = "
+              "'Outros (TGC)'. Com FieldPec a ordem da sync e o "
+              "fornecimento ficam incorretos.",
+            );
+          }
         },
       ),
       SyncStep(title: "Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
-      if (backend == 1) ...[
+      if (ConfigOptions.isFieldPecBackend(backend)) ...[
         SyncStep(
           title: "Sincronizando Fornecimento",
           run: () => outbox.syncFornecimento(log),
@@ -70,6 +81,20 @@ class SyncOrchestrator {
             flowMode: flowMode,
             tipoTrabalho: tipoTrabalho,
           ),
+        ),
+      ] else if (ConfigOptions.isTgcBackend(backend)) ...[
+        SyncStep(
+          title: "Sincronizando Fabrica Racao",
+          run: () => outbox.syncFabricacao(
+            log,
+            idVagao,
+            flowMode: flowMode,
+            tipoTrabalho: tipoTrabalho,
+          ),
+        ),
+        SyncStep(
+          title: "Sincronizando Fornecimento",
+          run: () => outbox.syncFornecimento(log),
         ),
       ] else ...[
         SyncStep(

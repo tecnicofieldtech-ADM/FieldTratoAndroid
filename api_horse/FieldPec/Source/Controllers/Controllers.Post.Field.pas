@@ -688,7 +688,10 @@ var
   vPontoCorteKg: Double;
   vEncontrou: Boolean;
   vIdFallback: string;
-  IdFornecConf, IdLocal, IdRacao, IdMotorista: Integer;
+  IdFornecConf, IdLocal, IdRacao, IdMotorista, IdLote: Integer;
+  QtdCab, MediaPeso, ValorFabricadoD, CustoTotal: Double;
+  LoteFabricacao: string;
+  Q: TFDQuery;
 
   function GetStr(const K: string; const Def: string = ''): string;
   begin
@@ -758,6 +761,28 @@ var
         Result := 0;
     finally
       LIni.Free;
+    end;
+  end;
+
+  function BuscarValorKgRacaoLocal(const AIdRacao: Integer): Double;
+  var
+    QLocal: TFDQuery;
+  begin
+    Result := 0;
+    if AIdRacao <= 0 then
+      Exit;
+
+    QLocal := TFDQuery.Create(nil);
+    try
+      QLocal.Connection := dmGlobal.FBCon;
+      QLocal.SQL.Text := 'SELECT VALORKG FROM RACAO WHERE ID = :ID';
+      QLocal.ParamByName('ID').AsInteger := AIdRacao;
+      QLocal.Open;
+
+      if (not QLocal.IsEmpty) and (not QLocal.FieldByName('VALORKG').IsNull) then
+        Result := QLocal.FieldByName('VALORKG').AsFloat;
+    finally
+      QLocal.Free;
     end;
   end;
 
@@ -831,6 +856,9 @@ begin
       IdMotorista := StrToIntDef(Trim(vIdTratador), 0);
       if IdMotorista <= 0 then
         IdMotorista := StrToIntDef(Trim(vIdUsuario), 0);
+      IdLote := 0;
+      MediaPeso := 0;
+      LoteFabricacao := JSONStrFirst(Body, ['lote_fabricacao', 'LOTE_FABRICACAO'], '');
 
       if Trim(vIdFallback) <> '' then
       begin
@@ -841,7 +869,8 @@ begin
           begin
             Close;
             SQL.Text :=
-              'SELECT ID, REALIZADO_MN_KG FROM FORNECIMENTO_CONF ' +
+              'SELECT ID, ID_LOCAL, ID_LOTE, TRATO, DATA_FORN, REALIZADO_MN_KG, MEDIA_PESO, MS_RACAO, LOTE_FABRICACAO ' +
+              'FROM FORNECIMENTO_CONF ' +
               'WHERE ID = :ID AND STATUS = 1';
             ParamByName('ID').AsInteger := IdFornecConf;
             Open;
@@ -850,6 +879,17 @@ begin
               vEncontrou := True;
               vRealizadoAtual := FieldByName('REALIZADO_MN_KG').AsFloat;
               vId := FieldByName('ID').AsString;
+              IdLote := FieldByName('ID_LOTE').AsInteger;
+              if IdLocal <= 0 then
+                IdLocal := FieldByName('ID_LOCAL').AsInteger;
+              if vTrato <= 0 then
+                vTrato := FieldByName('TRATO').AsInteger;
+              if vData = 0 then
+                vData := FieldByName('DATA_FORN').AsDateTime;
+              if not FieldByName('MEDIA_PESO').IsNull then
+                MediaPeso := FieldByName('MEDIA_PESO').AsFloat;
+              if (LoteFabricacao = '') and (not FieldByName('LOTE_FABRICACAO').IsNull) then
+                LoteFabricacao := Trim(FieldByName('LOTE_FABRICACAO').AsString);
             end;
             Close;
           end;
@@ -863,7 +903,8 @@ begin
         begin
           Close;
           SQL.Text :=
-            'SELECT ID, REALIZADO_MN_KG FROM FORNECIMENTO_CONF ' +
+            'SELECT ID, ID_LOCAL, ID_LOTE, TRATO, DATA_FORN, REALIZADO_MN_KG, MEDIA_PESO, MS_RACAO, LOTE_FABRICACAO ' +
+            'FROM FORNECIMENTO_CONF ' +
             'WHERE STATUS = 1 AND ID_LOCAL = :ID_LOCAL AND TRATO = :TRATO ' +
             '  AND DATA_FORN = :DATA_FORN AND ID_RACAO = :ID_RACAO';
           ParamByName('ID_LOCAL').AsInteger := IdLocal;
@@ -877,6 +918,11 @@ begin
             IdFornecConf := FieldByName('ID').AsInteger;
             vRealizadoAtual := FieldByName('REALIZADO_MN_KG').AsFloat;
             vId := IntToStr(IdFornecConf);
+            IdLote := FieldByName('ID_LOTE').AsInteger;
+            if not FieldByName('MEDIA_PESO').IsNull then
+              MediaPeso := FieldByName('MEDIA_PESO').AsFloat;
+            if (LoteFabricacao = '') and (not FieldByName('LOTE_FABRICACAO').IsNull) then
+              LoteFabricacao := Trim(FieldByName('LOTE_FABRICACAO').AsString);
           end;
           Close;
         end;
@@ -898,36 +944,196 @@ begin
 
       vHoraFornDt := ParseHoraRef(vHoraForn);
 
-      with dmGlobal.qryAux do
+      QtdCab := 0;
+      Q := TFDQuery.Create(nil);
+      try
+        Q.Connection := dmGlobal.FBCon;
+        Q.SQL.Text :=
+          'SELECT QTDE_CAB ' +
+          'FROM LOTE_NUTRICIONAL ' +
+          'WHERE STATUS = 1 AND ID_LOCAL = :ID_LOCAL';
+        Q.ParamByName('ID_LOCAL').AsInteger := IdLocal;
+        Q.Open;
+
+        if (not Q.IsEmpty) and (not Q.FieldByName('QTDE_CAB').IsNull) then
+          QtdCab := Q.FieldByName('QTDE_CAB').AsFloat;
+      finally
+        Q.Free;
+      end;
+
+      CustoTotal := vRealizadoNum * BuscarValorKgRacaoLocal(IdRacao);
+
+      ValorFabricadoD := 0;
+      if Trim(LoteFabricacao) <> '' then
       begin
-        Close;
-        if Frac(vHoraFornDt) > 0 then
-          SQL.Text :=
-            'UPDATE FORNECIMENTO_CONF SET ' +
-            '  REALIZADO_MN_KG = :REALIZADO, ' +
-            '  MS_RACAO = :MS, ' +
-            '  ID_MOTORISTA = :ID_MOTORISTA, ' +
-            '  HORA_FORN = :HORA_FORN, ' +
-            '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
-            '  ID_USUARIO_ALTERACAO = :ID_USUARIO ' +
-            'WHERE ID = :ID'
-        else
-          SQL.Text :=
-            'UPDATE FORNECIMENTO_CONF SET ' +
-            '  REALIZADO_MN_KG = :REALIZADO, ' +
-            '  MS_RACAO = :MS, ' +
-            '  ID_MOTORISTA = :ID_MOTORISTA, ' +
-            '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
-            '  ID_USUARIO_ALTERACAO = :ID_USUARIO ' +
-            'WHERE ID = :ID';
-        ParamByName('REALIZADO').AsFloat := vRealizadoGravar;
-        ParamByName('MS').AsFloat := vMsFornec;
-        ParamByName('ID_MOTORISTA').AsInteger := IdMotorista;
-        ParamByName('ID_USUARIO').AsInteger := IdMotorista;
-        ParamByName('ID').AsInteger := IdFornecConf;
-        if Frac(vHoraFornDt) > 0 then
-          ParamByName('HORA_FORN').AsDateTime := Frac(vHoraFornDt);
-        ExecSQL;
+        Q := TFDQuery.Create(nil);
+        try
+          Q.Connection := dmGlobal.FBCon;
+          Q.SQL.Text :=
+            'SELECT SUM(fi.CUSTO) / NULLIF(SUM(fi.KG_FABRICADO), 0) AS valorfab ' +
+            'FROM FABRICACAO_INSUMOS fi ' +
+            'JOIN FABRICACAO f ON f.ID = fi.ID_FABRICACAO ' +
+            'WHERE f.LOTE_FABRICACAO = :LOTE_FAB';
+          Q.ParamByName('LOTE_FAB').AsString := LoteFabricacao;
+          Q.Open;
+
+          if (not Q.IsEmpty) and (not Q.FieldByName('valorfab').IsNull) then
+            ValorFabricadoD := Q.FieldByName('valorfab').AsFloat;
+        finally
+          Q.Free;
+        end;
+      end;
+
+      if MediaPeso <= 0 then
+      begin
+        Q := TFDQuery.Create(nil);
+        try
+          Q.Connection := dmGlobal.FBCon;
+          Q.SQL.Text :=
+            'SELECT AVG((SELECT PESOPROJ FROM RETORNA_GMD_ACUMULADO(A.ID, :VDATA))) AS MEDIA_PESO ' +
+            'FROM ANIMAL A ' +
+            'WHERE STATUS = 1 AND ID_LOCAL = :ID_LOCAL';
+          Q.ParamByName('VDATA').AsDate := vData;
+          Q.ParamByName('ID_LOCAL').AsInteger := IdLocal;
+          Q.Open;
+
+          if (not Q.IsEmpty) and (not Q.FieldByName('MEDIA_PESO').IsNull) then
+            MediaPeso := Q.FieldByName('MEDIA_PESO').AsFloat;
+        finally
+          Q.Free;
+        end;
+      end;
+
+      dmGlobal.FBCon.StartTransaction;
+      try
+        Q := TFDQuery.Create(nil);
+        try
+          Q.Connection := dmGlobal.FBCon;
+          if Frac(vHoraFornDt) > 0 then
+            Q.SQL.Text :=
+              'UPDATE FORNECIMENTO_CONF SET ' +
+              '  LOTE_FABRICACAO = :LOTE_FABRICACAO, ' +
+              '  ID_MOTORISTA = :ID_MOTORISTA, ' +
+              '  HORA_FORN = :HORA_FORN, ' +
+              '  QTD_CAB = :QTD_CAB, ' +
+              '  REALIZADO_MN_KG = :REALIZADO, ' +
+              '  MS_RACAO = :MS, ' +
+              '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
+              '  ID_USUARIO_ALTERACAO = :ID_USUARIO, ' +
+              '  MEDIA_PESO = :MEDIA_PESO, ' +
+              '  VALOR_KG_RACAO = :VALOR_KG_RACAO, ' +
+              '  CUSTO_TOTAL_TRATO = :CUSTO_TOTAL_TRATO ' +
+              'WHERE ID = :ID'
+          else
+            Q.SQL.Text :=
+              'UPDATE FORNECIMENTO_CONF SET ' +
+              '  LOTE_FABRICACAO = :LOTE_FABRICACAO, ' +
+              '  ID_MOTORISTA = :ID_MOTORISTA, ' +
+              '  QTD_CAB = :QTD_CAB, ' +
+              '  REALIZADO_MN_KG = :REALIZADO, ' +
+              '  MS_RACAO = :MS, ' +
+              '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
+              '  ID_USUARIO_ALTERACAO = :ID_USUARIO, ' +
+              '  MEDIA_PESO = :MEDIA_PESO, ' +
+              '  VALOR_KG_RACAO = :VALOR_KG_RACAO, ' +
+              '  CUSTO_TOTAL_TRATO = :CUSTO_TOTAL_TRATO ' +
+              'WHERE ID = :ID';
+
+          Q.ParamByName('LOTE_FABRICACAO').AsString := LoteFabricacao;
+          Q.ParamByName('ID_MOTORISTA').AsInteger := IdMotorista;
+          Q.ParamByName('QTD_CAB').AsFloat := QtdCab;
+          Q.ParamByName('REALIZADO').AsFloat := vRealizadoGravar;
+          Q.ParamByName('MS').AsFloat := vMsFornec;
+          Q.ParamByName('ID_USUARIO').AsInteger := IdMotorista;
+          Q.ParamByName('MEDIA_PESO').AsFloat := MediaPeso;
+
+          if ValorFabricadoD > 0 then
+          begin
+            Q.ParamByName('VALOR_KG_RACAO').AsFloat := ValorFabricadoD;
+            Q.ParamByName('CUSTO_TOTAL_TRATO').AsFloat := vRealizadoNum * ValorFabricadoD;
+          end
+          else
+          begin
+            Q.ParamByName('VALOR_KG_RACAO').AsFloat := 0;
+            Q.ParamByName('CUSTO_TOTAL_TRATO').AsFloat := CustoTotal;
+          end;
+
+          Q.ParamByName('ID').AsInteger := IdFornecConf;
+          if Frac(vHoraFornDt) > 0 then
+            Q.ParamByName('HORA_FORN').AsDateTime := Frac(vHoraFornDt);
+          Q.ExecSQL;
+        finally
+          Q.Free;
+        end;
+
+        if (IdLote > 0) and (vData <> 0) then
+        begin
+          Q := TFDQuery.Create(nil);
+          try
+            Q.Connection := dmGlobal.FBCon;
+            Q.SQL.Text :=
+              'UPDATE DET_LOTE_PLANEJAMENTO SET UTILIZADO = 1 ' +
+              'WHERE DATA = :DATA ' +
+              '  AND TRATO = :TRATO ' +
+              '  AND ID_LOTE = :ID_LOTE';
+            Q.ParamByName('DATA').AsDate := vData;
+            Q.ParamByName('TRATO').AsInteger := vTrato;
+            Q.ParamByName('ID_LOTE').AsInteger := IdLote;
+            Q.ExecSQL;
+          finally
+            Q.Free;
+          end;
+        end;
+
+        if vRealizadoNum > 0 then
+        begin
+          Q := TFDQuery.Create(nil);
+          try
+            Q.Connection := dmGlobal.FBCon;
+            Q.SQL.Text := 'DELETE FROM ANIMAL_FORNECIMENTO_CONF WHERE ID_FORNECIMENTO = :ID_FORNECIMENTO';
+            Q.ParamByName('ID_FORNECIMENTO').AsInteger := IdFornecConf;
+            Q.ExecSQL;
+          finally
+            Q.Free;
+          end;
+
+          Q := TFDQuery.Create(nil);
+          try
+            Q.Connection := dmGlobal.FBCon;
+            Q.SQL.Text :=
+              'INSERT INTO ANIMAL_FORNECIMENTO_CONF ( ' +
+              '  ID_ANIMAL, ID_FORNECIMENTO, DATA_FORNECIMENTO, TRATO, ID_LOTE, ID_CURRAL, ' +
+              '  CONSUMO_MN, CONSUMO_MS, IMS_PV, CUSTO, PESO_MEDIO, ID_RACAO ' +
+              ') ' +
+              'SELECT ' +
+              '  B.ID, ' +
+              '  A.ID, ' +
+              '  A.DATA_FORN, ' +
+              '  A.TRATO, ' +
+              '  A.ID_LOTE, ' +
+              '  A.ID_LOCAL, ' +
+              '  CAST(A.REALIZADO_MN_KG AS DOUBLE PRECISION) / NULLIF(CAST(A.QTD_CAB AS DOUBLE PRECISION), 0), ' +
+              '  CAST(A.REALIZADO_MN_KG AS DOUBLE PRECISION) / NULLIF(CAST(A.QTD_CAB AS DOUBLE PRECISION), 0) * (CAST(A.MS_RACAO AS DOUBLE PRECISION) / 100), ' +
+              '  (((CAST(A.REALIZADO_MN_KG AS DOUBLE PRECISION) / NULLIF(A.QTD_CAB, 0)) * (CAST(A.MS_RACAO AS DOUBLE PRECISION) / 100) * 100) / NULLIF(CAST(A.MEDIA_PESO AS DOUBLE PRECISION), 0)), ' +
+              '  A.CUSTO_TOTAL_TRATO / NULLIF(A.QTD_CAB, 0), ' +
+              '  A.MEDIA_PESO, ' +
+              '  A.ID_RACAO ' +
+              'FROM FORNECIMENTO_CONF A ' +
+              'JOIN ANIMAL B ON A.ID_LOCAL = B.ID_LOCAL ' +
+              'WHERE B.STATUS = 1 ' +
+              '  AND A.ID = :ID_FORNECIMENTO';
+            Q.ParamByName('ID_FORNECIMENTO').AsInteger := IdFornecConf;
+            Q.ExecSQL;
+          finally
+            Q.Free;
+          end;
+        end;
+
+        dmGlobal.FBCon.Commit;
+      except
+        if dmGlobal.FBCon.InTransaction then
+          dmGlobal.FBCon.Rollback;
+        raise;
       end;
 
       JSONResult.AddPair('id', vId);
@@ -935,6 +1141,7 @@ begin
       JSONResult.AddPair('modo', 'update_fornecimento_conf');
       JSONResult.AddPair('fornecimento_acumulativo', TJSONBool.Create(vFornecimentoAcumulativo));
       JSONResult.AddPair('realizado_gravado', TJSONNumber.Create(vRealizadoGravar));
+      JSONResult.AddPair('animal_fornecimento_atualizado', TJSONBool.Create(vRealizadoNum > 0));
       Res.Send(JSONResult).Status(200);
       MirrorPostBody('/Post/Fornecimento', Body, JSONResult.ToJSON, 200);
     finally

@@ -7,6 +7,7 @@ import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
 import "../../../helpers/scale_comm.dart";
+import "../../../helpers/scale_model_config.dart";
 import "../../../helpers/rfid_comm.dart";
 
 import "../controller/fornecimento_dashboard_controller.dart";
@@ -24,7 +25,7 @@ class FornecimentoDashboardPage extends StatefulWidget {
     super.key,
     required this.idFazenda,
     required this.idUsuario,
-    required this.trato,
+    this.trato,
     required this.repo,
     required this.scale,
     required this.rfid,
@@ -35,7 +36,7 @@ class FornecimentoDashboardPage extends StatefulWidget {
 
   final String idFazenda;
   final String idUsuario;
-  final int trato;
+  final int? trato;
 
   final DateTime? data;
   final String? idRacaoFiltro;
@@ -193,22 +194,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     Navigator.pushNamedAndRemoveUntil(context, "/login", (r) => false);
   }
 
-  // ✅ MODELO_BALANCA INT -> ScaleModel
-  // 0=topcom, 1=dg500, 2=alfa, 3=raw
-  ScaleModel _mapModeloBalancaInt(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      case 3:
-        return ScaleModel.raw;
-      default:
-        return ScaleModel.topcom;
-    }
-  }
+  ScaleModel _mapModeloBalancaInt(int v) => scaleModelFromConfigInt(v);
 
   String _ymd(DateTime d) {
     final y = d.year.toString().padLeft(4, "0");
@@ -220,13 +206,101 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   /// Atualiza baias + previsão do dia antes de montar o mapa (evita SQLite desatualizado).
   Future<void> _refreshMapaRemoto({required DateTime data}) async {
     try {
+      var idFazenda = widget.idFazenda.trim();
+      if (idFazenda.isEmpty) {
+        idFazenda = (await _cfgRepo.getIdFazendaSelecionada()).trim();
+      }
       await widget.repo.prefetchMapaDoDia(
-        idFazenda: widget.idFazenda,
+        idFazenda: idFazenda,
         data: data,
+        trato: _ctrl.header?.trato ?? widget.trato,
       );
     } catch (e) {
       debugPrint("Fornecimento dashboard: falha ao atualizar mapa remoto: $e");
     }
+  }
+
+  /// Após fabricação → fornecimento o SQLite pode ainda estar sincronizando.
+  Future<void> _ensureMapaCarregado(DateTime dataBoot) async {
+    if (_ctrl.previsaoRacaoOk) return;
+
+    await _refreshMapaRemoto(data: dataBoot);
+    await _ctrl.carregarPrevisaoPorRacao();
+    if (_ctrl.previsaoRacaoOk) return;
+
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await _refreshMapaRemoto(data: dataBoot);
+    await _ctrl.carregarPrevisaoPorRacao();
+  }
+
+  Future<bool> _pickTratoModal() async {
+    final h = _ctrl.header;
+    final racaoTxt = (h?.racaoNome ?? h?.racaoId ?? "").trim();
+    final ordenadas = _ctrl.tratosDisponiveis.isNotEmpty
+        ? _ctrl.tratosDisponiveis
+        : <int>[1, 2, 3, 4, 5, 6];
+
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  "Selecione o trato",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+                if (racaoTxt.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    "Ração: $racaoTxt",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final t in ordenadas)
+                      SizedBox(
+                        width: 110,
+                        height: 44,
+                        child: FilledButton.tonal(
+                          onPressed: () => Navigator.pop(ctx, t),
+                          child: Text(
+                            "Trato $t",
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted) return false;
+    if (picked == null || picked <= 0) {
+      Navigator.pop(context);
+      return false;
+    }
+
+    await _ctrl.selecionarTrato(picked);
+    return true;
   }
 
   Future<void> _connectDevicesFromConfig() async {
@@ -244,8 +318,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
           model: _mapModeloBalancaInt(modeloB),
           allowNegative: true,
         );
-        // ignore: unawaited_futures
-        widget.scale.connect();
+        unawaited(widget.scale.connect());
       }
 
       final hostR = (await _cfgRepo.getHostRfid()).trim();
@@ -324,25 +397,40 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
       return;
     }
 
-    // ✅ conecta por config (await para evitar corrida de lifecycle)
-    await _connectDevicesFromConfig();
+    // Conecta balança/RFID sem bloquear a abertura do mapa.
+    unawaited(_connectDevicesFromConfig());
 
     final dataBoot = widget.data ?? DateTime.now();
 
-    await _refreshMapaRemoto(data: dataBoot);
+    var idFazenda = widget.idFazenda.trim();
+    if (idFazenda.isEmpty) {
+      idFazenda = (await _cfgRepo.getIdFazendaSelecionada()).trim();
+    }
 
     await _ctrl.init(
       data: dataBoot,
-      trato: widget.trato,
-      idFazenda: widget.idFazenda,
-      idRacaoFiltro: idDietaCarregada,
+      idFazenda: idFazenda,
+      idRacaoFiltro: widget.idRacaoFiltro ?? idDietaCarregada,
     );
 
     if (!mounted) return;
 
-    if (_ctrl.currais.isEmpty) {
-      await _refreshMapaRemoto(data: dataBoot);
-      await _ctrl.reloadMapa();
+    await _ensureMapaCarregado(dataBoot);
+
+    if (!mounted) return;
+
+    if (!_ctrl.previsaoRacaoOk) {
+      _ctrl.setError(
+        "Nenhuma previsão encontrada para a ração "
+        "${widget.idRacaoFiltro ?? idDietaCarregada} no dia de hoje.\n"
+        "Sincronize a previsão e tente novamente.",
+      );
+      return;
+    }
+
+    if (!_ctrl.tratoSelecionado) {
+      final ok = await _pickTratoModal();
+      if (!ok || !mounted) return;
     }
 
     if (widget.startCleared) {
@@ -357,7 +445,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
         _ctrl.setLinhaFiltro(_linhaFiltroSaved);
       }
       if ((_curralSelSaved ?? "").trim().isNotEmpty) {
-        _ctrl.restaurarSelecaoPorIdFornecimento(_curralSelSaved!);
+        await _ctrl.recuperarSelecaoAposBoot(_curralSelSaved!);
       }
     }
   }
@@ -528,12 +616,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
 
         final progress = sel == null
             ? 0.0
-            : _progress(
-                realizadoEst,
-                isFieldpecUltimo
-                    ? sel.metaPrevistoUltimoTratoKg
-                    : sel.previstoKg,
-              );
+            : _progress(realizadoEst, previstoPainel);
 
         final level = _computeLevel(sel, realizadoEst, aFornecerEst);
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -564,37 +647,74 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
           return Column(
             children: [
               _HeaderBar(
-                trato: h?.trato ?? widget.trato,
+                trato: h?.trato,
                 racaoId: h?.racaoId,
                 racaoNome: h?.racaoNome,
+                onTratoTap: () {
+                  // ignore: unawaited_futures
+                  _pickTratoModal();
+                },
               ),
               const SizedBox(height: 8),
               Expanded(
                 child: _ctrl.loading
                     ? const Center(child: CircularProgressIndicator())
-                    : Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                        child: _RightPanel(
-                          selected: sel,
-                          pesoAtual: _ctrl.pesoAtual,
-                          scaleStatus: _ctrl.scaleStatus,
-                          scaleMsg: _ctrl.scaleMsg,
-                          rfidStatus: _ctrl.rfidStatus,
-                          rfidMsg: _ctrl.rfidMsg,
-                          rfidPausado: _ctrl.rfidPausado,
-                          sessaoAtiva: _ctrl.sessaoAtiva,
-                          fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
-                          realizadoEstimadoKg: realizadoEst,
-                          aFornecerEstimadoKg: aFornecerEst,
-                          previstoPainelKg: previstoPainel,
-                          isFieldpecUltimoTrato: isFieldpecUltimo,
-                          onSalvar: _onSalvarSeguro,
-                          ultimo: _ctrl.ultimo,
-                          fmt: _fmtNum,
-                          progress: progress,
-                          level: level,
-                        ),
-                      ),
+                    : !_ctrl.tratoSelecionado
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.restaurant,
+                                      size: 48, color: Colors.teal.shade700),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    "Previsão carregada para a ração.",
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    "Selecione o trato para exibir os currais.",
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  FilledButton.icon(
+                                    onPressed: _pickTratoModal,
+                                    icon: const Icon(Icons.touch_app),
+                                    label: const Text("Escolher trato"),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            child: _RightPanel(
+                              selected: sel,
+                              pesoAtual: _ctrl.pesoAtual,
+                              lastScaleRaw: _ctrl.lastScaleRaw,
+                              scaleStatus: _ctrl.scaleStatus,
+                              scaleMsg: _ctrl.scaleMsg,
+                              rfidStatus: _ctrl.rfidStatus,
+                              rfidMsg: _ctrl.rfidMsg,
+                              rfidPausado: _ctrl.rfidPausado,
+                              sessaoAtiva: _ctrl.sessaoAtiva,
+                              fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
+                              realizadoEstimadoKg: realizadoEst,
+                              aFornecerEstimadoKg: aFornecerEst,
+                              previstoPainelKg: previstoPainel,
+                              isFieldpecUltimoTrato: isFieldpecUltimo,
+                              ultimo: _ctrl.ultimo,
+                              fmt: _fmtNum,
+                              progress: progress,
+                              level: level,
+                            ),
+                          ),
               ),
               if (_mapaHorizontalFixo) _mapaHorizontalBar(),
               Padding(
@@ -602,10 +722,14 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 child: _BottomActions(
                   onMapa: _openMapaPopup,
                   onToggleRfid: _ctrl.toggleRfidPausado,
+                  onSalvar: _onSalvarSeguro,
                   rfidPausado: _ctrl.rfidPausado,
+                  sessaoAtiva: _ctrl.sessaoAtiva,
                   showMapaButton: !_mapaHorizontalFixo,
                   showRfidButton: _showRfidControls,
-                  disabled: _ctrl.loading || _ctrl.error != null,
+                  disabled: _ctrl.loading ||
+                      _ctrl.error != null ||
+                      !_ctrl.tratoSelecionado,
                 ),
               ),
             ],
@@ -770,14 +894,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   ) {
     if (s == null) return _BeepLevel.ok;
 
-    if (s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
-      if (aFornecerEstimadoKg <= 0) return _BeepLevel.reached;
-      if (aFornecerEstimadoKg <= _beeper.criticalKg) return _BeepLevel.critical;
-      if (aFornecerEstimadoKg <= _beeper.nearKg) return _BeepLevel.near;
-      return _BeepLevel.ok;
-    }
-
-    final previsto = s.previstoKg;
+    final previsto = s.previstoFixoKg;
     if (previsto <= 0) return _BeepLevel.ok;
 
     final faltando = previsto - realizadoEstimadoKg;
@@ -798,11 +915,13 @@ class _HeaderBar extends StatelessWidget {
     required this.trato,
     required this.racaoId,
     required this.racaoNome,
+    required this.onTratoTap,
   });
 
-  final int trato;
+  final int? trato;
   final String? racaoId;
   final String? racaoNome;
+  final VoidCallback onTratoTap;
 
   @override
   Widget build(BuildContext context) {
@@ -810,53 +929,49 @@ class _HeaderBar extends StatelessWidget {
         ? racaoNome!.trim()
         : ((racaoId ?? "-").trim().isEmpty ? "-" : racaoId!.trim());
 
-    Widget bigCard({
+    Widget cardBody({
       required String label,
       required String value,
       required IconData icon,
-      int flex = 1,
     }) {
-      return Expanded(
-        flex: flex,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-            color: Colors.white,
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 28, color: Colors.teal.shade700),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.grey.shade700,
-                      ),
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+          color: Colors.white,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 28, color: Colors.teal.shade700),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade700,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      value,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        height: 1.1,
-                      ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      height: 1.1,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -866,17 +981,28 @@ class _HeaderBar extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          bigCard(
-            label: "Trato",
-            value: trato.toString(),
-            icon: Icons.restaurant,
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: onTratoTap,
+                child: cardBody(
+                  label: "Trato",
+                  value: (trato ?? 0) > 0 ? trato.toString() : "Selecione",
+                  icon: Icons.restaurant,
+                ),
+              ),
+            ),
           ),
           const SizedBox(width: 10),
-          bigCard(
-            label: "Dieta",
-            value: dietaTxt,
-            icon: Icons.grass,
+          Expanded(
             flex: 2,
+            child: cardBody(
+              label: "Dieta",
+              value: dietaTxt,
+              icon: Icons.grass,
+            ),
           ),
         ],
       ),
@@ -888,7 +1014,9 @@ class _BottomActions extends StatelessWidget {
   const _BottomActions({
     required this.onMapa,
     required this.onToggleRfid,
+    required this.onSalvar,
     required this.rfidPausado,
+    required this.sessaoAtiva,
     required this.showMapaButton,
     required this.showRfidButton,
     required this.disabled,
@@ -896,7 +1024,9 @@ class _BottomActions extends StatelessWidget {
 
   final VoidCallback onMapa;
   final VoidCallback onToggleRfid;
+  final Future<void> Function() onSalvar;
   final bool rfidPausado;
+  final bool sessaoAtiva;
   final bool showMapaButton;
   final bool showRfidButton;
   final bool disabled;
@@ -907,7 +1037,7 @@ class _BottomActions extends StatelessWidget {
       height: 54,
       child: Row(
         children: [
-          if (showMapaButton)
+          if (showMapaButton) ...[
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: disabled ? null : onMapa,
@@ -915,8 +1045,9 @@ class _BottomActions extends StatelessWidget {
                 label: const Text("Mapa"),
               ),
             ),
-          if (showMapaButton && showRfidButton) const SizedBox(width: 10),
-          if (showRfidButton)
+            const SizedBox(width: 10),
+          ],
+          if (showRfidButton) ...[
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: disabled ? null : onToggleRfid,
@@ -924,8 +1055,15 @@ class _BottomActions extends StatelessWidget {
                 label: Text(rfidPausado ? "RFID pausado" : "Pausar RFID"),
               ),
             ),
-          if (!showMapaButton && !showRfidButton)
-            const Expanded(child: SizedBox.shrink()),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: (disabled || !sessaoAtiva) ? null : onSalvar,
+              icon: const Icon(Icons.save),
+              label: const Text("Salvar"),
+            ),
+          ),
         ],
       ),
     );
@@ -1087,6 +1225,7 @@ class _RightPanel extends StatelessWidget {
   const _RightPanel({
     required this.selected,
     required this.pesoAtual,
+    required this.lastScaleRaw,
     required this.scaleStatus,
     required this.scaleMsg,
     required this.rfidStatus,
@@ -1098,7 +1237,6 @@ class _RightPanel extends StatelessWidget {
     required this.aFornecerEstimadoKg,
     required this.previstoPainelKg,
     required this.isFieldpecUltimoTrato,
-    required this.onSalvar,
     required this.ultimo,
     required this.fmt,
     required this.progress,
@@ -1107,6 +1245,7 @@ class _RightPanel extends StatelessWidget {
 
   final CurralCardVM? selected;
   final double pesoAtual;
+  final String lastScaleRaw;
   final ScaleStatus scaleStatus;
   final String? scaleMsg;
   final RfidStatus rfidStatus;
@@ -1119,8 +1258,6 @@ class _RightPanel extends StatelessWidget {
   final double aFornecerEstimadoKg;
   final double previstoPainelKg;
   final bool isFieldpecUltimoTrato;
-
-  final Future<void> Function() onSalvar;
 
   final UltimoFornecimentoVM? ultimo;
 
@@ -1171,12 +1308,10 @@ class _RightPanel extends StatelessWidget {
     }
 
     final previsto = hasSel ? previstoPainelKg : 0.0;
-    final realizado = hasSel ? s.realizadoKg : 0.0;
-    final dif = hasSel
-        ? (isFieldpecUltimoTrato
-            ? (realizadoEstimadoKg - previsto)
-            : s.diffKg)
+    final realizado = hasSel
+        ? (sessaoAtiva ? realizadoEstimadoKg : s.realizadoKg)
         : 0.0;
+    final dif = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
     final difEst = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
     final curralNome = hasSel ? s.curralNome : "ESPERANDO CURRAL";
     final linha = hasSel ? linhaTxt(s.linha) : "-";
@@ -1187,12 +1322,22 @@ class _RightPanel extends StatelessWidget {
     }
 
     String aFornecerSigned() {
-      final t = fmt(aFornecerEstimadoKg, dec: 0);
-      if (isFieldpecUltimoTrato) return t;
-      return difEst > 0 ? "+$t" : t;
+      final v = aFornecerEstimadoKg;
+      if (v > 0) return signed(v);
+      if (v < 0) return fmt(-v, dec: 0);
+      return fmt(0, dec: 0);
     }
 
     final scaleUi = scaleConnectionUi(scaleStatus, message: scaleMsg);
+    final scaleDetail = () {
+      var d = scaleUi.detail;
+      final raw = lastScaleRaw.trim();
+      if (raw.isNotEmpty) {
+        final snippet = raw.length > 40 ? "${raw.substring(0, 40)}…" : raw;
+        d = "$d · RX: $snippet";
+      }
+      return d;
+    }();
     final rfidUi = rfidConnectionUi(
       rfidStatus,
       message: rfidMsg,
@@ -1212,7 +1357,7 @@ class _RightPanel extends StatelessWidget {
             connectionSlots: [
               ScaleConnectionStatusChip(
                 title: "Balança",
-                detail: scaleUi.detail,
+                detail: scaleDetail,
                 icon: scaleUi.icon,
                 color: scaleUi.color,
               ),
@@ -1284,6 +1429,27 @@ class _RightPanel extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 10),
+                if (hasSel && !sessaoAtiva)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.orange.shade50,
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: const Text(
+                      "Sessão não iniciada — leia a tag RFID ou toque no curral para começar a pesar.",
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                if (hasSel && !sessaoAtiva) const SizedBox(height: 10),
                 Row(
                   children: [
                     _infoBig(
@@ -1403,12 +1569,6 @@ class _RightPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-                if (hasSel)
-                  FilledButton.icon(
-                    onPressed: !sessaoAtiva ? null : onSalvar,
-                    icon: const Icon(Icons.save),
-                    label: const Text("Salvar"),
-                  ),
               ],
             ),
           ),

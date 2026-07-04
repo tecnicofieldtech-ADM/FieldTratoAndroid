@@ -3,6 +3,7 @@ import "package:flutter/foundation.dart";
 
 // ✅ Corrige o import: CurralPrev está em /data/fornecimento_models.dart
 import "../domain/fornecimento_models.dart";
+import "../domain/fornecimento_peso.dart";
 
 /// Estado de sessão do fornecimento (Rotormix)
 /// - não cria arquitetura nova: é só um "state holder" imutável com copyWith
@@ -64,12 +65,11 @@ class FornecimentoSession {
 
   bool get iniciado => horaInicio != null;
 
-  /// Realizado parcial = pesoInicio - pesoAtual (se iniciou curral)
+  /// Realizado parcial = pesoInicio - pesoAtual (aceita pesoAtual negativo).
   double get realizadoParcial {
     final pi = pesoInicio;
     if (pi == null) return 0;
-    final v = pi - pesoAtual;
-    return _round3(v < 0 ? 0 : v);
+    return _round3(fornecidoKgSessao(pesoInicial: pi, pesoAtual: pesoAtual));
   }
 
   bool get carregamentoOk => (idCarregamento ?? "").trim().isNotEmpty;

@@ -224,12 +224,6 @@ class FornecimentoDao {
     ];
     final args = <Object?>[dataYmd, trato];
 
-    final faz = (idFazenda ?? "").trim();
-    if (faz.isNotEmpty) {
-      where.add("TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)");
-      args.add(faz);
-    }
-
     final racao = (idRacao ?? "").trim();
     if (racao.isNotEmpty) {
       where.add("TRIM(a.${FornTables.pvIdRacao}) = TRIM(?)");
@@ -372,6 +366,7 @@ class FornecimentoDao {
         FornTables.cfId,
         FornTables.cfIdFornecimento,
         FornTables.cfIdBaia,
+        FornTables.cfPesoInicio,
       ],
       where: """
         ${FornTables.cfData} = ?
@@ -395,6 +390,23 @@ class FornecimentoDao {
       idCadastro: idCadastro,
       idFornecimento: idFornec.isEmpty ? idFornecimento : idFornec,
       idBaia: idBaiaDb.isEmpty ? idBaia : idBaiaDb,
+      pesoInicio: _toDouble(m[FornTables.cfPesoInicio]),
+    );
+  }
+
+  Future<void> atualizarPesoInicioAberto({
+    required String idCadastro,
+    required double pesoInicio,
+  }) async {
+    final db = await _db;
+    await db.update(
+      FornTables.cadastroFornecimento,
+      {
+        FornTables.cfPesoInicio: pesoInicio,
+        FornTables.cfPesoFim: pesoInicio,
+      },
+      where: "${FornTables.cfId} = ?",
+      whereArgs: [idCadastro.trim()],
     );
   }
 
@@ -518,6 +530,18 @@ class FornecimentoDao {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  /// Não altera PREVISTO na PREVISAO local — realizado fica em CADASTRO_FORNECIMENTO.
+  Future<void> aplicarRealizadoLocalPrevisao({
+    required String idFornecimento,
+    required String idBaia,
+    required int trato,
+    required String dataYmd,
+    required double deltaRealizado,
+  }) async {
+    // Previsto original/recalculado permanecem como vieram da API.
+    // A fornecer = previsto fixo − soma(CADASTRO_FORNECIMENTO).
   }
 
   // =========================================================
@@ -947,31 +971,13 @@ class FornecimentoDao {
     String? idFazenda,
   }) async {
     final db = await _db;
-    final faz = (idFazenda ?? "").trim();
-
-    if (faz.isEmpty) {
-      final rows = await db.rawQuery(
-        """
-        SELECT COUNT(*) AS c
-        FROM ${FornTables.previsao}
-        WHERE substr(${FornTables.pvData},1,10) = ?
-        """,
-        [dataYmd],
-      );
-      return (rows.first["c"] as int?) ?? 0;
-    }
-
     final rows = await db.rawQuery(
       """
       SELECT COUNT(*) AS c
-      FROM ${FornTables.previsao} p
-      JOIN ${FornTables.detalhesBaias} db
-        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
-           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
-      WHERE substr(p.${FornTables.pvData},1,10) = ?
-        AND TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)
+      FROM ${FornTables.previsao}
+      WHERE substr(${FornTables.pvData},1,10) = ?
       """,
-      [dataYmd, faz],
+      [dataYmd],
     );
     return (rows.first["c"] as int?) ?? 0;
   }
@@ -982,16 +988,6 @@ class FornecimentoDao {
     String? idFazenda,
   }) async {
     final db = await _db;
-    final faz = (idFazenda ?? "").trim();
-
-    final whereFaz = faz.isEmpty
-        ? ""
-        : """
-        AND TRIM(db.${FornTables.dbIdFazenda}) = TRIM(?)
-      """;
-
-    final args = <Object?>[dataDestinoYmd, dataOrigemYmd];
-    if (faz.isNotEmpty) args.add(faz);
 
     await db.rawInsert(
       """
@@ -1013,13 +1009,9 @@ class FornecimentoDao {
         0,
         p.${FornTables.pvIdRacao}
       FROM ${FornTables.previsao} p
-      JOIN ${FornTables.detalhesBaias} db
-        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
-           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
       WHERE substr(p.${FornTables.pvData},1,10) = ?
-      $whereFaz
       """,
-      args,
+      [dataDestinoYmd, dataOrigemYmd],
     );
 
     final changed = await db.rawQuery("SELECT changes() AS c");

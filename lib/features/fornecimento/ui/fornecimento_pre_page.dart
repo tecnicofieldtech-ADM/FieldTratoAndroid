@@ -8,6 +8,7 @@ import "../../../helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
+import "../domain/fornecimento_peso.dart";
 import "fornecimento_weigh_page.dart";
 import "../../../widgets/scale_peso_highlight_card.dart";
 
@@ -287,21 +288,8 @@ class _FornecimentoPreController extends ChangeNotifier {
   // ---------------------------
   // STREAM ADAPTER (dynamic)
   // ---------------------------
-  Stream<num> _scaleWeightStream() {
-    final d = scale as dynamic;
-    final candidates = <Object?>[
-      _try(() => d.peso$),
-      _try(() => d.weight$),
-      _try(() => d.pesoStream),
-      _try(() => d.weightStream),
-      _try(() => d.streamPeso),
-      _try(() => d.streamWeight),
-    ];
-    for (final c in candidates) {
-      if (c is Stream) return c.cast<num>();
-    }
-    return const Stream<num>.empty();
-  }
+  Stream<num> _scaleWeightStream() =>
+      scale.weightStream.map((ev) => ev.weight);
 
   Stream<String> _scaleStatusStream() {
     final d = scale as dynamic;
@@ -517,8 +505,14 @@ class _FornecimentoPreController extends ChangeNotifier {
   num get realizadoSessao {
     final ini = pesoInicial;
     if (ini == null) return 0;
-    final delta = invertDelta ? (pesoAtual - ini) : (ini - pesoAtual);
-    return math.max<num>(0, delta);
+    if (invertDelta) {
+      final delta = pesoAtual - ini;
+      return math.max<num>(0, delta);
+    }
+    return fornecidoKgSessao(
+      pesoInicial: ini.toDouble(),
+      pesoAtual: pesoAtual.toDouble(),
+    );
   }
 
   num get realizadoFinal => curral.realizadoKg + realizadoSessao;

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RFeed API Horse — Health</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-full bg-gradient-to-b from-slate-50 via-teal-50/30 to-slate-50 text-slate-900">
+  <div class="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <header class="mb-8 rounded-2xl bg-slate-900 px-6 py-8 text-white sm:px-10">
+      <p class="text-xs font-semibold uppercase tracking-widest text-teal-300">API Horse</p>
+      <h1 class="mt-2 text-3xl font-bold">Health check e testador de métodos</h1>
+      <p class="mt-2 text-sm text-slate-300">Mesmo fluxo da next-api — testes contra esta instância (porta 3001).</p>
+      <p id="clientBadge" class="mt-3 inline-flex rounded-full bg-teal-900/50 px-3 py-1 text-xs font-medium text-teal-200 ring-1 ring-teal-700">Carregando cliente…</p>
+      <p id="apiVersionBadge" class="mt-2 inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-medium text-slate-300 ring-1 ring-slate-600">Verificando versão…</p>
+    </header>
+
+    <nav class="mb-6 flex flex-wrap gap-1 rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200">
+      <a href="/config" data-admin-nav="config"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Configuração</a>
+      <a href="/dashboard/fabricacao" data-admin-nav="dashfab"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
+      <a href="/monitor" data-admin-nav="monitor"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
+      <a href="/audit/fornecimento" data-admin-nav="audit-forn"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fornecimento</a>
+      <a href="/audit/fabricacao" data-admin-nav="audit-fab"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fabricação</a>
+      <a href="/health" data-admin-nav="health"
+        class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
+    </nav>
+
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Endpoint</label>
+          <select id="endpoint" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"></select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">idfazenda</label>
+          <input id="idfazenda" value="1" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">dataPrev (yyyy-mm-dd)</label>
+          <input id="dataPrev" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">device (logs)</label>
+          <input id="device" value="coletor-01" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div class="mt-4">
+        <label class="text-xs font-semibold uppercase text-slate-500">Body (POST/PUT)</label>
+        <textarea id="body" rows="6" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs"></textarea>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button id="btnRun" type="button" class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Testar método selecionado</button>
+        <button id="btnAll" type="button" class="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold hover:bg-slate-50">Testar todos os GET</button>
+      </div>
+      <p id="pathPreview" class="mt-3 font-mono text-xs text-slate-500"></p>
+      <pre id="output" class="mt-4 max-h-96 overflow-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100"></pre>
+    </section>
+  </div>
+  <script>
+    let activeClient = "fieldpec";
+
+    const ENDPOINTS_CGPEC = [
+      { id: "ver", label: "Versão API", method: "GET", path: "/api/version" },
+      { id: "cfg", label: "Configuração API", method: "GET", path: "/api/config" },
+      { id: "teste", label: "GetTeste", method: "GET", path: "/GetTeste" },
+      { id: "fazenda", label: "Fazendas", method: "GET", path: "/fazenda/get" },
+      { id: "vagao", label: "Vagões", method: "GET", path: "/vagao/get" },
+      { id: "baias", label: "Baias", method: "GET", path: "/baias/get/{idfazenda}" },
+      { id: "dietas", label: "Dietas", method: "GET", path: "/dietas/get/{idfazenda}" },
+      { id: "det", label: "Detalhes dietas", method: "GET", path: "/dietas_detalhes/get/{idfazenda}" },
+      { id: "usu", label: "Usuários", method: "GET", path: "/usuarios/get/{idfazenda}" },
+      { id: "prev", label: "Previsão trato", method: "GET", path: "/previsao_trato/get/{idfazenda}/{dataPrev}" },
+      { id: "dashfab", label: "Dashboard fab. resumo", method: "GET", path: "/dashboard/fabricacao/resumo?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashfabi", label: "Dashboard fab. insumos", method: "GET", path: "/dashboard/fabricacao/insumos?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashforn", label: "Dashboard fab. fornecimento", method: "GET", path: "/dashboard/fabricacao/fornecimento?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste-field-001",\n  "ID_PROPRIEDADE": "1",\n  "IDRACAO": "1",\n  "ID_USUARIO": "1",\n  "DATA_FAB": "19/06/2026",\n  "KG_PREVISTO": "1000",\n  "KG_REALIZADO": "950",\n  "itens": [],\n  "fornecimentos": []\n}' },
+      { id: "fabi", label: "Post Fabricação Insumo", method: "POST", path: "/Post/Fabricacao_Insumo", body: '{\n  "itens": []\n}' },
+      { id: "forn", label: "Post Fornecimento", method: "POST", path: "/Post/Fornecimento", body: '{\n  "id": "teste"\n}' },
+      { id: "tag", label: "Post GravaTag", method: "POST", path: "/Post/GravaTag", body: '{\n  "ID_PASTO_CURRAL": "1",\n  "TAG": "ABC"\n}' },
+      { id: "log", label: "Upload log", method: "PUT", path: "/logs/upload/{device}", body: "linha de log\n" },
+    ];
+
+    const ENDPOINTS_FIELDPEC = [
+      { id: "ver", label: "Versão API", method: "GET", path: "/api/version" },
+      { id: "cfg", label: "Configuração API", method: "GET", path: "/api/config" },
+      { id: "teste", label: "GetTeste", method: "GET", path: "/GetTeste" },
+      { id: "fazenda", label: "Fazendas", method: "GET", path: "/fazenda/get" },
+      { id: "vagao", label: "Vagões", method: "GET", path: "/vagao/get" },
+      { id: "baias", label: "Baias", method: "GET", path: "/baias/get", note: "FieldPec: sem idfazenda na URL (alias /baias/get/{id} também aceito)" },
+      { id: "dietas", label: "Dietas", method: "GET", path: "/dietas/get" },
+      { id: "det", label: "Detalhes dietas", method: "GET", path: "/dietas_detalhes/get" },
+      { id: "usu", label: "Usuários", method: "GET", path: "/usuarios/get" },
+      { id: "prev", label: "Previsão trato", method: "GET", path: "/previsao_trato/get", altPath: "/previsao_trato/get/{idfazenda}/{dataPrev}" },
+      { id: "dashfab", label: "Dashboard fab. resumo", method: "GET", path: "/dashboard/fabricacao/resumo?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashfabi", label: "Dashboard fab. insumos", method: "GET", path: "/dashboard/fabricacao/insumos?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "dashforn", label: "Dashboard fab. fornecimento", method: "GET", path: "/dashboard/fabricacao/fornecimento?data_ini={dataPrev}&data_fim={dataPrev}" },
+      { id: "fab", label: "Post Fabricação", method: "POST", path: "/Post/Fabricacao", body: '{\n  "id": "teste-field-001",\n  "ID_PROPRIEDADE": "1",\n  "IDRACAO": "1",\n  "ID_USUARIO": "1",\n  "DATA_FAB": "19/06/2026",\n  "KG_PREVISTO": "1000",\n  "KG_REALIZADO": "950",\n  "itens": [],\n  "fornecimentos": []\n}' },
+      { id: "forn", label: "Post Fornecimento", method: "POST", path: "/Post/Fornecimento", body: '{\n  "id": "teste"\n}' },
+      { id: "tag", label: "Post GravaTag", method: "POST", path: "/Post/GravaTag", body: '{\n  "ID_PASTO_CURRAL": "1",\n  "TAG": "ABC"\n}' },
+      { id: "log", label: "Upload log", method: "PUT", path: "/logs/upload/{device}", body: "linha de log\n" },
+    ];
+
+    const ENDPOINTS_TGC = ENDPOINTS_FIELDPEC.map((e) => ({ ...e }));
+
+    let ENDPOINTS = ENDPOINTS_FIELDPEC;
+    let GET_ONLY = ENDPOINTS.filter((e) => e.method === "GET");
+    const TIMEOUT_MS = 180000;
+
+    const sel = document.getElementById("endpoint");
+
+    function rebuildEndpointSelect() {
+      sel.innerHTML = "";
+      ENDPOINTS.forEach((e) => {
+        const o = document.createElement("option");
+        o.value = e.id;
+        o.textContent = `${e.method} ${e.label}`;
+        sel.appendChild(o);
+      });
+      GET_ONLY = ENDPOINTS.filter((e) => e.method === "GET");
+    }
+
+    rebuildEndpointSelect();
+    document.getElementById("dataPrev").value = new Date().toISOString().slice(0, 10);
+
+    function current() {
+      return ENDPOINTS.find((e) => e.id === sel.value) || ENDPOINTS[0];
+    }
+
+    function resolvePath(tpl) {
+      return tpl
+        .replace("{idfazenda}", encodeURIComponent(document.getElementById("idfazenda").value))
+        .replace("{dataPrev}", encodeURIComponent(document.getElementById("dataPrev").value))
+        .replace("{device}", encodeURIComponent(document.getElementById("device").value));
+    }
+
+    function updatePreview() {
+      const ep = current();
+      let preview = `${ep.method} ${resolvePath(ep.path)}`;
+      if (ep.note) preview += ` — ${ep.note}`;
+      if (ep.altPath) preview += ` (alternativa: ${resolvePath(ep.altPath)})`;
+      document.getElementById("pathPreview").textContent = preview;
+      if (ep.body && document.getElementById("body").value === "") {
+        document.getElementById("body").value = ep.body;
+      }
+    }
+    sel.addEventListener("change", () => {
+      const ep = current();
+      document.getElementById("body").value = ep.body || (ep.method === "GET" ? "" : "{}");
+      updatePreview();
+    });
+    ["idfazenda", "dataPrev", "device"].forEach((id) =>
+      document.getElementById(id).addEventListener("input", updatePreview),
+    );
+    updatePreview();
+
+    async function loadActiveClient() {
+      try {
+        const res = await fetch("/api/config");
+        const data = await res.json();
+        activeClient = data.activeClient === "tgc" ? "tgc" : "fieldpec";
+        ENDPOINTS = activeClient === "tgc" ? ENDPOINTS_TGC : ENDPOINTS_FIELDPEC;
+        rebuildEndpointSelect();
+        document.getElementById("dataPrev").value = new Date().toISOString().slice(0, 10);
+        sel.dispatchEvent(new Event("change"));
+        const badge = document.getElementById("clientBadge");
+        if (activeClient === "fieldpec") {
+          badge.textContent = "Cliente ativo: FieldPec — GETs sem idfazenda na URL";
+          badge.className = "mt-3 inline-flex rounded-full bg-amber-900/50 px-3 py-1 text-xs font-medium text-amber-100 ring-1 ring-amber-700";
+        } else {
+          badge.textContent = "Cliente ativo: Outros (TGC) — GETs sem idfazenda na URL";
+          badge.className = "mt-3 inline-flex rounded-full bg-teal-900/50 px-3 py-1 text-xs font-medium text-teal-200 ring-1 ring-teal-700";
+        }
+      } catch (e) {
+        document.getElementById("clientBadge").textContent = "Não foi possível ler /api/config";
+      }
+    }
+
+    loadActiveClient();
+
+    function pretty(text) {
+      try {
+        return JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        return text;
+      }
+    }
+
+    async function fetchTimeout(url, init) {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), TIMEOUT_MS);
+      try {
+        return await fetch(url, { ...init, signal: ac.signal });
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    async function runOne(ep) {
+      const url = resolvePath(ep.path);
+      const init = { method: ep.method };
+      if (ep.method !== "GET") {
+        const raw = document.getElementById("body").value;
+        if (ep.method === "PUT") {
+          init.body = raw;
+          init.headers = { "Content-Type": "text/plain" };
+        } else {
+          init.body = raw;
+          init.headers = { "Content-Type": "application/json" };
+        }
+      }
+      const started = Date.now();
+      const res = await fetchTimeout(url, init);
+      const text = await res.text();
+      return { status: res.status, elapsedMs: Date.now() - started, body: pretty(text) };
+    }
+
+    document.getElementById("btnRun").addEventListener("click", async () => {
+      const out = document.getElementById("output");
+      out.textContent = "Executando…";
+      try {
+        const r = await runOne(current());
+        out.textContent = `HTTP ${r.status} · ${r.elapsedMs} ms\n\n${r.body}`;
+      } catch (e) {
+        out.textContent = e.name === "AbortError"
+          ? `Timeout (${TIMEOUT_MS / 1000}s). Firebird pode estar lento ou bloqueado.`
+          : String(e.message || e);
+      }
+    });
+
+    document.getElementById("btnAll").addEventListener("click", async () => {
+      const out = document.getElementById("output");
+      out.textContent = "Testando GETs…\n";
+      const lines = [];
+      for (const ep of GET_ONLY) {
+        try {
+          const r = await runOne(ep);
+          lines.push(`${ep.method} ${ep.path} → ${r.status} (${r.elapsedMs}ms)\n${r.body.slice(0, 200)}…\n`);
+        } catch (e) {
+          lines.push(`${ep.path} → ERRO: ${e.message || e}\n`);
+        }
+      }
+      out.textContent = lines.join("\n---\n\n");
+    });
+  </script>
+  <script src="/web-admin/api-version.js"></script>
+  <script src="/web-admin/request-monitor.js"></script>
+  <script>
+    RFeedRequestMonitor.initNav("health");
+    if (window.RFeedApiVersion) {
+      RFeedApiVersion.renderBadge("apiVersionBadge");
+    }
+  </script>
+</body>
+</html>

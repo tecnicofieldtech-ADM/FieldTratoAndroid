@@ -4,27 +4,31 @@ import "package:flutter/foundation.dart";
 
 import "../../../helpers/scale_comm.dart";
 import "../../../helpers/rfid_comm.dart";
+import "../../../constants/config_options.dart";
 import "../../../repo/config_repo.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
+import "../domain/fornecimento_peso.dart";
 import "../../../services/session_service.dart";
 import "../../../services/rfid_tag_resolver.dart";
 import "../../../utils/rfid_tag_utils.dart";
 
 class FornecimentoHeaderVM {
-  final int trato;
+  final int? trato;
   final DateTime data;
   final String? racaoId;
   final String? racaoNome;
   final String? carregamentoId;
 
   const FornecimentoHeaderVM({
-    required this.trato,
+    this.trato,
     required this.data,
     required this.racaoId,
     required this.racaoNome,
     required this.carregamentoId,
   });
+
+  bool get tratoSelecionado => (trato ?? 0) > 0;
 }
 
 class CurralCardVM {
@@ -70,30 +74,17 @@ class CurralCardVM {
         previstoOriginalKg > previstoKg + 0.01;
   }
 
-  double get diffKg {
-    if (previsaoDuplaFieldpec && isUltimoTratoEfetivo) {
-      return realizadoKg - metaPrevistoUltimoTratoKg;
-    }
-    return realizadoKg - previstoKg;
-  }
+  /// Meta fixa de previsto (nunca muda após fornecimento parcial).
+  double get previstoFixoKg =>
+      previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
 
-  /// Previsto exibido no mapa/painel (meta no último trato FieldPec).
-  double get previstoExibicaoKg {
-    if (previsaoDuplaFieldpec && isUltimoTratoEfetivo) {
-      return metaPrevistoUltimoTratoKg;
-    }
-    return previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
-  }
+  double get diffKg => realizadoKg - previstoFixoKg;
 
-  /// Meta do último trato: total previsto do dia − realizado dos tratos anteriores.
-  /// = previstoRecalculado (saldo) + realizado deste trato.
-  double get metaPrevistoUltimoTratoKg {
-    if (previstoRecalculadoKg > 0 || realizadoKg > 0) {
-      final meta = previstoRecalculadoKg + realizadoKg;
-      if (meta > 0) return meta;
-    }
-    return previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
-  }
+  /// Previsto exibido no mapa/painel — sempre o valor original planejado.
+  double get previstoExibicaoKg => previstoFixoKg;
+
+  /// @deprecated Use [previstoFixoKg]. Mantido para compatibilidade interna.
+  double get metaPrevistoUltimoTratoKg => previstoFixoKg;
 }
 
 class TotaisVM {
@@ -245,6 +236,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   double _pesoAtual = 0;
   double get pesoAtual => _pesoAtual;
+  String lastScaleRaw = "";
 
   StreamSubscription<ScaleWeightEvent>? _scaleSub;
 
@@ -271,6 +263,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   bool _sessaoAtiva = false;
   bool get sessaoAtiva => _sessaoAtiva;
+  bool get aguardandoInicioSessao => _selected != null && !_sessaoAtiva;
 
   double? _pesoInicial;
   double? get pesoInicial => _pesoInicial;
@@ -286,6 +279,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // Proteção double-start
   bool _startingSessao = false;
   DateTime _lastStartAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _sessaoIniciadaEm;
+  bool _rebasePesoInicialFeito = false;
 
   // ===========================
   // “tempo real” no painel
@@ -294,39 +289,24 @@ class FornecimentoDashboardController extends ChangeNotifier {
   double get fornecidoSessaoKg {
     if (!_sessaoAtiva) return 0;
     final ini = _pesoInicial ?? 0;
-    final atual = _pesoAtual;
-    final v = ini - atual;
-    return v < 0 ? 0 : v;
+    return fornecidoKgSessao(pesoInicial: ini, pesoAtual: _pesoAtual);
   }
 
+  /// Realizado (est.) − previsto fixo (mesma base do Dif).
+  /// Exibição A FORNECER: falta → valor positivo sem sinal; excedeu → +valor.
   double get aFornecerEstimadoKg {
     final s = _selected;
     if (s == null) return 0;
 
-    // FieldPec último trato: A FORNECER = saldo do dia (recalc) − sessão aberta.
-    if (_isFieldpec && s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
-      final saldo = s.previstoRecalculadoKg - fornecidoSessaoKg;
-      return saldo < 0 ? 0 : saldo;
-    }
-
-    final previsto = s.previstoKg;
+    final previsto = s.previstoFixoKg;
     final realizadoEst = s.realizadoKg + fornecidoSessaoKg;
-    if (realizadoEst <= previsto) {
-      return previsto - realizadoEst;
-    }
     return realizadoEst - previsto;
   }
 
   double get previstoPainelKg {
     final s = _selected;
     if (s == null) return 0;
-    if (_isFieldpec && s.previsaoDuplaFieldpec && s.isUltimoTratoEfetivo) {
-      return s.metaPrevistoUltimoTratoKg;
-    }
-    if (_isFieldpec && s.previsaoDuplaFieldpec) {
-      return s.previstoOriginalKg > 0 ? s.previstoOriginalKg : s.previstoKg;
-    }
-    return s.previstoKg;
+    return s.previstoFixoKg;
   }
 
   bool get isFieldpecUltimoTratoSelecionado {
@@ -369,6 +349,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
   }
 
   List<CurralCardVM> get curraisFiltrados {
+    if (!tratoSelecionado) return const [];
     final lf = (_linhaFiltro ?? "").trim();
     if (lf.isEmpty) return _curraisAll;
     final lfUp = lf.toUpperCase();
@@ -387,9 +368,105 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   /// Recarrega currais do SQLite (após atualizar previsão na API).
   Future<void> reloadMapa() async {
-    final idFazenda = _idFazenda.trim();
-    if (idFazenda.isEmpty || _header == null) return;
-    await _reloadMapa(idFazenda: idFazenda);
+    if (_header?.tratoSelecionado ?? false) {
+      await _reloadMapa(idFazenda: _idFazenda);
+    } else {
+      await carregarPrevisaoPorRacao();
+    }
+  }
+
+  /// Baixa/valida previsão filtrada só pelo ID da ração (sem trato, sem exibir mapa).
+  Future<void> carregarPrevisaoPorRacao() async {
+    final h = _header;
+    if (h == null) return;
+
+    final racaoId = (h.racaoId ?? "").trim();
+    if (racaoId.isEmpty) return;
+
+    final rows = await _repo.listCurraisPrevistosHoje(
+      data: h.data,
+      idFazenda: _idFazenda.trim().isEmpty ? null : _idFazenda,
+      idRacao: racaoId,
+      strictRacaoFilter: true,
+      omitirFiltroTrato: true,
+    );
+
+    _previsaoRacaoOk = rows.isNotEmpty;
+
+    if (rows.isNotEmpty) {
+      final tratos = <int>{};
+      for (final r in rows) {
+        if (r.trato > 0) tratos.add(r.trato);
+      }
+      if (tratos.isNotEmpty) {
+        _tratosDisponiveis = tratos.toList()..sort();
+      }
+      clearNotice();
+    } else {
+      _setNotice(
+        "Nenhum curral na previsão local com:\n"
+        "Data: ${_ymd(h.data)}\n"
+        "ID ração: $racaoId\n"
+        "Selecione o trato após sincronizar a previsão.",
+        key: "mapa_vazio_racao",
+        cooldownMs: 3000,
+      );
+    }
+
+    _curraisAll = const [];
+    _selected = null;
+    limparSessao();
+    _totais = const TotaisVM(totalPrevistoKg: 0, totalRealizadoKg: 0);
+    notifyListeners();
+  }
+
+  List<int> _tratosDisponiveis = const [1, 2, 3, 4, 5, 6];
+  List<int> get tratosDisponiveis => _tratosDisponiveis;
+
+  bool _previsaoRacaoOk = false;
+  bool get previsaoRacaoOk => _previsaoRacaoOk;
+
+  bool get tratoSelecionado => _header?.tratoSelecionado ?? false;
+
+  Future<void> _loadTratosDisponiveis() async {
+    final h = _header;
+    if (h == null) return;
+    final racao = (h.racaoId ?? "").trim();
+    if (racao.isEmpty) return;
+
+    final list = await _repo.listTratosPrevisao(
+      data: h.data,
+      idRacao: racao,
+      idFazenda: _idFazenda.trim().isEmpty ? null : _idFazenda,
+    );
+    if (list.isNotEmpty) {
+      _tratosDisponiveis = list;
+    }
+  }
+
+  Future<void> selecionarTrato(int trato) async {
+    final h = _header;
+    if (h == null) return;
+
+    final t = trato <= 0 ? null : trato;
+    _header = FornecimentoHeaderVM(
+      trato: t,
+      data: h.data,
+      racaoId: h.racaoId,
+      racaoNome: h.racaoNome,
+      carregamentoId: h.carregamentoId,
+    );
+
+    if (t != null) {
+      _repo.setTrato(t);
+    }
+
+    limparSessao();
+    _selected = null;
+    _linhaFiltro = null;
+
+    await _reloadMapa(idFazenda: _idFazenda);
+    notifyListeners();
   }
 
   // ===========================
@@ -467,7 +544,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   Future<void> init({
     required DateTime data,
-    required int trato,
     required String idFazenda,
     String? idRacaoFiltro,
   }) async {
@@ -475,7 +551,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _error = null;
 
     _idFazenda = idFazenda.trim();
-    _isFieldpec = (await _cfg.getBackend()) == 1;
+    _isFieldpec = ConfigOptions.isFieldPecBackend(await _cfg.getBackend());
 
     // garante listeners 1 vez
     _startScaleListener();
@@ -487,8 +563,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _rfid.setLeituraAtiva(true);
 
     try {
-      _repo.setTrato(trato);
-
       final car = await _repo.getCarregamentoAberto(data: data);
       if (car == null || car.id.trim().isEmpty) {
         throw Exception(
@@ -515,7 +589,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
       final racaoNome = await _repo.getDietaNomeById(racaoFinal);
 
       _header = FornecimentoHeaderVM(
-        trato: trato,
+        trato: null,
         data: data,
         racaoId: racaoFinal,
         racaoNome:
@@ -523,9 +597,11 @@ class FornecimentoDashboardController extends ChangeNotifier {
         carregamentoId: car.id,
       );
 
-      await _reloadMapa(idFazenda: idFazenda);
+      _repo.setIdRacaoAtual(racaoFinal);
+      await _loadTratosDisponiveis();
 
-      // limpa seleção/sessão caso a lista venha vazia
+      await carregarPrevisaoPorRacao();
+
       if (_curraisAll.isEmpty) {
         limparSessao();
         _selected = null;
@@ -580,14 +656,90 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   void _startScaleListener() {
     _scaleSub?.cancel();
+    _primePesoFromScale();
     _scaleSub = _scale.weightStream.listen((ev) {
       _pesoAtual = ev.weight;
+      lastScaleRaw = ev.rawLine;
       if (_scaleStatus != ScaleStatus.connected) {
         _scaleStatus = ScaleStatus.connected;
         _scaleMsg = null;
       }
+      unawaited(_maybeAutoRebasePesoInicial(ev.weight));
       notifyListeners();
     }, onError: (_) {});
+  }
+
+  void _primePesoFromScale() {
+    final w = _scale.lastWeight;
+    final at = _scale.lastReadAt;
+    if (w == null || at == null) return;
+    if (DateTime.now().difference(at).inSeconds > 8) return;
+    _pesoAtual = w;
+  }
+
+  /// Aguarda leitura recente da balança antes de gravar o peso inicial da sessão.
+  Future<double> _awaitPesoBalanca({
+    Duration timeout = const Duration(milliseconds: 1500),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+
+    while (DateTime.now().isBefore(deadline)) {
+      final last = _scale.lastWeight;
+      final lastAt = _scale.lastReadAt;
+      if (last != null && lastAt != null) {
+        final ageMs = DateTime.now().difference(lastAt).inMilliseconds;
+        if (ageMs <= 5000) {
+          _pesoAtual = last;
+          return last;
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+
+    final fallback = _scale.lastWeight ?? _pesoAtual;
+    _pesoAtual = fallback;
+    return fallback;
+  }
+
+  /// Ancora o peso inicial na primeira leitura estável (evita sessão com peso 0).
+  Future<void> _maybeAutoRebasePesoInicial(double pesoAtual) async {
+    if (!_sessaoAtiva || _selected == null) return;
+    if (_rebasePesoInicialFeito) return;
+
+    final ini = _sessaoIniciadaEm;
+    if (ini == null) return;
+    if (DateTime.now().difference(ini).inSeconds > 12) return;
+
+    final pesoIni = _pesoInicial ?? 0;
+    final fornecido = fornecidoKgSessao(
+      pesoInicial: pesoIni,
+      pesoAtual: pesoAtual,
+    );
+    if (fornecido > 0.5) {
+      _rebasePesoInicialFeito = true;
+      return;
+    }
+
+    final diffIni = (pesoIni - pesoAtual).abs();
+    if (pesoIni > 0 && diffIni > 0.5) return;
+
+    _pesoInicial = pesoAtual;
+    _rebasePesoInicialFeito = true;
+
+    final idCad = (_idCadastroAberto ?? "").trim();
+    if (idCad.isNotEmpty) {
+      try {
+        await _repo.rebasePesoInicioCadastroAberto(
+          idCadastro: idCad,
+          pesoInicio: pesoAtual,
+        );
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint("autoRebasePesoInicial: falha ao persistir: $e");
+        }
+      }
+    }
+    notifyListeners();
   }
 
   void _startRfidListener() {
@@ -713,6 +865,10 @@ class FornecimentoDashboardController extends ChangeNotifier {
         if (_sessaoAtiva &&
             _pesoInicial != null &&
             (_idCadastroAberto ?? "").trim().isNotEmpty) {
+          // Rebase se travou em 0 (balança oscilando acima do peso inicial).
+          if (fornecidoSessaoKg <= 0) {
+            await rebaseSessaoPeso();
+          }
           _lastRfidHandled = epc;
           _lastRfidHandledAt = now;
           return;
@@ -784,7 +940,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     // fallback: pergunta pro repo
     final idFornecimento = await _repo.findIdFornecimentoByRfid(
       epc: epcNorm,
-      trato: h.trato,
+      trato: h.tratoSelecionado ? h.trato! : _repo.tratoAtual,
       idRacao: h.racaoId,
       data: h.data,
     );
@@ -809,36 +965,38 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // LOAD MAPA / TOTAIS
   // ===========================
 
-  Future<void> _reloadMapa({required String idFazenda}) async {
+  Future<void> _reloadMapa({
+    required String idFazenda,
+  }) async {
     final h = _header;
     if (h == null) return;
+    if (!h.tratoSelecionado || h.trato == null) return;
 
-    final ymd = _ymd(h.data);
     final racaoId = (h.racaoId ?? "").trim();
+    if (racaoId.isEmpty) return;
 
-    // Mesma base da lista (Previstos): carrega trato/dia e filtra ração em memória.
-    var rows = await _repo.listPrevisaoByYmd(
+    final tratoFiltro = h.trato!;
+
+    var rows = await _repo.listCurraisPrevistosHoje(
+      data: h.data,
+      trato: tratoFiltro,
       idFazenda: idFazenda,
-      dataYYYYMMDD: ymd,
-      trato: h.trato,
+      idRacao: racaoId,
+      strictRacaoFilter: true,
+      omitirFiltroTrato: false,
     );
 
-    if (racaoId.isNotEmpty) {
-      final norm = racaoId.toUpperCase().replaceAll(RegExp(r"\s+"), "");
-      final filtered = rows.where((r) {
-        final id = (r.idRacao ?? r.idDieta ?? "")
-            .trim()
-            .toUpperCase()
-            .replaceAll(RegExp(r"\s+"), "");
-        return id == norm;
-      }).toList();
-
-      final comPrevisto =
-          filtered.where((r) => r.previstoKg > 0).length;
-      if (filtered.isNotEmpty &&
-          comPrevisto >= (filtered.length * 0.5).ceil()) {
-        rows = filtered;
-      }
+    if (rows.isEmpty) {
+      _setNotice(
+        "Nenhum curral na previsão local com:\n"
+        "Data: ${_ymd(h.data)}\n"
+        "ID ração: $racaoId\n"
+        "Trato: $tratoFiltro",
+        key: "mapa_vazio_filtro",
+        cooldownMs: 3000,
+      );
+    } else {
+      clearNotice();
     }
 
     final cards = rows.map((r) {
@@ -858,10 +1016,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
       );
       final linha = linhaRaw.isEmpty ? null : linhaRaw;
 
-      final orig = _toD(r.previstoOriginalKg ?? r.previstoKg);
-      final recalc = _toD(r.previstoRecalculadoKg ?? r.previstoKg);
+      final orig = r.previstoOriginalKg ?? 0;
+      final recalc = r.previstoRecalculadoKg ?? r.previstoKg;
+      final previstoFixo = orig > 0 ? orig : r.previstoKg;
       final ultimo = r.isUltimoTrato ||
-          (_isFieldpec && (orig - recalc).abs() > 0.01 && orig > 0);
+          (_isFieldpec &&
+              previstoFixo > 0 &&
+              recalc > 0 &&
+              (previstoFixo - recalc).abs() > 0.01);
 
       return CurralCardVM(
         idFornecimento: idForne.isEmpty ? "?" : idForne,
@@ -869,8 +1031,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
         curralNome: nome.isEmpty ? "Baia $idBaiaTxt" : nome,
         linha: linha,
         orderTrato: r.ordemFornecimento ?? 0,
-        previstoKg: orig > 0 ? orig : _toD(r.previstoKg),
-        previstoOriginalKg: orig,
+        previstoKg: previstoFixo,
+        previstoOriginalKg: previstoFixo,
         previstoRecalculadoKg: recalc,
         isUltimoTrato: ultimo,
         previsaoDuplaFieldpec: _isFieldpec,
@@ -1042,9 +1204,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     clearNotice();
     notifyListeners();
 
-    if (_autoFlowRfid) {
-      await iniciarCarregamento();
-    }
+    await iniciarCarregamento();
   }
 
   Future<void> selecionarCurralPorEpc(String epc) async {
@@ -1089,27 +1249,72 @@ class FornecimentoDashboardController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Restaura curral salvo e tenta abrir/recuperar sessão de pesagem.
+  Future<void> recuperarSelecaoAposBoot(String idFornecimento) async {
+    restaurarSelecaoPorIdFornecimento(idFornecimento);
+    if (_selected == null || _header == null) return;
+    if (_sessaoAtiva) return;
+    await iniciarCarregamento();
+  }
+
   // ===========================
   // SESSÃO
   // ===========================
+
+  /// Redefine o peso inicial da sessão para o peso atual da balança.
+  Future<void> rebaseSessaoPeso() async {
+    if (!_sessaoAtiva || _selected == null) return;
+
+    _pesoInicial = _pesoAtual;
+    final idCad = (_idCadastroAberto ?? "").trim();
+    if (idCad.isNotEmpty) {
+      try {
+        await _repo.rebasePesoInicioCadastroAberto(
+          idCadastro: idCad,
+          pesoInicio: _pesoAtual,
+        );
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint("rebaseSessaoPeso: falha ao persistir peso inicial: $e");
+        }
+      }
+    }
+    notifyListeners();
+  }
 
   Future<void> iniciarCarregamento() async {
     final h = _header;
     final s = _selected;
     if (h == null || s == null) return;
 
-    // se já está ativo, não reinicia
-    if (_sessaoAtiva &&
-        _pesoInicial != null &&
-        (_idCadastroAberto ?? "").trim().isNotEmpty) {
+    if (!h.tratoSelecionado) {
+      setError("Selecione o trato antes de iniciar o fornecimento.");
       return;
     }
 
-    final now = DateTime.now();
+    final trato = h.trato!;
 
-    // evita double-start por spam / concorrência
-    if (_startingSessao) return;
-    if (now.difference(_lastStartAt).inMilliseconds < 350) return;
+    // se já está ativo no mesmo curral, não reinicia
+    if (_sessaoAtiva &&
+        _pesoInicial != null &&
+        (_idCadastroAberto ?? "").trim().isNotEmpty &&
+        _selected?.idFornecimento == s.idFornecimento) {
+      return;
+    }
+
+    // evita double-start por spam / concorrência (aguarda em vez de abortar)
+    while (_startingSessao) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+
+    final now = DateTime.now();
+    if (now.difference(_lastStartAt).inMilliseconds < 350) {
+      await Future<void>.delayed(
+        Duration(
+          milliseconds: 350 - now.difference(_lastStartAt).inMilliseconds,
+        ),
+      );
+    }
 
     final idUsuario = _currentUserId();
     if (idUsuario.isEmpty) {
@@ -1124,21 +1329,39 @@ class FornecimentoDashboardController extends ChangeNotifier {
       _setLoading(true);
       _error = null;
 
+      final pesoRef = await _awaitPesoBalanca();
+
       // ✅ abre/recupera CADASTRO_FORNECIMENTO e guarda o idCadastro
       final idCad = await _repo.iniciarCadastroFornecimento(
         idFornecimento: s.idFornecimento,
         idCurral: s.idBaia,
         data: h.data,
-        trato: h.trato,
-        previstoKg: s.previstoKg,
-        pesoInicio: _pesoAtual,
+        trato: trato,
+        previstoKg: s.previstoFixoKg,
+        pesoInicio: pesoRef,
         idUsuario: idUsuario,
       );
 
       _idCadastroAberto = idCad;
 
       _sessaoAtiva = true;
-      _pesoInicial = _pesoAtual;
+      _sessaoIniciadaEm = DateTime.now();
+      _rebasePesoInicialFeito = false;
+
+      // Sempre ancora na leitura atual da balança (cadastro reutilizado pode ter peso antigo).
+      _pesoInicial = pesoRef;
+      if (idCad.trim().isNotEmpty) {
+        await _repo.rebasePesoInicioCadastroAberto(
+          idCadastro: idCad,
+          pesoInicio: pesoRef,
+        );
+      }
+
+      if (kDebugMode) {
+        debugPrint(
+          "[FORN_SESSAO] curral=${s.curralNome} pesoIni=$pesoRef pesoAtual=$_pesoAtual",
+        );
+      }
 
       _setLoading(false);
     } catch (e) {
@@ -1152,6 +1375,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _sessaoAtiva = false;
     _pesoInicial = null;
     _idCadastroAberto = null;
+    _sessaoIniciadaEm = null;
+    _rebasePesoInicialFeito = false;
     notifyListeners();
   }
 
@@ -1159,8 +1384,11 @@ class FornecimentoDashboardController extends ChangeNotifier {
     final h = _header;
     final s = _selected;
     if (h == null || s == null) return;
+    if (!h.tratoSelecionado) return;
 
     if (!_sessaoAtiva || _pesoInicial == null) return;
+
+    final trato = h.trato!;
 
     final fornecidoKg = fornecidoSessaoKg;
 
@@ -1195,8 +1423,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
         idFornecimento: s.idFornecimento,
         idCurral: s.idBaia,
         data: h.data,
-        trato: h.trato,
-        previstoKg: s.previstoKg,
+        trato: trato,
+        previstoKg: s.previstoFixoKg,
         pesoFim: _pesoAtual,
         realizadoKg: fornecidoKg,
         idUsuario: idUsuario,

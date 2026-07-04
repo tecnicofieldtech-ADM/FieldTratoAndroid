@@ -1,55 +1,69 @@
 import "dart:async";
 import "dart:collection";
-import "dart:convert";
-import "dart:io";
 
+import "bt_permissions.dart";
+import "spp_client.dart";
+
+/// Envio ao painel LED via conversor serial Bluetooth (ex.: BS1C TGY Cyber).
+/// Tablet → SPP → BS1C → RS232 → LED.
+///
+/// Protocolo: `&XXXXTEXTO#`
+/// - 1º X: modo (1=estático, 2=scroll, 3=repetidor, 4=pág. inicial)
+/// - 2º X: intensidade (0=padrão, 1–9 = 11%–99%)
+/// - 3º X: cor (0=verde, 1=vermelho, 2=azul)
+/// - 4º X: scroll (0=loop, 1=uma vez) — válido no modo scroll
+/// - TEXTO: até 50 caracteres
 class LedService {
   LedService._();
   static final LedService instance = LedService._();
 
-  Socket? _sock;
+  final SppClient _client = SppClient();
   Timer? _reconnectTimer;
+  Timer? _busyTimer;
 
   bool _enabled = false;
   bool _connected = false;
 
-  String _host = "";
-  int _port = 9000;
+  String _address = "";
+  String _deviceName = "";
 
   int _model = 0;
-  int _color = 1;
+  int _color = 0;
 
-  final ListQueue<String> _queue = ListQueue<String>();
+  final ListQueue<_LedJob> _queue = ListQueue<_LedJob>();
   bool _busy = false;
   String _currentMessage = "";
 
   bool get enabled => _enabled;
   bool get connected => _connected;
-  String get host => _host;
-  int get port => _port;
+  String get address => _address;
+  String get deviceName => _deviceName;
+  String get deviceLabel =>
+      _deviceName.trim().isNotEmpty ? _deviceName.trim() : _address;
 
   Future<void> configure({
-    required String host,
-    required int port,
+    required String address,
+    String name = "",
     int model = 0,
-    int color = 1,
+    int color = 0,
   }) async {
-    final h = host.trim();
-    if (h.isEmpty || port <= 0) {
+    final addr = address.trim().toUpperCase();
+    if (addr.isEmpty) {
       await stop();
       return;
     }
 
-    final same = _enabled && _host == h && _port == port;
+    final same = _enabled && _address == addr;
     _enabled = true;
-    _host = h;
-    _port = port;
+    _address = addr;
+    _deviceName = name.trim();
     _model = model;
-    _color = color;
+    _color = color.clamp(0, 2);
 
     if (same && _connected) return;
 
-    await _closeSocket();
+    await _client.disconnect();
+    _connected = false;
     await _connectOnce();
     _ensureReconnectLoop();
   }
@@ -58,41 +72,133 @@ class LedService {
     _enabled = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _busyTimer?.cancel();
+    _busyTimer = null;
     _queue.clear();
     _busy = false;
     _currentMessage = "";
-    await _closeSocket();
+    await _client.disconnect();
+    _connected = false;
   }
 
-  void enqueueText(String msg) {
+  /// Envio imediato (teste na configuração).
+  Future<void> sendTest(String msg) async {
+    final allowed = await BtPermissions.ensureBluetoothPermissions();
+    if (!allowed) {
+      throw StateError("Permissões Bluetooth não concedidas.");
+    }
+
+    final addr = _address.trim();
+    if (addr.isEmpty) {
+      throw StateError("Nenhum LED Bluetooth selecionado.");
+    }
+
+    final wasEnabled = _enabled;
+    final wasConnected = _connected;
+    final clean = _sanitize(msg);
+
+    try {
+      if (!_connected) {
+        await _client.connect(addr);
+        _connected = true;
+      }
+      await _client.sendLatin1(_buildStaticCommand(clean));
+    } finally {
+      if (!wasEnabled) {
+        await _client.disconnect();
+        _connected = false;
+      } else if (!wasConnected) {
+        _connected = _client.isConnected;
+      }
+    }
+  }
+
+  /// Texto estático (kg faltando, PAUSE, FIM).
+  /// [dropPendingStatic]: descarta peso pendente na fila (atualização ~500 ms).
+  void enqueueText(
+    String msg, {
+    Duration postDelay = const Duration(milliseconds: 500),
+    bool dropPendingStatic = false,
+  }) {
     if (!_enabled) return;
 
     final clean = _sanitize(msg);
     if (clean.isEmpty) return;
 
-    if (_currentMessage == clean && _busy) return;
-    if (_queue.isNotEmpty && _queue.last == clean) return;
+    if (dropPendingStatic) {
+      _queue.removeWhere((j) => j.mode == 1);
+    }
 
-    _queue.add(clean);
+    if (_currentMessage == clean && _busy) return;
+    if (_queue.isNotEmpty && _queue.last.text == clean && _queue.last.mode == 1) {
+      return;
+    }
+
+    _queue.add(
+      _LedJob(text: clean, mode: 1, scrollOnce: 0, postDelay: postDelay),
+    );
     _trySendNext();
   }
 
-  Future<void> _connectOnce() async {
+  /// Nome do insumo: scroll 2× (~4 s/passagem). Substitui imediatamente fila/LED anterior.
+  void enqueueIngredienteNome(String nome) => preemptIngredienteNome(nome);
+
+  /// Troca de insumo (pulo manual/auto): limpa fila e envia o novo nome na hora.
+  void preemptIngredienteNome(String nome) {
     if (!_enabled) return;
 
-    try {
-      final s = await Socket.connect(_host, _port,
-          timeout: const Duration(seconds: 2));
-      s.setOption(SocketOption.tcpNoDelay, true);
-      _sock = s;
-      _connected = true;
+    final clean = _sanitize(nome);
+    if (clean.isEmpty) return;
 
-      s.listen(
-        (_) {},
-        onDone: _markDisconnected,
-        onError: (_) => _markDisconnected(),
-        cancelOnError: true,
-      );
+    _flushQueue();
+
+    const passDelay = Duration(seconds: 4);
+    final first = _LedJob(
+      text: clean,
+      mode: 2,
+      scrollOnce: 1,
+      postDelay: passDelay,
+    );
+    _queue.add(
+      _LedJob(text: clean, mode: 2, scrollOnce: 1, postDelay: passDelay),
+    );
+
+    _currentMessage = clean;
+    _busy = true;
+    unawaited(_sendIngredienteNow(first, passDelay));
+  }
+
+  void _flushQueue() {
+    _busyTimer?.cancel();
+    _busyTimer = null;
+    _queue.clear();
+    _busy = false;
+    _currentMessage = "";
+  }
+
+  Future<void> _sendIngredienteNow(_LedJob job, Duration passDelay) async {
+    await _sendNow(job);
+    if (!_enabled) return;
+
+    _busyTimer?.cancel();
+    _busyTimer = Timer(passDelay, () {
+      _busy = false;
+      _trySendNext();
+    });
+  }
+
+  Future<void> _connectOnce() async {
+    if (!_enabled || _address.isEmpty) return;
+
+    try {
+      final allowed = await BtPermissions.ensureBluetoothPermissions();
+      if (!allowed) {
+        _markDisconnected();
+        return;
+      }
+
+      await _client.connect(_address);
+      _connected = true;
     } catch (_) {
       _markDisconnected();
     }
@@ -106,23 +212,6 @@ class LedService {
     });
   }
 
-  Future<void> _closeSocket() async {
-    final s = _sock;
-    _sock = null;
-    _connected = false;
-
-    if (s != null) {
-      try {
-        await s.flush();
-        await s.close();
-      } catch (_) {
-        try {
-          s.destroy();
-        } catch (_) {}
-      }
-    }
-  }
-
   void _markDisconnected() {
     _connected = false;
   }
@@ -131,35 +220,37 @@ class LedService {
     if (!_enabled || _busy) return;
     if (_queue.isEmpty) return;
 
-    final msg = _queue.removeFirst();
-    _currentMessage = msg;
+    final job = _queue.removeFirst();
+    _currentMessage = job.text;
     _busy = true;
 
-    _sendNow(msg);
+    unawaited(_sendNow(job));
 
-    Timer(const Duration(seconds: 2), () {
+    _busyTimer?.cancel();
+    _busyTimer = Timer(job.postDelay, () {
       _busy = false;
       _trySendNext();
     });
   }
 
-  void _sendNow(String msg) {
-    final s = _sock;
-    if (!_enabled || !_connected || s == null) return;
+  Future<void> _sendNow(_LedJob job) async {
+    if (!_enabled || !_connected) return;
 
-    final cmd = _buildCommand(msg);
     try {
-      s.add(latin1.encode(cmd));
+      await _client.sendLatin1(_buildCommand(job));
     } catch (_) {
       _markDisconnected();
     }
   }
 
-  String _buildCommand(String msg) {
-    if (_model == 0) {
-      return "&1000$msg#";
-    }
-    return "&19${_color}0$msg#";
+  int get _intensity => _model == 0 ? 0 : 9;
+
+  String _buildStaticCommand(String msg) =>
+      _buildCommand(_LedJob(text: msg, mode: 1, scrollOnce: 0));
+
+  String _buildCommand(_LedJob job) {
+    final text = job.text.length > 50 ? job.text.substring(0, 50) : job.text;
+    return "&${job.mode}$_intensity$_color${job.scrollOnce}$text#";
   }
 
   String _sanitize(String v) {
@@ -170,4 +261,18 @@ class LedService {
         .replaceAll("&", "")
         .trim();
   }
+}
+
+class _LedJob {
+  const _LedJob({
+    required this.text,
+    required this.mode,
+    required this.scrollOnce,
+    this.postDelay = const Duration(seconds: 2),
+  });
+
+  final String text;
+  final int mode;
+  final int scrollOnce;
+  final Duration postDelay;
 }

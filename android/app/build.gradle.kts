@@ -38,22 +38,28 @@ android {
     if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(FileInputStream(keystorePropertiesFile))
     }
+    val releaseStoreFile = keystoreProperties["storeFile"] as String?
+    val hasReleaseKeystore =
+        !releaseStoreFile.isNullOrBlank() && file(releaseStoreFile).exists()
 
     signingConfigs {
         create("release") {
-            val storeFilePath = keystoreProperties["storeFile"] as String?
-            if (!storeFilePath.isNullOrBlank()) {
-                storeFile = file(storeFilePath)
+            if (hasReleaseKeystore) {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = keystoreProperties["storePassword"] as String?
+                keyAlias = keystoreProperties["keyAlias"] as String?
+                keyPassword = keystoreProperties["keyPassword"] as String?
             }
-            storePassword = keystoreProperties["storePassword"] as String?
-            keyAlias = keystoreProperties["keyAlias"] as String?
-            keyPassword = keystoreProperties["keyPassword"] as String?
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // Sem key.properties: usa debug keystore para permitir install -r
+            // no mesmo tablet sem desinstalar (preserva SQLite/config).
+            signingConfig = signingConfigs.getByName(
+                if (hasReleaseKeystore) "release" else "debug"
+            )
         }
     }
 }

@@ -17,6 +17,7 @@ class MisturaTimerPage extends StatefulWidget {
     this.titulo,
     this.onDonePopToRoot = true,
     this.segundosQuandoMinutosZero = 0,
+    this.autoFinishWhenDone = false,
   });
 
   /// ✅ minutos de mistura (ex: 1 = 60s). Se <= 0, usa [segundosQuandoMinutosZero].
@@ -36,14 +37,19 @@ class MisturaTimerPage extends StatefulWidget {
   /// quando terminar, volta pra tela inicial/raiz (padrão)
   final bool onDonePopToRoot;
 
+  /// Fecha automaticamente ao concluir a contagem (sem exigir toque em Finalizar).
+  final bool autoFinishWhenDone;
+
   @override
   State<MisturaTimerPage> createState() => _MisturaTimerPageState();
 }
 
 class _MisturaTimerPageState extends State<MisturaTimerPage> {
   Timer? _t;
+  Timer? _autoFinishTimer;
   int _secs = 0;
   bool _done = false;
+  bool _closing = false;
 
   @override
   void initState() {
@@ -56,10 +62,7 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
     if (totalSecs <= 0) {
       _secs = 0;
       _done = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() {});
-      });
+      _scheduleAutoFinish();
       return;
     }
 
@@ -74,8 +77,18 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
           _secs = 0;
           _done = true;
           t.cancel();
+          _scheduleAutoFinish();
         }
       });
+    });
+  }
+
+  void _scheduleAutoFinish() {
+    if (!widget.autoFinishWhenDone) return;
+    _autoFinishTimer?.cancel();
+    _autoFinishTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted || !_done) return;
+      _finish();
     });
   }
 
@@ -83,6 +96,8 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
   void dispose() {
     _t?.cancel();
     _t = null;
+    _autoFinishTimer?.cancel();
+    _autoFinishTimer = null;
     super.dispose();
   }
 
@@ -93,7 +108,9 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
   }
 
   void _finish() {
-    if (!mounted) return;
+    if (!mounted || _closing) return;
+    _closing = true;
+    _autoFinishTimer?.cancel();
 
     if (widget.onDonePopToRoot) {
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -150,7 +167,7 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
                         textAlign: TextAlign.center,
                       ),
                     const SizedBox(height: 22),
-                    if (_done)
+                    if (_done && !_closing)
                       FilledButton.icon(
                         onPressed: _finish,
                         icon: const Icon(Icons.check),

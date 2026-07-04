@@ -256,8 +256,6 @@ class CurralPrev {
       "PREVISTO_RECALCULADO_KG",
       "PREVISTO_RECALCULADO",
     ]);
-    final previstoOrigFinal =
-        previstoOriginal > 0 ? previstoOriginal : previstoApi;
     final previstoRecalcFinal = previstoRecalculado > 0
         ? previstoRecalculado
         : previstoApi;
@@ -268,13 +266,25 @@ class CurralPrev {
       "ULTIMO_TRATO",
     ]);
     if (!isUltimoTrato &&
-        previstoOrigFinal > 0 &&
+        previstoOriginal > 0 &&
         previstoRecalcFinal >= 0 &&
-        (previstoOrigFinal - previstoRecalcFinal).abs() > 0.01) {
+        (previstoOriginal - previstoRecalcFinal).abs() > 0.01) {
       isUltimoTrato = true;
     }
-    final previstoExibicao =
-        previstoOrigFinal > 0 ? previstoOrigFinal : previstoRecalcFinal;
+
+    // Previsto exibido (lista/dashboard): SOMENTE original cadastrado — nunca saldo recalculado.
+    final previstoExibicao = () {
+      if (previstoOriginal > 0) return previstoOriginal;
+      if (isUltimoTrato &&
+          previstoRecalcFinal > 0 &&
+          (previstoApi - previstoRecalcFinal).abs() < 0.01) {
+        return 0.0;
+      }
+      return previstoApi;
+    }();
+
+    final previstoOrigFinal =
+        previstoOriginal > 0 ? previstoOriginal : previstoExibicao;
     final realizado =
         dAny(["realizadoKg", "realizado", "REALIZADO_KG", "REALIZADO"]);
 
@@ -397,11 +407,13 @@ class FornecimentoAbertoMini {
     required this.idCadastro,
     required this.idFornecimento,
     required this.idBaia,
+    this.pesoInicio,
   });
 
   final String idCadastro;
   final String idFornecimento;
   final String idBaia;
+  final double? pesoInicio;
 }
 
 // =========================================================

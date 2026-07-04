@@ -242,8 +242,15 @@ xcopy /Y /Q "$(PROJECTDIR)..\..\..\web-admin\*.html" "$(OUTPUTDIR)web-admin\"]]>
         <DCCReference Include="..\RequestLog\URequestLog.pas"/>
         <DCCReference Include="..\..\..\FieldPec\Source\Controllers\Controllers.Get.Field.pas"/>
         <DCCReference Include="..\..\..\FieldPec\Source\Controllers\Controllers.Post.Field.pas"/>
+        <DCCReference Include="..\..\..\TGCPec\Source\Controllers\Controllers.Get.TGC.pas"/>
+        <DCCReference Include="..\..\..\TGCPec\Source\Controllers\Controllers.Post.TGC.pas"/>
         <DCCReference Include="..\..\..\FieldPec\Source\dm\UdmFieldPec.pas">
             <Form>dmFieldPec</Form>
+            <FormType>dfm</FormType>
+            <DesignClass>TDataModule</DesignClass>
+        </DCCReference>
+        <DCCReference Include="..\..\..\TGCPec\Source\dm\UdmTGC.pas">
+            <Form>dmTGC</Form>
             <FormType>dfm</FormType>
             <DesignClass>TDataModule</DesignClass>
         </DCCReference>

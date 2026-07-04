@@ -63,7 +63,7 @@
     </section>
   </div>
   <script>
-    let activeClient = "cgpec";
+    let activeClient = "fieldpec";
 
     const ENDPOINTS_CGPEC = [
       { id: "ver", label: "Versão API", method: "GET", path: "/api/version" },
@@ -106,7 +106,9 @@
       { id: "log", label: "Upload log", method: "PUT", path: "/logs/upload/{device}", body: "linha de log\n" },
     ];
 
-    let ENDPOINTS = ENDPOINTS_CGPEC;
+    const ENDPOINTS_TGC = ENDPOINTS_FIELDPEC.map((e) => ({ ...e }));
+
+    let ENDPOINTS = ENDPOINTS_FIELDPEC;
     let GET_ONLY = ENDPOINTS.filter((e) => e.method === "GET");
     const TIMEOUT_MS = 180000;
 
@@ -161,8 +163,8 @@
       try {
         const res = await fetch("/api/config");
         const data = await res.json();
-        activeClient = data.activeClient === "fieldpec" ? "fieldpec" : "cgpec";
-        ENDPOINTS = activeClient === "fieldpec" ? ENDPOINTS_FIELDPEC : ENDPOINTS_CGPEC;
+        activeClient = data.activeClient === "tgc" ? "tgc" : "fieldpec";
+        ENDPOINTS = activeClient === "tgc" ? ENDPOINTS_TGC : ENDPOINTS_FIELDPEC;
         rebuildEndpointSelect();
         document.getElementById("dataPrev").value = new Date().toISOString().slice(0, 10);
         sel.dispatchEvent(new Event("change"));
@@ -171,7 +173,7 @@
           badge.textContent = "Cliente ativo: FieldPec — GETs sem idfazenda na URL";
           badge.className = "mt-3 inline-flex rounded-full bg-amber-900/50 px-3 py-1 text-xs font-medium text-amber-100 ring-1 ring-amber-700";
         } else {
-          badge.textContent = "Cliente ativo: CGPec — idfazenda na URL";
+          badge.textContent = "Cliente ativo: Outros (TGC) — GETs sem idfazenda na URL";
           badge.className = "mt-3 inline-flex rounded-full bg-teal-900/50 px-3 py-1 text-xs font-medium text-teal-200 ring-1 ring-teal-700";
         }
       } catch (e) {

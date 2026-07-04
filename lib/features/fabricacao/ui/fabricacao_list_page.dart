@@ -41,6 +41,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   late final AnimationController _animCtrl;
   int _carregRefreshTick = 0;
   late final Animation<double> _pulse;
+  bool _needsRefreshOnActivate = false;
 
   @override
   void initState() {
@@ -60,9 +61,29 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   }
 
   @override
+  void deactivate() {
+    _needsRefreshOnActivate = true;
+    super.deactivate();
+  }
+
+  @override
   void activate() {
     super.activate();
     _loadOperacaoFlags();
+    if (_needsRefreshOnActivate) {
+      _needsRefreshOnActivate = false;
+      _load();
+    }
+  }
+
+  Future<void> _onReturnFromWeigh(Object? result) async {
+    await _load();
+  }
+
+  bool _fabricacaoEmAberto(FabricacaoHeader it) {
+    if (it.finalizada == 1) return false;
+    if (it.status == FabricacaoStatus.finalizada) return false;
+    return it.status == FabricacaoStatus.emAndamento;
   }
 
   Future<void> _loadOperacaoFlags() async {
@@ -237,7 +258,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
           context,
           MaterialPageRoute(
               builder: (_) => FabricacaoWeighPage(repo: widget.repo)),
-        ).then((_) => _load());
+        ).then(_onReturnFromWeigh);
       }
       return;
     }
@@ -647,7 +668,8 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
   }
 
   Widget _carregamentoPill(String fabId, {FabricacaoHeader? item}) {
-    final emAberto = item?.status == FabricacaoStatus.emAndamento;
+    final emAberto =
+        item != null ? _fabricacaoEmAberto(item) : false;
     return FutureBuilder<Map<String, Object?>?>(
       key: ValueKey("carreg-$fabId-$_carregRefreshTick"),
       future: widget.repo.getCarregamentoStatusByFabricacao(fabId),
@@ -737,7 +759,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
   // ---------- item visual ----------
   Widget _statusPill(FabricacaoHeader it) {
-    final emAberto = it.status == FabricacaoStatus.emAndamento;
+    final emAberto = _fabricacaoEmAberto(it);
     final pendente = it.status == FabricacaoStatus.pendenteCaminhao;
 
     final Color bg = emAberto
@@ -874,8 +896,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
                           final dt = _fmtDateDdMmYy(it.dataFabricacao);
 
-                          final emAberto =
-                              it.status == FabricacaoStatus.emAndamento;
+                          final emAberto = _fabricacaoEmAberto(it);
                           final pendente =
                               it.status == FabricacaoStatus.pendenteCaminhao;
                           final bloqueadaStation = _tipoTrabalho == 1 &&
@@ -901,7 +922,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                             initialFabricacaoId: it.id,
                                           ),
                                         ),
-                                      ).then((_) => _load());
+                                      ).then(_onReturnFromWeigh);
                                     }
                                   : bloqueadaStation
                                       ? () => ScaffoldMessenger.of(context)

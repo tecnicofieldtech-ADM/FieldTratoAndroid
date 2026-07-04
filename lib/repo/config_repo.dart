@@ -1,4 +1,5 @@
 import "package:sqflite/sqflite.dart";
+import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../domain/sync_pendencia_registro.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
@@ -56,6 +57,8 @@ class ConfigRepo {
           "porta_espelho", "PORTA_ESPELHO INTEGER DEFAULT 9000");
         await addIfMissing(
           "modo_saida_fab", "MODO_SAIDA_FAB INTEGER DEFAULT 0");
+      await addIfMissing("led_bt_address", "LED_BT_ADDRESS TEXT");
+      await addIfMissing("led_bt_name", "LED_BT_NAME TEXT");
       await addIfMissing("host_estacionario", "HOST_ESTACIONARIO TEXT");
       await addIfMissing("porta_estacionario", "PORTA_ESTACIONARIO INTEGER");
       await addIfMissing("flow_mode", "FLOW_MODE INTEGER DEFAULT 0");
@@ -280,7 +283,7 @@ class ConfigRepo {
           _getFieldFromCfg(cfg, "PORTA") ??
           _getFieldFromCfg(cfg, "API_PORT") ??
           _getFieldFromCfg(cfg, "PORT"),
-      def: 3001,
+      def: ConfigOptions.defaultApiPort,
     );
 
     final useHttps = _toInt(
@@ -544,11 +547,17 @@ class ConfigRepo {
     return v <= 0 ? 9000 : v;
   }
 
-  /// 0 = Pá (espelhamento), 1 = LED
+  /// 0 = Pá (espelhamento), 1 = LED Bluetooth
   Future<int> getModoSaidaFabricacao() async {
     final v = _toInt(await _getField("MODO_SAIDA_FAB"), def: 0);
     return (v == 1) ? 1 : 0;
   }
+
+  Future<String> getLedBtAddress() async =>
+      _toStr(await _getField("LED_BT_ADDRESS"), def: "").trim();
+
+  Future<String> getLedBtName() async =>
+      _toStr(await _getField("LED_BT_NAME"), def: "").trim();
 
   // -------------------------
   // BRIDGE ESTACIONARIO

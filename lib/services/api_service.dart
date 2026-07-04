@@ -3,12 +3,17 @@ import "dart:convert";
 
 import "package:dio/dio.dart";
 
+import "../constants/config_options.dart";
+
 class ApiService {
   final Dio _dio;
   final int _backend;
 
-  bool get _isFieldpec => _backend == 1;
-  bool get isFieldpec => _isFieldpec;
+  bool get isFieldpec => ConfigOptions.isFieldPecBackend(_backend);
+  bool get isTgc => ConfigOptions.isTgcBackend(_backend);
+  bool get _usesOpenApiLists => ConfigOptions.usesOpenApiLists(_backend);
+  bool get ignoresFazendaId => _usesOpenApiLists;
+  bool get usesFabricacaoPacote => ConfigOptions.usesFabricacaoPacote(_backend);
 
   bool _isHttpSuccess(int? statusCode) {
     if (statusCode == null) return false;
@@ -80,99 +85,95 @@ class ApiService {
   Future<List<dynamic>> getUsuarios(String idFazenda) async {
     final id = idFazenda.trim();
 
-    if (!_isFieldpec) {
-      if (id.isEmpty) {
-        throw Exception("ID da fazenda vazio para baixar usuários no CG Pec.");
-      }
-      return _getListRequired("/usuarios/get/$id");
-    }
-
-    return _getFieldpecListNoId(
+    if (_usesOpenApiLists) {
+      return _getFieldpecListNoId(
       label: "usuários",
       attempts: const [
         (path: "/usuarios/get", query: null),
       ],
     );
+    }
+
+    if (id.isEmpty) {
+      throw Exception("ID da fazenda vazio para baixar usuários.");
+    }
+    return _getListRequired("/usuarios/get/$id");
   }
 
   Future<List<dynamic>> getBaias(String idFazenda) async {
     final id = idFazenda.trim();
 
-    if (!_isFieldpec) {
-      if (id.isEmpty) {
-        throw Exception("ID da fazenda vazio para baixar baias no CG Pec.");
-      }
-      return _getListRequired("/baias/get/$id");
-    }
-
-    return _getFieldpecListNoId(
+    if (_usesOpenApiLists) {
+      return _getFieldpecListNoId(
       label: "baias",
       attempts: const [
         (path: "/baias/get", query: null),
       ],
     );
+    }
+
+    if (id.isEmpty) {
+      throw Exception("ID da fazenda vazio para baixar baias.");
+    }
+    return _getListRequired("/baias/get/$id");
   }
 
   Future<List<dynamic>> getDietas(String idFazenda) async {
     final id = idFazenda.trim();
 
-    if (!_isFieldpec) {
-      if (id.isEmpty) {
-        throw Exception("ID da fazenda vazio para baixar dietas no CG Pec.");
-      }
-      return _getListRequired("/dietas/get/$id");
-    }
-
-    return _getFieldpecListNoId(
+    if (_usesOpenApiLists) {
+      return _getFieldpecListNoId(
       label: "dietas",
       attempts: const [
         (path: "/dietas/get", query: null),
       ],
     );
+    }
+
+    if (id.isEmpty) {
+      throw Exception("ID da fazenda vazio para baixar dietas.");
+    }
+    return _getListRequired("/dietas/get/$id");
   }
 
   Future<List<dynamic>> getDietasDetalhes(String idFazenda) async {
     final id = idFazenda.trim();
 
-    if (!_isFieldpec) {
-      if (id.isEmpty) {
-        throw Exception(
-          "ID da fazenda vazio para baixar detalhes de dietas no CG Pec.",
-        );
-      }
-      return _getListRequired("/dietas_detalhes/get/$id");
-    }
-
-    return _getFieldpecListNoId(
+    if (_usesOpenApiLists) {
+      return _getFieldpecListNoId(
       label: "detalhes de dietas",
       attempts: const [
         (path: "/dietas_detalhes/get", query: null),
       ],
     );
+    }
+
+    if (id.isEmpty) {
+      throw Exception("ID da fazenda vazio para baixar detalhes de dietas.");
+    }
+    return _getListRequired("/dietas_detalhes/get/$id");
   }
 
   Future<List<dynamic>> getPrevisaoTrato(String idFazenda, String dataYmd) async {
     final id = idFazenda.trim();
     final data = dataYmd.trim();
 
-    if (!_isFieldpec) {
-      if (id.isEmpty) {
-        throw Exception(
-          "ID da fazenda vazio para baixar previsão de trato no CG Pec.",
-        );
-      }
-      if (data.isEmpty) {
-        throw Exception("Data vazia para baixar previsão de trato no CG Pec.");
-      }
-      return _getListRequired("/previsao_trato/get/$id/$data");
-    }
-
-    return _getFieldpecListNoId(
+    if (_usesOpenApiLists) {
+      return _getFieldpecListNoId(
       label: "previsão de trato",
       attempts: const [
         (path: "/previsao_trato/get", query: null),
       ],
     );
+    }
+
+    if (id.isEmpty) {
+      throw Exception("ID da fazenda vazio para baixar previsão de trato.");
+    }
+    if (data.isEmpty) {
+      throw Exception("Data vazia para baixar previsão de trato.");
+    }
+    return _getListRequired("/previsao_trato/get/$id/$data");
   }
 
   Future<List<dynamic>> _getListRequired(
@@ -186,6 +187,20 @@ class ApiService {
     if (list != null) return list;
 
     throw Exception("Resposta inválida em $path");
+  }
+
+  String _extractApiError(dynamic data) {
+    if (data is Map) {
+      final m = Map<String, dynamic>.from(data);
+      for (final key in const ["erro", "error", "Erro", "message", "msg"]) {
+        final v = m[key];
+        if (v != null && v.toString().trim().isNotEmpty) {
+          return v.toString().trim();
+        }
+      }
+    }
+    final text = _responseText(data).trim();
+    return text.length > 200 ? "${text.substring(0, 200)}..." : text;
   }
 
   Future<List<dynamic>> _getFieldpecListNoId({
@@ -210,14 +225,19 @@ class ApiService {
           continue;
         }
 
-        errors.add("${t.path} -> HTTP ${r.statusCode}");
+        final apiErr = _extractApiError(r.data);
+        if (apiErr.isNotEmpty) {
+          errors.add("${t.path} -> HTTP ${r.statusCode}: $apiErr");
+        } else {
+          errors.add("${t.path} -> HTTP ${r.statusCode}");
+        }
       } on DioException catch (e) {
         errors.add("${t.path} -> EXC ${e.type} HTTP ${e.response?.statusCode}");
       }
     }
 
     throw Exception(
-      "Falha ao baixar $label no Fieldpec (sem idFazenda). "
+      "Falha ao baixar $label (API aberta FieldPec/TGC). "
       "Tentativas: ${errors.join(" | ")}",
     );
   }
@@ -271,7 +291,7 @@ class ApiService {
 
       if (_isHttpSuccess(r.statusCode)) return true;
 
-      if (_isFieldpec &&
+      if (isFieldpec &&
           r.statusCode == 500 &&
           _isFieldpecGravaTagFalseNegative500(r.data)) {
         log?.call(
@@ -374,8 +394,8 @@ class ApiService {
         options: Options(
           validateStatus: (s) => s != null,
           contentType: Headers.jsonContentType,
-          receiveTimeout: Duration(seconds: _isFieldpec ? 120 : 30),
-          sendTimeout: Duration(seconds: _isFieldpec ? 120 : 30),
+          receiveTimeout: Duration(seconds: usesFabricacaoPacote ? 120 : 30),
+          sendTimeout: Duration(seconds: usesFabricacaoPacote ? 120 : 30),
         ),
       );
 
@@ -386,22 +406,19 @@ class ApiService {
         return true;
       }
 
-      final errBody = _responseText(r.data);
+      final errBody = _extractApiError(r.data);
       log?.call("❌ /Post/Fabricacao HTTP ${r.statusCode} $errBody");
-      if (r.statusCode == 500 && errBody.contains("error")) {
-        log?.call("❌ /Post/Fabricacao detalhe API: $errBody");
-      }
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
-      final body = _responseText(e.response?.data);
+      final body = _extractApiError(e.response?.data);
 
       log?.call(
         "❌ /Post/Fabricacao EXC tipo=${e.type.name} HTTP $status "
         "msg=${e.message ?? ''}",
       );
       if (body.isNotEmpty) {
-        log?.call("❌ /Post/Fabricacao corpo: $body");
+        log?.call("❌ /Post/Fabricacao API: $body");
       }
       return false;
     } catch (e) {
@@ -440,12 +457,16 @@ class ApiService {
         return false;
       }
 
-      log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode}");
+      log?.call("❌ /Post/Fabricacao_Insumo HTTP ${r.statusCode} ${_extractApiError(r.data)}");
       return false;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
+      final body = _extractApiError(e.response?.data);
 
       log?.call("❌ /Post/Fabricacao_Insumo EXCEPTION HTTP $status");
+      if (body.isNotEmpty) {
+        log?.call("❌ /Post/Fabricacao_Insumo API: $body");
+      }
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fabricacao_Insumo ERRO: $e");
@@ -480,10 +501,15 @@ class ApiService {
         return true;
       }
 
-      log?.call("❌ /Post/Fornecimento HTTP ${r.statusCode}");
+      log?.call(
+        "❌ /Post/Fornecimento HTTP ${r.statusCode} ${_extractApiError(r.data)}",
+      );
       return false;
     } on DioException catch (e) {
-      log?.call("❌ /Post/Fornecimento EXC HTTP ${e.response?.statusCode}");
+      log?.call(
+        "❌ /Post/Fornecimento EXC HTTP ${e.response?.statusCode} "
+        "${_extractApiError(e.response?.data)}",
+      );
       return false;
     } catch (e) {
       log?.call("❌ /Post/Fornecimento ERRO: $e");

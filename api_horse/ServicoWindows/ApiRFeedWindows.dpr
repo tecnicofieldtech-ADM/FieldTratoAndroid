@@ -12,7 +12,10 @@ uses
   URequestLog in '..\CGPec\Source\RequestLog\URequestLog.pas',
   Controllers.Get.Field in '..\FieldPec\Source\Controllers\Controllers.Get.Field.pas',
   Controllers.Post.Field in '..\FieldPec\Source\Controllers\Controllers.Post.Field.pas',
+  Controllers.Get.TGC in '..\TGCPec\Source\Controllers\Controllers.Get.TGC.pas',
+  Controllers.Post.TGC in '..\TGCPec\Source\Controllers\Controllers.Post.TGC.pas',
   UdmFieldPec in '..\FieldPec\Source\dm\UdmFieldPec.pas' {dmFieldPec: TDataModule},
+  UdmTGC in '..\TGCPec\Source\dm\UdmTGC.pas' {dmTGC: TDataModule},
   Udm in '..\CGPec\Source\dm\Udm.pas' {dmdb: TDataModule},
   ULogger in 'ULogger.pas';
 

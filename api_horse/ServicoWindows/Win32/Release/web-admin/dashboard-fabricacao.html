@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RFeed API Horse — Dashboard Fabricação</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body class="min-h-full bg-gradient-to-b from-slate-50 via-teal-50/30 to-slate-50 text-slate-900">
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <header class="mb-8 rounded-2xl bg-slate-900 px-6 py-8 text-white sm:px-10">
+      <p id="clientBadge" class="text-xs font-semibold uppercase tracking-widest text-teal-300">CGPec · BI Operacional</p>
+      <h1 class="mt-2 text-3xl font-bold">Dashboard de Fabricação e Fornecimento</h1>
+      <p id="headerDesc" class="mt-2 text-sm text-slate-300">
+        Eficiência por período, dieta, operador e vagão. Compare previsto x realizado e rastreie onde a fabricação foi fornecida.
+      </p>
+    </header>
+
+    <nav class="mb-6 flex flex-wrap gap-1 rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200">
+      <a href="/config" data-admin-nav="config" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Configuração</a>
+      <a href="/dashboard/fabricacao" data-admin-nav="dashfab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Dashboard Fabricação</a>
+      <a href="/monitor" data-admin-nav="monitor" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Monitor ao vivo</a>
+      <a href="/audit/fornecimento" data-admin-nav="audit-forn" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fornecimento</a>
+      <a href="/audit/fabricacao" data-admin-nav="audit-fab" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Aud. fabricação</a>
+      <a href="/health" data-admin-nav="health" class="rounded-lg px-4 py-2 text-sm font-semibold transition">Health</a>
+    </nav>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="grid gap-3 md:grid-cols-6">
+        <label class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+          Data inicial
+          <input id="dataIni" type="date" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+        </label>
+        <label class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+          Data final
+          <input id="dataFim" type="date" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+        </label>
+        <label class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+          Dieta (ID)
+          <input id="idDieta" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Opcional">
+        </label>
+        <label class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+          Operador (ID)
+          <input id="idOperador" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Opcional">
+        </label>
+        <label id="wrapVagao" class="text-xs font-semibold uppercase text-slate-500 md:col-span-1">
+          Vagão (ID)
+          <input id="idVagao" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Opcional">
+        </label>
+        <div class="flex items-end gap-2 md:col-span-1">
+          <button id="btnAtualizar" class="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Atualizar</button>
+        </div>
+      </div>
+      <p id="msg" class="mt-3 text-xs text-slate-500"></p>
+    </section>
+
+    <section class="mb-6 grid gap-4 md:grid-cols-5">
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p class="text-xs uppercase text-slate-500">Total previsto</p>
+        <p id="kpiPrev" class="mt-1 text-2xl font-bold">0 kg</p>
+      </article>
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p class="text-xs uppercase text-slate-500">Total realizado</p>
+        <p id="kpiReal" class="mt-1 text-2xl font-bold">0 kg</p>
+      </article>
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p class="text-xs uppercase text-slate-500">Diferença fabricação</p>
+        <p id="kpiDifFab" class="mt-1 text-2xl font-bold">0 kg</p>
+      </article>
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p class="text-xs uppercase text-slate-500">Total fornecido</p>
+        <p id="kpiForn" class="mt-1 text-2xl font-bold">0 kg</p>
+      </article>
+      <article class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p class="text-xs uppercase text-slate-500">Fabricado - fornecido</p>
+        <p id="kpiGap" class="mt-1 text-2xl font-bold">0 kg</p>
+      </article>
+    </section>
+
+    <section class="mb-6 grid gap-4 xl:grid-cols-2">
+      <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="text-lg font-semibold">Fabricação por ração</h2>
+        <p class="mt-1 text-xs text-slate-500">Previsto, realizado e diferença (kg) por dieta no período</p>
+        <div id="wrapChartFabRacao" class="relative mt-4" style="height:360px">
+          <canvas id="chartFabRacao"></canvas>
+        </div>
+      </article>
+      <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="text-lg font-semibold">Fabricado x fornecido por ração</h2>
+        <p class="mt-1 text-xs text-slate-500">Total fabricado vs. total fornecido nos currais, por dieta</p>
+        <div id="wrapChartFabForn" class="relative mt-4" style="height:360px">
+          <canvas id="chartFabForn"></canvas>
+        </div>
+      </article>
+    </section>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 class="text-lg font-semibold">Top insumos — diferença (kg)</h2>
+      <p class="mt-1 text-xs text-slate-500">8 insumos com maior desvio previsto − realizado</p>
+      <div class="relative mt-4 h-80">
+        <canvas id="chartInsumo"></canvas>
+      </div>
+    </section>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Fabricações — fabricado x fornecido</h2>
+          <p class="mt-1 text-xs text-slate-500">Compare o realizado na fabricação com o total fornecido nos currais. Expanda para ver cada fornecimento.</p>
+        </div>
+        <label class="text-xs font-semibold uppercase text-slate-500">
+          Filtrar
+          <select id="filtroFab" class="mt-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            <option value="todas">Todas</option>
+            <option value="pendente">Com saldo pendente</option>
+            <option value="sem">Sem fornecimento</option>
+            <option value="ok">Fornecimento completo</option>
+          </select>
+        </label>
+      </div>
+      <div class="mt-3 overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-100 text-slate-700">
+            <tr>
+              <th class="px-3 py-2 text-left">Data</th>
+              <th class="px-3 py-2 text-left">Dieta</th>
+              <th class="px-3 py-2 text-left">Operador</th>
+              <th class="px-3 py-2 text-left">Vagão</th>
+              <th class="px-3 py-2 text-right">Fabricado kg</th>
+              <th class="px-3 py-2 text-right">Fornecido kg</th>
+              <th class="px-3 py-2 text-right">Saldo kg</th>
+              <th class="px-3 py-2 text-center">Status</th>
+              <th class="px-3 py-2 text-center">Currais</th>
+              <th class="px-3 py-2 text-center"></th>
+            </tr>
+          </thead>
+          <tbody id="tbFabList"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 class="text-lg font-semibold">Top erros por dieta</h2>
+      <div class="mt-3 overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-100 text-slate-700">
+            <tr>
+              <th class="px-3 py-2 text-left">Dieta</th>
+              <th class="px-3 py-2 text-right">Previsto kg</th>
+              <th class="px-3 py-2 text-right">Realizado kg</th>
+              <th class="px-3 py-2 text-right">Dif kg</th>
+              <th class="px-3 py-2 text-right">Dif %</th>
+            </tr>
+          </thead>
+          <tbody id="tbDieta"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 class="text-lg font-semibold">Top erros por insumo</h2>
+      <div class="mt-3 overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-100 text-slate-700">
+            <tr>
+              <th class="px-3 py-2 text-left">Insumo</th>
+              <th class="px-3 py-2 text-right">Previsto kg</th>
+              <th class="px-3 py-2 text-right">Realizado kg</th>
+              <th class="px-3 py-2 text-right">Dif kg</th>
+              <th class="px-3 py-2 text-right">Dif %</th>
+            </tr>
+          </thead>
+          <tbody id="tbInsumo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 class="text-lg font-semibold">Fabricações sem fornecimento vinculado</h2>
+      <div class="mt-3 overflow-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-100 text-slate-700">
+            <tr>
+              <th class="px-3 py-2 text-left">ID Fabricação</th>
+              <th class="px-3 py-2 text-left">Dieta</th>
+              <th class="px-3 py-2 text-left">Operador</th>
+              <th class="px-3 py-2 text-right">Realizado kg</th>
+              <th class="px-3 py-2 text-right">Fornecido kg</th>
+            </tr>
+          </thead>
+          <tbody id="tbSemForn"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="/web-admin/request-monitor.js"></script>
+  <script>
+    RFeedRequestMonitor.initNav("dashfab");
+    Chart.register(ChartDataLabels);
+
+    let activeClient = "cgpec";
+
+    async function loadClientConfig() {
+      try {
+        const r = await fetch("/api/config", { cache: "no-store" });
+        const data = await r.json();
+        activeClient = String(data.activeClient || "cgpec").toLowerCase();
+        const badge = document.getElementById("clientBadge");
+        if (activeClient === "fieldpec") {
+          badge.textContent = "FieldPec · BI Operacional";
+          badge.className = "text-xs font-semibold uppercase tracking-widest text-amber-300";
+          document.getElementById("wrapVagao").classList.add("hidden");
+          document.getElementById("headerDesc").textContent =
+            "Eficiência por período, ração e operador. Compare previsto x realizado e rastreie fornecimento nos currais (FORNECIMENTO_CONF).";
+        }
+      } catch (_) { /* mantém defaults CGPec */ }
+    }
+
+    const fmtKg = (n) => `${(Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+    const fmtPct = (n) => `${(Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+    const esc = (v) => String(v ?? "").replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+
+    /** API Horse (DataSet.Serialize) exporta camelCase; aceita também UPPER_SNAKE. */
+    function val(obj, ...keys) {
+      if (!obj) return undefined;
+      for (const k of keys) {
+        if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+      }
+      const idx = {};
+      for (const k of Object.keys(obj)) idx[k.toLowerCase()] = obj[k];
+      for (const k of keys) {
+        const hit = idx[String(k).toLowerCase()];
+        if (hit !== undefined && hit !== null && hit !== "") return hit;
+      }
+      return undefined;
+    }
+    function num(obj, ...keys) {
+      const n = Number(val(obj, ...keys));
+      return Number.isFinite(n) ? n : 0;
+    }
+    function str(obj, ...keys) {
+      const v = val(obj, ...keys);
+      return v === undefined || v === null ? "" : String(v);
+    }
+
+    function rangeDefault() {
+      const now = new Date();
+      const end = now.toISOString().slice(0, 10);
+      const startDate = new Date(now.getTime() - 6 * 86400000);
+      const start = startDate.toISOString().slice(0, 10);
+      document.getElementById("dataIni").value = start;
+      document.getElementById("dataFim").value = end;
+    }
+
+    function buildQuery() {
+      const q = new URLSearchParams();
+      q.set("data_ini", document.getElementById("dataIni").value);
+      q.set("data_fim", document.getElementById("dataFim").value);
+      const idDieta = document.getElementById("idDieta").value.trim();
+      const idOperador = document.getElementById("idOperador").value.trim();
+      const idVagao = document.getElementById("idVagao").value.trim();
+      if (idDieta) q.set("id_dieta", idDieta);
+      if (idOperador) q.set("id_operador", idOperador);
+      if (activeClient !== "fieldpec" && idVagao) q.set("id_vagao", idVagao);
+      return q.toString();
+    }
+
+    const CHART_COLORS = {
+      prev: "rgba(100, 116, 139, 0.85)",
+      real: "rgba(20, 184, 166, 0.85)",
+      forn: "rgba(59, 130, 246, 0.85)",
+      difPos: "rgba(245, 158, 11, 0.85)",
+      difNeg: "rgba(239, 68, 68, 0.85)",
+      pendente: "rgba(251, 191, 36, 0.9)",
+      ok: "rgba(16, 185, 129, 0.9)",
+    };
+
+    const chartInstances = {};
+
+    function destroyCharts() {
+      for (const id of Object.keys(chartInstances)) {
+        chartInstances[id]?.destroy();
+        delete chartInstances[id];
+      }
+    }
+
+    function mkChart(id, config) {
+      if (chartInstances[id]) {
+        chartInstances[id].destroy();
+        delete chartInstances[id];
+      }
+      const ctx = document.getElementById(id);
+      if (!ctx) return null;
+      chartInstances[id] = new Chart(ctx, config);
+      return chartInstances[id];
+    }
+
+    const chartDefaults = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              const v = ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed;
+              const n = typeof v === "object" ? (v.y ?? v.x ?? 0) : v;
+              return `${ctx.dataset.label}: ${Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
+            },
+          },
+        },
+      },
+    };
+
+    function truncateLabel(s, max = 22) {
+      const t = String(s || "");
+      return t.length > max ? t.slice(0, max - 1) + "…" : t;
+    }
+
+    function fmtBarVal(v) {
+      const n = Number(v) || 0;
+      if (Math.abs(n) < 0.5) return "";
+      return n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+    }
+
+    function setChartWrapHeight(wrapId, count) {
+      const el = document.getElementById(wrapId);
+      if (el) el.style.height = `${Math.max(280, Math.min(720, count * 52))}px`;
+    }
+
+    const barLabelPlugin = {
+      anchor: "end",
+      align: "end",
+      offset: 2,
+      formatter: fmtBarVal,
+      font: { size: 10, weight: "600" },
+      color: "#334155",
+      clip: false,
+    };
+
+    function groupFornecidoPorRacao(fornecimento) {
+      const map = new Map();
+      for (const r of fornecimento) {
+        const k = str(r, "nomeDieta", "NOME_DIETA") || "(sem nome)";
+        map.set(k, (map.get(k) || 0) + num(r, "realizadoFornecimento", "REALIZADO_FORNECIMENTO"));
+      }
+      return map;
+    }
+
+    function renderCharts(rowsDieta, rowsInsumo, fornecimento) {
+      destroyCharts();
+
+      const racoes = [...rowsDieta]
+        .map((r) => ({ nome: r.nome, prev: r.prev, real: r.real, dif: r.prev - r.real }))
+        .sort((a, b) => b.real - a.real);
+      const fornPorRacao = groupFornecidoPorRacao(fornecimento);
+      const chartCount = Math.max(racoes.length, 1);
+
+      setChartWrapHeight("wrapChartFabRacao", chartCount);
+      setChartWrapHeight("wrapChartFabForn", chartCount);
+
+      mkChart("chartFabRacao", {
+        type: "bar",
+        data: {
+          labels: racoes.map((r) => truncateLabel(r.nome, 28)),
+          datasets: [
+            {
+              label: "Previsto",
+              data: racoes.map((r) => r.prev),
+              backgroundColor: CHART_COLORS.prev,
+              borderRadius: 4,
+              datalabels: { ...barLabelPlugin, color: "#475569" },
+            },
+            {
+              label: "Realizado",
+              data: racoes.map((r) => r.real),
+              backgroundColor: CHART_COLORS.real,
+              borderRadius: 4,
+              datalabels: { ...barLabelPlugin, color: "#0f766e" },
+            },
+            {
+              label: "Diferença",
+              data: racoes.map((r) => r.dif),
+              backgroundColor: racoes.map((r) => (r.dif >= 0 ? CHART_COLORS.difPos : CHART_COLORS.difNeg)),
+              borderRadius: 4,
+              datalabels: {
+                ...barLabelPlugin,
+                formatter: (v) => {
+                  const n = Number(v) || 0;
+                  if (Math.abs(n) < 0.5) return "";
+                  const sign = n > 0 ? "+" : "";
+                  return sign + n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+                },
+              },
+            },
+          ],
+        },
+        options: {
+          indexAxis: "y",
+          ...chartDefaults,
+          plugins: {
+            ...chartDefaults.plugins,
+            datalabels: { display: true },
+            legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          },
+          scales: {
+            x: { beginAtZero: true, ticks: { callback: (v) => v.toLocaleString("pt-BR") } },
+            y: { ticks: { font: { size: 11 } } },
+          },
+        },
+      });
+
+      mkChart("chartFabForn", {
+        type: "bar",
+        data: {
+          labels: racoes.map((r) => truncateLabel(r.nome, 28)),
+          datasets: [
+            {
+              label: "Fabricado",
+              data: racoes.map((r) => r.real),
+              backgroundColor: CHART_COLORS.real,
+              borderRadius: 4,
+              datalabels: { ...barLabelPlugin, color: "#0f766e" },
+            },
+            {
+              label: "Fornecido",
+              data: racoes.map((r) => fornPorRacao.get(r.nome) || 0),
+              backgroundColor: CHART_COLORS.forn,
+              borderRadius: 4,
+              datalabels: { ...barLabelPlugin, color: "#1d4ed8" },
+            },
+          ],
+        },
+        options: {
+          indexAxis: "y",
+          ...chartDefaults,
+          plugins: {
+            ...chartDefaults.plugins,
+            datalabels: { display: true },
+            legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          },
+          scales: {
+            x: { beginAtZero: true, ticks: { callback: (v) => v.toLocaleString("pt-BR") } },
+            y: { ticks: { font: { size: 11 } } },
+          },
+        },
+      });
+
+      const topInsumo = [...rowsInsumo]
+        .map((r) => ({ ...r, dif: r.prev - r.real }))
+        .sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif))
+        .slice(0, 8);
+      mkChart("chartInsumo", {
+        type: "bar",
+        data: {
+          labels: topInsumo.map((r) => truncateLabel(r.nome)),
+          datasets: [{
+            label: "Dif. kg (prev − real)",
+            data: topInsumo.map((r) => r.dif),
+            backgroundColor: topInsumo.map((r) => (r.dif >= 0 ? CHART_COLORS.difPos : CHART_COLORS.difNeg)),
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: "y",
+          ...chartDefaults,
+          plugins: {
+            ...chartDefaults.plugins,
+            datalabels: {
+              display: true,
+              anchor: "end",
+              align: "end",
+              formatter: fmtBarVal,
+              font: { size: 10, weight: "600" },
+              color: "#334155",
+            },
+          },
+          scales: {
+            x: { ticks: { callback: (v) => v.toLocaleString("pt-BR") } },
+          },
+        },
+      });
+    }
+
+    function fmtDateBr(raw) {
+      let d = raw ? String(raw) : "";
+      if (!d) return "—";
+      if (d.includes("T")) d = d.slice(0, 10);
+      else if (d.includes(" ")) d = d.slice(0, 10);
+      const p = d.split("-");
+      if (p.length === 3) return `${p[2]}/${p[1]}/${p[0]}`;
+      return d;
+    }
+
+    function fabStatus(fab) {
+      if (!fab.qtdForn) return "sem";
+      const gap = fab.realizado - fab.fornecido;
+      if (Math.abs(gap) <= 0.5) return "ok";
+      if (fab.fornecido < fab.realizado - 0.5) return "pendente";
+      return "excesso";
+    }
+
+    function statusBadge(st) {
+      const map = {
+        sem: `<span class="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-800">Sem fornec.</span>`,
+        pendente: `<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Pendente</span>`,
+        ok: `<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">OK</span>`,
+        excesso: `<span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">Excesso</span>`,
+      };
+      return map[st] || map.pendente;
+    }
+
+    let fabricacoesCache = [];
+    const expandedFab = new Set();
+
+    function buildFabricacoes(resumo, rowsForn) {
+      const map = new Map();
+      const seed = (r) => {
+        const id = str(r, "id", "ID");
+        if (!id || map.has(id)) return;
+        map.set(id, {
+          id,
+          data: str(r, "dataRegisto", "DATA_REGISTO", "data", "DATA"),
+          dieta: str(r, "nomeDieta", "NOME_DIETA"),
+          operador: str(r, "operador", "OPERADOR"),
+          vagao: str(r, "vagao", "VAGAO"),
+          previsto: num(r, "qtdePrevista", "QTDE_PREVISTA"),
+          realizado: num(r, "qtdeRealizada", "QTDE_REALIZADA"),
+          fornecido: 0,
+          fornecimentos: [],
+        });
+      };
+      for (const r of resumo) seed(r);
+      for (const r of rowsForn) {
+        const id = str(r, "id", "ID");
+        if (!id) continue;
+        if (!map.has(id)) seed(r);
+        const fab = map.get(id);
+        const idForn = str(r, "idFornecimento", "ID_FORNECIMENTO").trim();
+        if (idForn) {
+          fab.fornecimentos.push({
+            id: idForn,
+            curral: str(r, "curral", "CURRAL") || str(r, "idBaia", "ID_BAIA") || "—",
+            previsto: num(r, "previstoFornecimento", "PREVISTO_FORNECIMENTO"),
+            realizado: num(r, "realizadoFornecimento", "REALIZADO_FORNECIMENTO"),
+          });
+          fab.fornecido += num(r, "realizadoFornecimento", "REALIZADO_FORNECIMENTO");
+        }
+      }
+      return [...map.values()].map((f) => ({
+        ...f,
+        qtdForn: f.fornecimentos.length,
+        saldo: f.realizado - f.fornecido,
+        status: fabStatus({ ...f, qtdForn: f.fornecimentos.length }),
+      }));
+    }
+
+    function renderFornecimentosDetail(fab) {
+      if (!fab.fornecimentos.length) {
+        return `<p class="px-4 py-3 text-sm text-slate-500">Nenhum fornecimento vinculado a esta fabricação.</p>`;
+      }
+      const rows = fab.fornecimentos
+        .sort((a, b) => String(a.curral).localeCompare(String(b.curral)))
+        .map((fn) => {
+          const dif = fn.previsto - fn.realizado;
+          return `<tr class="border-t border-slate-200">
+            <td class="px-3 py-2 font-mono text-xs text-slate-500">${esc(fn.id.slice(0, 8))}…</td>
+            <td class="px-3 py-2 font-semibold">${esc(fn.curral)}</td>
+            <td class="px-3 py-2 text-right">${fmtKg(fn.previsto)}</td>
+            <td class="px-3 py-2 text-right">${fmtKg(fn.realizado)}</td>
+            <td class="px-3 py-2 text-right ${Math.abs(dif) > 0.01 ? "text-amber-700" : ""}">${fmtKg(dif)}</td>
+          </tr>`;
+        }).join("");
+      return `<div class="bg-slate-50 px-2 py-2">
+        <p class="mb-2 px-2 text-xs font-semibold uppercase text-slate-500">Fornecimentos da fabricação</p>
+        <table class="min-w-full text-sm">
+          <thead class="text-slate-600">
+            <tr>
+              <th class="px-3 py-1.5 text-left">ID</th>
+              <th class="px-3 py-1.5 text-left">Curral</th>
+              <th class="px-3 py-1.5 text-right">Previsto kg</th>
+              <th class="px-3 py-1.5 text-right">Realizado kg</th>
+              <th class="px-3 py-1.5 text-right">Dif kg</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }
+
+    function renderListaFabricacao(fabricacoes) {
+      fabricacoesCache = fabricacoes;
+      const filtro = document.getElementById("filtroFab")?.value || "todas";
+      const list = fabricacoes.filter((f) => {
+        if (filtro === "todas") return true;
+        if (filtro === "sem") return f.status === "sem";
+        if (filtro === "pendente") return f.status === "pendente" || f.status === "sem";
+        if (filtro === "ok") return f.status === "ok" || f.status === "excesso";
+        return true;
+      });
+      const tb = document.getElementById("tbFabList");
+      if (!list.length) {
+        tb.innerHTML = `<tr><td colspan="10" class="px-3 py-4 text-center text-slate-500">Nenhuma fabricação no filtro selecionado.</td></tr>`;
+        return;
+      }
+      const sorted = list.sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
+      tb.innerHTML = sorted.map((fab) => {
+        const open = expandedFab.has(fab.id);
+        const saldoCls = fab.saldo > 0.5 ? "text-amber-700 font-semibold" : fab.saldo < -0.5 ? "text-blue-700" : "text-emerald-700";
+        const btnLabel = open ? "Ocultar" : `Ver fornecimentos (${fab.qtdForn})`;
+        return `<tr class="border-t border-slate-100 hover:bg-slate-50/80">
+          <td class="px-3 py-2 whitespace-nowrap">${fmtDateBr(fab.data)}</td>
+          <td class="px-3 py-2">${esc(fab.dieta)}</td>
+          <td class="px-3 py-2">${esc(fab.operador)}</td>
+          <td class="px-3 py-2">${esc(fab.vagao)}</td>
+          <td class="px-3 py-2 text-right font-medium">${fmtKg(fab.realizado)}</td>
+          <td class="px-3 py-2 text-right">${fmtKg(fab.fornecido)}</td>
+          <td class="px-3 py-2 text-right ${saldoCls}">${fmtKg(fab.saldo)}</td>
+          <td class="px-3 py-2 text-center">${statusBadge(fab.status)}</td>
+          <td class="px-3 py-2 text-center">${fab.qtdForn}</td>
+          <td class="px-3 py-2 text-center">
+            <button type="button" data-fab-toggle="${esc(fab.id)}" class="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">${btnLabel}</button>
+          </td>
+        </tr>
+        ${open ? `<tr class="border-t border-slate-200 bg-slate-50"><td colspan="10" class="p-0">${renderFornecimentosDetail(fab)}</td></tr>` : ""}`;
+      }).join("");
+    }
+
+    document.getElementById("tbFabList").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-fab-toggle]");
+      if (!btn) return;
+      const id = btn.getAttribute("data-fab-toggle");
+      if (expandedFab.has(id)) expandedFab.delete(id);
+      else expandedFab.add(id);
+      renderListaFabricacao(fabricacoesCache);
+    });
+
+    document.getElementById("filtroFab").addEventListener("change", () => {
+      renderListaFabricacao(fabricacoesCache);
+    });
+
+    function groupBy(items, keyNames, prevNames, realNames) {
+      const map = new Map();
+      for (const it of items) {
+        const k = str(it, ...keyNames) || "(sem nome)";
+        if (!map.has(k)) map.set(k, { nome: k, prev: 0, real: 0 });
+        const row = map.get(k);
+        row.prev += num(it, ...prevNames);
+        row.real += num(it, ...realNames);
+      }
+      return [...map.values()];
+    }
+
+    function renderAggRows(targetId, rows) {
+      const tb = document.getElementById(targetId);
+      if (!rows.length) {
+        tb.innerHTML = `<tr><td colspan="5" class="px-3 py-3 text-center text-slate-500">Sem dados no período.</td></tr>`;
+        return;
+      }
+      tb.innerHTML = rows
+        .sort((a, b) => Math.abs((b.prev - b.real)) - Math.abs((a.prev - a.real)))
+        .slice(0, 20)
+        .map((r) => {
+          const dif = r.prev - r.real;
+          const difPct = r.prev !== 0 ? (dif * 100) / r.prev : 0;
+          return `<tr class="border-t border-slate-100">
+            <td class="px-3 py-2">${esc(r.nome)}</td>
+            <td class="px-3 py-2 text-right">${fmtKg(r.prev)}</td>
+            <td class="px-3 py-2 text-right">${fmtKg(r.real)}</td>
+            <td class="px-3 py-2 text-right ${Math.abs(dif) > 0.01 ? "text-amber-700 font-semibold" : ""}">${fmtKg(dif)}</td>
+            <td class="px-3 py-2 text-right">${fmtPct(difPct)}</td>
+          </tr>`;
+        }).join("");
+    }
+
+    function renderSemFornecimento(rowsForn) {
+      const byFab = new Map();
+      for (const r of rowsForn) {
+        const id = str(r, "id", "ID");
+        if (!id) continue;
+        if (!byFab.has(id)) {
+          byFab.set(id, {
+            id,
+            dieta: str(r, "nomeDieta", "NOME_DIETA"),
+            operador: str(r, "operador", "OPERADOR"),
+            realizado: num(r, "qtdeRealizada", "QTDE_REALIZADA"),
+            fornecido: 0,
+            temLinha: false,
+          });
+        }
+        const row = byFab.get(id);
+        const valForn = num(r, "realizadoFornecimento", "REALIZADO_FORNECIMENTO");
+        if (str(r, "idFornecimento", "ID_FORNECIMENTO").trim() !== "") row.temLinha = true;
+        row.fornecido += valForn;
+      }
+      const noForn = [...byFab.values()].filter((x) => !x.temLinha || x.fornecido <= 0.001);
+      const tb = document.getElementById("tbSemForn");
+      if (!noForn.length) {
+        tb.innerHTML = `<tr><td colspan="5" class="px-3 py-3 text-center text-emerald-700">Nenhuma fabricação sem fornecimento no período.</td></tr>`;
+        return;
+      }
+      tb.innerHTML = noForn
+        .sort((a, b) => b.realizado - a.realizado)
+        .map((x) => `<tr class="border-t border-slate-100">
+            <td class="px-3 py-2 font-mono text-xs">${esc(x.id)}</td>
+            <td class="px-3 py-2">${esc(x.dieta)}</td>
+            <td class="px-3 py-2">${esc(x.operador)}</td>
+            <td class="px-3 py-2 text-right">${fmtKg(x.realizado)}</td>
+            <td class="px-3 py-2 text-right text-rose-700">${fmtKg(x.fornecido)}</td>
+          </tr>`).join("");
+    }
+
+    async function fetchJson(url) {
+      const r = await fetch(url, { cache: "no-store" });
+      const j = await r.json().catch(() => []);
+      if (!r.ok) {
+        const msg = j?.erro || `Falha HTTP ${r.status}`;
+        throw new Error(msg);
+      }
+      return Array.isArray(j) ? j : [];
+    }
+
+    async function loadDashboard() {
+      const msg = document.getElementById("msg");
+      msg.textContent = "Carregando…";
+      try {
+        const q = buildQuery();
+        const [resumo, insumos, fornecimento] = await Promise.all([
+          fetchJson(`/dashboard/fabricacao/resumo?${q}`),
+          fetchJson(`/dashboard/fabricacao/insumos?${q}`),
+          fetchJson(`/dashboard/fabricacao/fornecimento?${q}`),
+        ]);
+
+        const totalPrev = resumo.reduce((a, x) => a + num(x, "qtdePrevista", "QTDE_PREVISTA"), 0);
+        const totalReal = resumo.reduce((a, x) => a + num(x, "qtdeRealizada", "QTDE_REALIZADA"), 0);
+        const totalForn = fornecimento.reduce((a, x) => a + num(x, "realizadoFornecimento", "REALIZADO_FORNECIMENTO"), 0);
+        const difFab = totalPrev - totalReal;
+        const gap = totalReal - totalForn;
+
+        document.getElementById("kpiPrev").textContent = fmtKg(totalPrev);
+        document.getElementById("kpiReal").textContent = fmtKg(totalReal);
+        document.getElementById("kpiDifFab").textContent = fmtKg(difFab);
+        document.getElementById("kpiForn").textContent = fmtKg(totalForn);
+        document.getElementById("kpiGap").textContent = fmtKg(gap);
+
+        const rowsDieta = groupBy(resumo, ["nomeDieta", "NOME_DIETA"], ["qtdePrevista", "QTDE_PREVISTA"], ["qtdeRealizada", "QTDE_REALIZADA"]);
+        const rowsInsumo = groupBy(insumos, ["insumo", "INSUMO"], ["previstoKgInsumo", "PREVISTO_KG_INSUMO"], ["realizadoKgInsumo", "REALIZADO_KG_INSUMO"]);
+
+        renderCharts(rowsDieta, rowsInsumo, fornecimento);
+        expandedFab.clear();
+        renderListaFabricacao(buildFabricacoes(resumo, fornecimento));
+        renderAggRows("tbDieta", rowsDieta);
+        renderAggRows("tbInsumo", rowsInsumo);
+        renderSemFornecimento(fornecimento);
+
+        msg.textContent = `Atualizado em ${new Date().toLocaleString("pt-BR")} · linhas: resumo=${resumo.length}, insumos=${insumos.length}, fornecimento=${fornecimento.length}`;
+      } catch (e) {
+        msg.textContent = `Erro: ${e.message || e}`;
+      }
+    }
+
+    document.getElementById("btnAtualizar").addEventListener("click", loadDashboard);
+    rangeDefault();
+    loadClientConfig().then(loadDashboard);
+  </script>
+</body>
+</html>

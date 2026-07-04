@@ -5,6 +5,7 @@ import "package:flutter/foundation.dart";
 import "../../../repo/config_repo.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
+import "../domain/fornecimento_peso.dart";
 import "../domain/histerese_params.dart";
 
 import "../services/scale_tcp_service.dart";
@@ -82,9 +83,7 @@ class FornecimentoController extends ChangeNotifier {
   double get realizadoParcial {
     final pi = pesoInicio;
     if (pi == null) return 0;
-    // realizado = pesoInicio - pesoAtual (mantém lógica original)
-    final v = pi - pesoAtual;
-    return _round3(v < 0 ? 0 : v);
+    return _round3(fornecidoKgSessao(pesoInicial: pi, pesoAtual: pesoAtual));
   }
 
   void _setLoading(bool v) {
@@ -111,10 +110,7 @@ class FornecimentoController extends ChangeNotifier {
       await scale.connect(p.hostBalanca, p.portaBalanca);
       await _subScale?.cancel();
       _subScale = scale.lines.listen((line) {
-        final pesoStr = BalancaParser.extraiPeso(line, modeloBalanca);
-        if (pesoStr.isEmpty) return;
-
-        final w = BalancaParser.parseToDouble(pesoStr);
+        final w = BalancaParser.parseKg(line, modeloBalanca);
         if (w == null) return;
 
         pesoAtual = w;

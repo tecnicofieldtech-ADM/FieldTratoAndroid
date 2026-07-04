@@ -34,6 +34,8 @@ uses
   Controllers.Post,
   Controllers.Get.Field,
   Controllers.Post.Field,
+  Controllers.Get.TGC,
+  Controllers.Post.TGC,
   Controllers.Admin,
   UBiMirror,
   URequestLog,
@@ -52,6 +54,11 @@ begin
   begin
     Controllers.Get.Field.RegistraRotas;
     Controllers.Post.Field.RegistraRotas;
+  end
+  else if SameText(dmdb.GetActiveClient, 'tgc') then
+  begin
+    Controllers.Get.TGC.RegistraRotas;
+    Controllers.Post.TGC.RegistraRotas;
   end
   else
   begin

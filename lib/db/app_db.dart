@@ -1,6 +1,8 @@
 import "package:sqflite/sqflite.dart";
 import "package:path/path.dart" as p;
 
+import "../constants/config_options.dart";
+
 class AppDb {
   static final AppDb instance = AppDb._();
   AppDb._();
@@ -422,7 +424,7 @@ class AppDb {
     if (c == 0) {
       await db.insert("CONFIG", {
         "HOST": null,
-        "PORTA": 9100,
+        "PORTA": ConfigOptions.defaultApiPort,
         "ID_FAZENDA": null,
         "TIPO_TRABALHO": null,
         "HOST_BALANCA": "10.10.100.254",

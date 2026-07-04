@@ -2,6 +2,7 @@
 import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 
+import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../repo/config_repo.dart";
 import "../repo/vagao_repo.dart";
@@ -139,16 +140,40 @@ class BootstrapSync {
     await db.transaction((txn) async {
       await txn.delete("CADASTRO_USUARIO");
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
+
+        var id = _pickStr(m, [
+          "id",
+          "idusuario",
+          "id_usuario",
+          "codigo",
+          "cod",
+          "cf_codigo",
+        ]);
+        final login = _pickStr(m, ["usuario", "login", "user"]);
+        if (id.isEmpty && login.isNotEmpty) {
+          id = login;
+        }
+        if (id.isEmpty) continue;
+
+        final idFazRec = _pickStr(m, [
+          "idfazenda",
+          "id_fazenda",
+          "fazendaid",
+          "fazenda_id",
+        ]);
+        final idFazFinal =
+            idFazRec.isNotEmpty ? idFazRec : idFazenda.trim();
+
         await txn.insert(
           "CADASTRO_USUARIO",
           {
-            "ID": (m["id"] ?? "").toString(),
-            "NOME": (m["nome"] ?? "").toString(),
-            "LOGIN": (m["usuario"] ?? "").toString(),
-            "SENHA": (m["senha"] ?? "").toString(),
-            "CARGO": (m["cargo"] ?? "").toString(),
-            "ID_FAZENDA": idFazenda,
+            "ID": id,
+            "NOME": _pickStr(m, ["nome", "name"]),
+            "LOGIN": login,
+            "SENHA": _pickStr(m, ["senha", "password", "pass"]),
+            "CARGO": _pickStr(m, ["cargo", "role", "operador"]),
+            "ID_FAZENDA": idFazFinal,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -313,6 +338,8 @@ class BootstrapSync {
         final idInsumo = _pickStr(m, [
           "idinsumo",
           "id_insumo",
+          "idalimento",
+          "id_alimento",
           "idingrediente",
           "id_ingrediente",
           "insumoid",
@@ -321,11 +348,13 @@ class BootstrapSync {
         final ordemRaw = _pickStr(m, ["ordem", "ordem_trato", "ordemtrato"]);
         final ordem = int.tryParse(ordemRaw) ?? 0;
 
-        final id = _pickStr(m, ["id", "iddetalhe", "id_detalhe"]);
-        final idFinal = id.isNotEmpty
-            ? id
-            : [idDieta, idInsumo, ordem.toString()].where((e) => e.isNotEmpty).join("::");
-        if (idFinal.isEmpty || idDieta.isEmpty) continue;
+        // Chave composta evita duplicar o mesmo insumo quando a API repete linhas.
+        final idFinal = idInsumo.isNotEmpty
+            ? [idDieta, idInsumo, ordem.toString()]
+                .where((e) => e.isNotEmpty)
+                .join("::")
+            : _pickStr(m, ["id", "iddetalhe", "id_detalhe"]);
+        if (idFinal.isEmpty || idDieta.isEmpty || idInsumo.isEmpty) continue;
 
         final prePesagem = _pickStr(m, [
           "prepesagem",
@@ -340,6 +369,7 @@ class BootstrapSync {
           "insumo",
           "nomeinsumo",
           "nome_insumo",
+          "nome",
           "descricao",
         ]);
 
@@ -400,9 +430,23 @@ class BootstrapSync {
     void Function(String)? log,
   }) async {
     final api = await _apiFromCfg(cfg);
-    final list = await api.getPrevisaoTrato(idFazenda, dataYmd);
-    final isFieldpec =
-        (int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0) == 1;
+    var list = await api.getPrevisaoTrato(idFazenda, dataYmd);
+
+    // Após fabricação a API pode demorar a publicar o mapa do dia.
+    for (var tentativa = 0;
+        list.isEmpty && tentativa < 2;
+        tentativa++) {
+      log?.call(
+        "⚠️ Previsão vazia na API (tentativa ${tentativa + 1}/3). "
+        "Aguardando republicação do mapa…",
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+      list = await api.getPrevisaoTrato(idFazenda, dataYmd);
+    }
+
+    final isFieldpec = ConfigOptions.isFieldPecBackend(
+      int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0,
+    );
 
     log?.call("📥 Previsão (API): ${list.length} registros");
 
@@ -465,9 +509,15 @@ class BootstrapSync {
       // 1) snapshot do realizado local do dia (pra preservar)
       final realizadoLocal = await loadRealizadoLocalMap(txn);
 
-      // 2) decide “escopo” do delete:
-      //    - se a API retorna só 1 ração (comum), a gente limpa apenas essa ração
-      //    - senão, limpa só por trato (todas rações daquele trato)
+      if (list.isEmpty) {
+        log?.call(
+          "⚠️ Previsão ainda vazia após retentativas. "
+          "Mantendo PREVISAO local do dia $dataYmd.",
+        );
+        return;
+      }
+
+      // 2) limpa só os tratos/rações presentes na resposta da API
       String? racaoUnica;
       final setRacoes = <String>{};
       final setTratos = <int>{};
@@ -475,17 +525,22 @@ class BootstrapSync {
       for (final it in list) {
         if (it is! Map) continue;
         final m = _normalizeKeys(it);
-        final idRacao = _pickStr(m, ["idracao", "id_racao", "iddieta", "id_dieta"]).trim();
+        final idRacao =
+            _pickStr(m, ["idracao", "id_racao", "iddieta", "id_dieta"]).trim();
         if (idRacao.isNotEmpty) setRacoes.add(idRacao);
 
-        final t = int.tryParse(_pickStr(m, ["trato", "tr", "ordemtrato", "ordem_trato"])) ?? 0;
+        final t = int.tryParse(
+              _pickStr(m, ["trato", "tr", "ordemtrato", "ordem_trato"]),
+            ) ??
+            0;
         if (t > 0) setTratos.add(t);
       }
 
-      // se a API não mandou trato nos itens, usa "todas"? não: aqui precisa do trato.
-      // então vamos limpar por cada trato detectado; se vazio, não faz delete.
       if (setTratos.isEmpty) {
-        log?.call("⚠️ API não retornou TRATO nos itens. Não foi possível limpar PREVISAO seletivamente.");
+        log?.call(
+          "⚠️ API não retornou TRATO nos itens. "
+          "Não foi possível limpar PREVISAO seletivamente.",
+        );
       } else {
         if (setRacoes.length == 1) racaoUnica = setRacoes.first;
 
@@ -494,7 +549,7 @@ class BootstrapSync {
             txn,
             dayYmd: dataYmd,
             trato: t,
-            idRacao: racaoUnica, // ✅ se 1 ração, limpa só ela; senão limpa todas do trato
+            idRacao: racaoUnica,
           );
         }
       }
@@ -556,11 +611,17 @@ class BootstrapSync {
                 ? previstoRecalculadoRaw
                 : previstoLegacy)
             : previstoLegacy;
-        final previstoOriginalFinal =
-            previstoOriginal > 0 ? previstoOriginal : previstoRecalculado;
         final previstoRecalcFinal = previstoRecalculado > 0
             ? previstoRecalculado
-            : previstoOriginalFinal;
+            : (previstoOriginal > 0 ? previstoOriginal : previstoLegacy);
+        // PREVISTO_KG local = saldo recalculado; ORIGINAL só se veio explícito da API.
+        var previstoOriginalStore = previstoOriginalRaw > 0
+            ? previstoOriginalRaw
+            : (previstoLegacy > 0 &&
+                    previstoRecalcFinal > 0 &&
+                    (previstoLegacy - previstoRecalcFinal).abs() > 0.01
+                ? previstoLegacy
+                : 0);
         final previsto = fieldpecPrevisao ? previstoRecalcFinal : previstoLegacy;
         final ultimoTratoRaw = _pickNum(m, [
           "ultimotrato",
@@ -600,6 +661,22 @@ class BootstrapSync {
               )
             : 0.0;
 
+        // Preserva ORIGINAL já gravado — sync não pode substituir por saldo recalculado.
+        if (fieldpecPrevisao && previstoOriginalStore <= 0) {
+          final ex = await txn.query(
+            "PREVISAO",
+            columns: const ["PREVISTO_ORIGINAL_KG"],
+            where:
+                "ID_FORNECIMENTO = ? AND ID_BAIA = ? AND TRATO = ? AND substr(DATA,1,10) = ?",
+            whereArgs: [idFornecimento, idBaia, trato, data],
+            limit: 1,
+          );
+          if (ex.isNotEmpty) {
+            final kept = _toNum(ex.first["PREVISTO_ORIGINAL_KG"]).toDouble();
+            if (kept > 0) previstoOriginalStore = kept;
+          }
+        }
+
         await txn.insert(
           "PREVISAO",
           {
@@ -609,7 +686,7 @@ class BootstrapSync {
             "TRATO": trato,
             "PREVISTO_KG": previsto,
             if (fieldpecPrevisao) ...{
-              "PREVISTO_ORIGINAL_KG": previstoOriginalFinal,
+              "PREVISTO_ORIGINAL_KG": previstoOriginalStore,
               "PREVISTO_RECALCULADO_KG": previstoRecalcFinal,
               "ULTIMO_TRATO": ultimoTrato,
             },

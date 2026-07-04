@@ -408,11 +408,14 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     await _goFabricacaoList();
   }
 
-  Future<void> _perguntarIrParaFornecimento({
-    required int trato,
-  }) async {
+  /// Rotormix (0) e Distribuidor (2); estacionário (1) não pergunta fornecimento.
+  Future<bool> _isModoRotormix() async {
     final tipoTrabalho = await _cfgRepo.getTipoTrabalho();
-    if (tipoTrabalho == 1) {
+    return tipoTrabalho != 1;
+  }
+
+  Future<void> _perguntarIrParaFornecimento({required int trato}) async {
+    if (!await _isModoRotormix()) {
       await _goFabricacaoList();
       return;
     }
@@ -420,9 +423,10 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     if (!mounted) return;
     final go = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) => AlertDialog(
         title: const Text("Fornecimento"),
-        content: const Text("Deseja fornecer essa ração agora?"),
+        content: const Text("Deseja fornecer agora?"),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogCtx).pop(false),
@@ -651,11 +655,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         return;
       }
 
+      final semTempoMistura = minutos <= 0;
       await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => MisturaTimerPage(
             minutos: minutos,
             segundosQuandoMinutosZero: 10,
+            autoFinishWhenDone: semTempoMistura,
             repo: widget.repo,
             fabricacaoId: c.header?.id,
             titulo: minutos > 0 ? "Mistura" : "Finalizando fabricação",
@@ -664,9 +670,14 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
         ),
       );
       if (!mounted) return;
-      await _perguntarIrParaFornecimento(
-        trato: c.header?.trato ?? 0,
-      );
+
+      if (await _isModoRotormix()) {
+        await _perguntarIrParaFornecimento(
+          trato: c.header?.trato ?? 0,
+        );
+      } else {
+        await _goFabricacaoList();
+      }
     } catch (e) {
       await _dialogErroFinalizacao(e);
     } finally {
@@ -987,7 +998,15 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             "${tolPct > 0 ? " · tol ${tolPct.toStringAsFixed(0)}%" : ""}"
         : null;
 
-    final balancaDetail = "$text · $lastAtTxt${pausado ? " · PAUSADA" : ""}";
+    final balancaDetail = () {
+      final base = "$text · $lastAtTxt${pausado ? " · PAUSADA" : ""}";
+      final raw = c.lastRaw.trim();
+      if (raw.isNotEmpty) {
+        final snippet = raw.length > 40 ? "${raw.substring(0, 40)}…" : raw;
+        return "$base · RX: $snippet";
+      }
+      return base;
+    }();
 
     Color mirrorColor;
     IconData mirrorIcon;

@@ -1,31 +1,24 @@
 // lib/features/fornecimento/services/balanca_parser.dart
+import "../../../helpers/scale_comm.dart";
 import "../domain/fornecimento_models.dart";
 
 class BalancaParser {
-  /// Extrai string do peso (ex.: "1234.5") dependendo do modelo.
-  /// Retorna "" se não conseguir.
-  static String extraiPeso(String line, ModeloBalanca modelo) {
+  /// Extrai peso em kg de uma linha TCP (aceita negativo).
+  static double? parseKg(String line, ModeloBalanca modelo) {
     final s = line.trim();
-    if (s.isEmpty) return "";
+    if (s.isEmpty) return null;
 
-    switch (modelo) {
-      case ModeloBalanca.topcon:
-        return _extractNumber(s);
-
-      case ModeloBalanca.dinamica:
-        return _extractNumber(s);
-
-      case ModeloBalanca.alfa:
-        return _extractNumber(s);
-
-      // ✅ se você tiver mais modelos no enum (generale/hook/outro),
-      // isso evita erro e mantém funcionando.
-      default:
-        return _extractNumber(s);
-    }
+    final scaleModel = _toScaleModel(modelo);
+    return parseScaleWeightKg(s, model: scaleModel);
   }
 
-  /// Converte a string num double (aceita "," e ".")
+  /// Retorna string do peso ou "" se não conseguir (compat. legado).
+  static String extraiPeso(String line, ModeloBalanca modelo) {
+    final kg = parseKg(line, modelo);
+    if (kg == null) return "";
+    return kg.toString();
+  }
+
   static double? parseToDouble(String s) {
     final t = s.trim();
     if (t.isEmpty) return null;
@@ -33,23 +26,20 @@ class BalancaParser {
     return double.tryParse(norm);
   }
 
-  /// Extrai o primeiro número com sinal opcional e decimal opcional.
-  /// Aceita negativos.
-  static String _extractNumber(String s) {
-    final signed = RegExp(r"[-+]?\d+(?:[.,]\d+)?").firstMatch(s)?.group(0);
-    if (signed != null) return signed;
-
-    final trailingMinus =
-        RegExp(r"(\d+(?:[.,]\d+)?)\s*-\b").firstMatch(s)?.group(1);
-    if (trailingMinus != null) return "-$trailingMinus";
-
-    final unsigned = RegExp(r"\d+(?:[.,]\d+)?").firstMatch(s)?.group(0);
-    if (unsigned == null) return "";
-
-    final hasMinus = s.contains("-");
-    final hasPlus = s.contains("+");
-    if (hasMinus && !hasPlus) return "-$unsigned";
-    if (hasPlus && !hasMinus) return "+$unsigned";
-    return unsigned;
+  static ScaleModel _toScaleModel(ModeloBalanca modelo) {
+    switch (modelo) {
+      case ModeloBalanca.dinamica:
+        return ScaleModel.dg500;
+      case ModeloBalanca.alfa:
+        return ScaleModel.alfa;
+      case ModeloBalanca.hook:
+        return ScaleModel.hook;
+      case ModeloBalanca.topcon:
+        return ScaleModel.topcom;
+      case ModeloBalanca.generale:
+        return ScaleModel.dg500;
+      case ModeloBalanca.outro:
+        return ScaleModel.raw;
+    }
   }
 }

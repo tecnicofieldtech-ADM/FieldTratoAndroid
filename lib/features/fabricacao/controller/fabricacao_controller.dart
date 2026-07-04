@@ -6,11 +6,13 @@ import "package:flutter/foundation.dart";
 import "../../../db/app_db.dart";
 import "../../../repo/config_repo.dart";
 import "../../../helpers/scale_comm.dart";
+import "../../../helpers/scale_model_config.dart";
 import "../../../helpers/mirror_service.dart";
 import "../../../helpers/led_service.dart";
 
 import "../data/fabricacao_repo.dart";
 import "../domain/fabricacao_flow.dart";
+import "../domain/fabricacao_peso.dart";
 import "../domain/models.dart";
 
 class FabricacaoController extends ChangeNotifier {
@@ -155,9 +157,10 @@ class FabricacaoController extends ChangeNotifier {
   String get mirrorLabel {
     if (_modoSaidaFab == 1) {
       if (!LedService.instance.enabled) return "LED: desligado";
+      final label = LedService.instance.deviceLabel;
       return LedService.instance.connected
-          ? "LED: conectado (${LedService.instance.host}:${LedService.instance.port})"
-          : "LED: tentando (${LedService.instance.host}:${LedService.instance.port})";
+          ? "LED: conectado ($label)"
+          : "LED: tentando ($label)";
     }
 
     if (!MirrorService.instance.enabled) return "Espelho: desligado";
@@ -173,7 +176,9 @@ class FabricacaoController extends ChangeNotifier {
 
     if (_modoSaidaFab == 1) {
       await MirrorService.instance.stop();
-      await LedService.instance.configure(host: ip, port: port);
+      final address = (await _cfgRepo.getLedBtAddress()).trim();
+      final name = (await _cfgRepo.getLedBtName()).trim();
+      await LedService.instance.configure(address: address, name: name);
       _startLedTicker();
       _announceIngredienteNoLed();
       notifyListeners();
@@ -527,12 +532,19 @@ class FabricacaoController extends ChangeNotifier {
   String _lastLedMsg = "";
   DateTime _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// Aguarda o nome do insumo passar 2× no LED antes de enviar peso.
+  static const _ledEsperaInsumoMs = 10000;
+
+  /// Cadência do peso no LED (igual ritmo do espelhamento para o pazeiro).
+  static const _ledPesoIntervalMs = 500;
+
   void _startLedTicker() {
     if (_modoSaidaFab != 1) return;
     _ledTimer?.cancel();
-    _ledTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _tickLed();
-    });
+    _ledTimer = Timer.periodic(
+      const Duration(milliseconds: _ledPesoIntervalMs),
+      (_) => _tickLed(),
+    );
   }
 
   void _stopLedTicker() {
@@ -544,20 +556,33 @@ class FabricacaoController extends ChangeNotifier {
     _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  void _enqueueLed(String msg) {
+  void _enqueueLed(
+    String msg, {
+    bool pesoAoVivo = false,
+    Duration postDelay = const Duration(seconds: 2),
+  }) {
     if (_modoSaidaFab != 1) return;
 
     final m = msg.trim();
     if (m.isEmpty) return;
 
     final now = DateTime.now();
-    if (_lastLedMsg == m && now.difference(_lastLedMsgAt).inMilliseconds < 700) {
-      return;
+    if (pesoAoVivo) {
+      if (_lastLedMsg == m &&
+          now.difference(_lastLedMsgAt).inMilliseconds < _ledPesoIntervalMs - 50) {
+        return;
+      }
     }
 
     _lastLedMsg = m;
     _lastLedMsgAt = now;
-    LedService.instance.enqueueText(m);
+    LedService.instance.enqueueText(
+      m,
+      postDelay: pesoAoVivo
+          ? const Duration(milliseconds: _ledPesoIntervalMs)
+          : postDelay,
+      dropPendingStatic: pesoAoVivo,
+    );
   }
 
   void _announceIngredienteNoLed() {
@@ -567,7 +592,9 @@ class FabricacaoController extends ChangeNotifier {
 
     _ledDetId = ing.idDet;
     _ledIngredienteAt = DateTime.now();
-    _enqueueLed(ing.insumoNome);
+    _lastLedMsg = "";
+    _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
+    LedService.instance.preemptIngredienteNome(ing.insumoNome);
   }
 
   void _tickLed() {
@@ -592,10 +619,12 @@ class FabricacaoController extends ChangeNotifier {
       return;
     }
 
-    if (DateTime.now().difference(t0).inSeconds < 10) return;
+    if (DateTime.now().difference(t0).inMilliseconds < _ledEsperaInsumoMs) {
+      return;
+    }
 
     final falta = max(ing.previstoKg - ing.realizadoKg, 0);
-    _enqueueLed(falta.toString());
+    _enqueueLed(falta.toString(), pesoAoVivo: true);
   }
 
   // =========================================================
@@ -719,7 +748,7 @@ class FabricacaoController extends ChangeNotifier {
       return;
     }
 
-    final model = _scaleModelFromInt(modelInt);
+    final model = scaleModelFromConfigInt(modelInt);
 
     await _stopScale();
 
@@ -772,19 +801,22 @@ class FabricacaoController extends ChangeNotifier {
         lastPacketAt = ev.readAt;
         lastRaw = ev.rawLine;
 
-        lastWeight = _applyIncrement(ev.weight, _incPeso);
+        // Exibe o peso lido na balança sem arredondar por incremento.
+        lastWeight = ev.weight;
 
         scaleConnecting = false;
         scaleConnected = true;
         scaleReceiving = true;
 
-        _processaPesoParaRealizado(lastWeight.round());
+        _processaPesoParaRealizado(_pesoKgIntParaRealizado(ev.weight));
 
         _sendMirrorState();
         notifyListeners();
       });
 
       await _scale!.connect();
+
+      await _primeScaleWeightFromComm();
 
       scaleConnecting = false;
       _sendMirrorState(force: true);
@@ -798,9 +830,33 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   double _applyIncrement(double w, int inc) {
-    if (inc <= 1) return w;
+    if (inc <= 1 || w < 0) return w;
     final v = (w / inc).round() * inc;
     return v.toDouble();
+  }
+
+  Future<void> _primeScaleWeightFromComm() async {
+    if (_scale == null) return;
+    for (var i = 0; i < 25; i++) {
+      final w = _scale!.lastWeight;
+      final at = _scale!.lastReadAt;
+      if (w != null && at != null) {
+        lastWeight = w;
+        lastPacketAt = at;
+        scaleReceiving = true;
+        _processaPesoParaRealizado(_pesoKgIntParaRealizado(w));
+        notifyListeners();
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 80));
+    }
+  }
+
+  /// Arredonda para incremento só em peso positivo (evita -5 virar 0 com inc. 10).
+  int _pesoKgIntParaRealizado(double w) {
+    if (_incPeso <= 1) return w.round();
+    if (w < 0) return w.round();
+    return _applyIncrement(w, _incPeso).round();
   }
 
   Future<void> reconnectScale() async {
@@ -854,18 +910,7 @@ class FabricacaoController extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
-  ScaleModel _scaleModelFromInt(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      default:
-        return ScaleModel.raw;
-    }
-  }
+  ScaleModel _scaleModelFromInt(int v) => scaleModelFromConfigInt(v);
 
   // =========================================================
   // REALIZADO
@@ -886,12 +931,21 @@ class FabricacaoController extends ChangeNotifier {
     _autoPuloDisparado = false;
   }
 
+  bool get _isPrimeiroIngrediente => idx == 0;
+
+  int _capturaPesoInicial(int pesoAtualInt) => capturaPesoInicialFabricacao(
+        pesoAtual: pesoAtualInt,
+        primeiroIngrediente: _isPrimeiroIngrediente,
+      );
+
   void _primeBaselineFromCurrentWeightIfPossible() {
     final ing = atual;
     if (ing == null || ing.isPrePesado) return;
     if (lastPacketAt == null) return;
 
-    _pesoInicialPrimeiro = _applyIncrement(lastWeight, _incPeso).round();
+    _pesoInicialPrimeiro = _capturaPesoInicial(
+      _pesoKgIntParaRealizado(lastWeight),
+    );
     _baseDefinida = true;
     _baselinePending = false;
   }
@@ -918,20 +972,22 @@ class FabricacaoController extends ChangeNotifier {
 
     if (_baselinePending) {
       // Primeiro pacote após retomar: grava baseline (peso já na balança não entra no insumo).
-      _pesoInicialPrimeiro = pesoAtualInt;
+      _pesoInicialPrimeiro = _capturaPesoInicial(pesoAtualInt);
       _baseDefinida = true;
       _baselinePending = false;
       return;
     }
 
     if (!_baseDefinida) {
-      _pesoInicialPrimeiro = pesoAtualInt;
+      _pesoInicialPrimeiro = _capturaPesoInicial(pesoAtualInt);
       _baseDefinida = true;
       return;
     }
 
-    int incremento = pesoAtualInt - _pesoInicialPrimeiro;
-    if (incremento < 0) incremento = 0;
+    final incremento = incrementoKgDesdeBaseline(
+      pesoAtual: pesoAtualInt,
+      pesoInicial: _pesoInicialPrimeiro,
+    );
 
     final realizado = _realizadoAcumBanco + incremento;
 
@@ -951,7 +1007,9 @@ class FabricacaoController extends ChangeNotifier {
 
     _ensureIngredienteState();
 
-    _pesoPausadoKg = _applyIncrement(lastWeight, _incPeso).round();
+    _pesoPausadoKg = _capturaPesoInicial(
+      _pesoKgIntParaRealizado(lastWeight),
+    );
     _pesoPausado = true;
 
     // Congela o acumulado atual do ingrediente no momento da pausa.
@@ -1367,6 +1425,7 @@ class FabricacaoController extends ChangeNotifier {
     header = h.copyWith(
       finalizada: 1,
       qtdRealizada: total,
+      status: FabricacaoStatus.finalizada,
     );
 
     notifyListeners();

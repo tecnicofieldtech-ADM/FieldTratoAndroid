@@ -4,15 +4,17 @@ import "dart:io";
 
 import "package:flutter/foundation.dart";
 
+import "../../../constants/config_options.dart";
 import "../../../repo/config_repo.dart";
 import "../../../repo/fazenda_repo.dart";
 import "../../../repo/user_repo.dart";
 import "../../../repo/vagao_repo.dart";
 import "../../../services/bootstrap_sync.dart";
+import "../domain/fornecimento_models.dart";
 import "../domain/histerese_params.dart";
 
 import "carregamento_dao.dart";
-import "../domain/fornecimento_models.dart";
+import "../../../helpers/scale_model_config.dart";
 import "fornecimento_dao.dart";
 import "fornecimento_tables.dart";
 
@@ -140,16 +142,7 @@ class FornecimentoRepo {
     );
   }
 
-  ModeloBalanca _mapModeloBalanca(int v) {
-    switch (v) {
-      case 1:
-        return ModeloBalanca.dinamica;
-      case 2:
-        return ModeloBalanca.alfa;
-      default:
-        return ModeloBalanca.topcon;
-    }
-  }
+  ModeloBalanca _mapModeloBalanca(int v) => modeloBalancaFromConfigInt(v);
 
   // ===========================
   // ✅ DIETA (NOME)
@@ -395,6 +388,24 @@ class FornecimentoRepo {
     return (raw ?? "").replaceAll(RegExp(r"\s+"), "").trim().toUpperCase();
   }
 
+  /// Variantes do ID (ex.: "90", "090") para bater com PREVISAO.ID_RACAO.
+  static List<String> _racaoIdCandidates(String? raw) {
+    final out = <String>[];
+    void add(String s) {
+      final n = _normalizeRacaoId(s);
+      if (n.isNotEmpty && !out.contains(n)) out.add(n);
+    }
+
+    add(raw ?? "");
+    final asInt = int.tryParse((raw ?? "").trim());
+    if (asInt != null) {
+      add(asInt.toString());
+      add(asInt.toString().padLeft(2, "0"));
+      add(asInt.toString().padLeft(3, "0"));
+    }
+    return out;
+  }
+
   static double _toDoubleLocal(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v.toDouble();
@@ -423,62 +434,67 @@ class FornecimentoRepo {
     int? trato,
     String? idFazenda,
     String? idRacao,
+    bool strictRacaoFilter = false,
+    bool omitirFiltroTrato = false,
   }) async {
     final d = data ?? DateTime.now();
     final ymd = _ymd(d);
 
-    final t = trato ?? tratoAtual;
+    final int? t = omitirFiltroTrato
+        ? null
+        : ((trato != null && trato > 0)
+            ? trato
+            : (tratoAtual > 0 ? tratoAtual : null));
     final racao = (idRacao ?? idRacaoAtual)?.trim();
     final racaoFinal = (racao != null && racao.isNotEmpty) ? racao : null;
 
     final backend = await _cfg.getBackend();
-    final isFieldpec = backend == 1;
-    final fazendaFiltro = isFieldpec ? null : idFazenda;
+    final isFieldpec = ConfigOptions.isFieldPecBackend(backend);
 
     // ✅ mantém idRacaoAtual consistente
     if (racaoFinal != null) setIdRacaoAtual(racaoFinal);
 
     Future<List<Map<String, Object?>>> load({
       String? idRacaoFiltro,
-      String? idFazendaFiltro,
+      int? tratoFiltro,
     }) {
       return _listPrevRaw(
         dataYYYYMMDD: ymd,
-        trato: t,
-        idFazenda: idFazendaFiltro ?? fazendaFiltro,
+        trato: tratoFiltro,
         idRacao: idRacaoFiltro,
       );
     }
 
-    var rows = await load(idRacaoFiltro: racaoFinal);
-
-    if (rows.isEmpty && racaoFinal != null) {
-      final racaoNorm = _normalizeRacaoId(racaoFinal);
-      if (racaoNorm.isNotEmpty && racaoNorm != racaoFinal) {
-        rows = await load(idRacaoFiltro: racaoNorm);
+    var rows = <Map<String, Object?>>[];
+    if (racaoFinal != null) {
+      for (final candidato in _racaoIdCandidates(racaoFinal)) {
+        rows = await load(idRacaoFiltro: candidato, tratoFiltro: t);
+        if (rows.isNotEmpty) break;
       }
+    } else {
+      rows = await load(idRacaoFiltro: null, tratoFiltro: t);
     }
 
-    if (isFieldpec && rows.isEmpty && racaoFinal != null) {
-      final racaoInt = int.tryParse(racaoFinal)?.toString();
-      if (racaoInt != null && racaoInt != racaoFinal) {
-        rows = await load(idRacaoFiltro: racaoInt, idFazendaFiltro: null);
-      }
-    }
-
-    if (rows.isEmpty && racaoFinal != null) {
+    if (!strictRacaoFilter && rows.isEmpty && racaoFinal != null) {
       if (kDebugMode) {
         debugPrint(
           "[FORN_MAPA] Sem mapa com idRacao='$racaoFinal'. Recarregando sem filtro de ração.",
         );
       }
-      rows = await load(idRacaoFiltro: null, idFazendaFiltro: isFieldpec ? null : fazendaFiltro);
+      rows = await load(
+        idRacaoFiltro: null,
+        tratoFiltro: t,
+      );
     }
 
-    if (rows.isNotEmpty &&
+    if (!strictRacaoFilter &&
+        rows.isNotEmpty &&
         racaoFinal != null &&
         _mapaRowsSemDadosUteis(rows)) {
-      final semRacao = await load(idRacaoFiltro: null, idFazendaFiltro: isFieldpec ? null : fazendaFiltro);
+      final semRacao = await load(
+        idRacaoFiltro: null,
+        tratoFiltro: t,
+      );
       if (semRacao.isNotEmpty && !_mapaRowsSemDadosUteis(semRacao)) {
         if (kDebugMode) {
           debugPrint(
@@ -493,11 +509,45 @@ class FornecimentoRepo {
     if (kDebugMode) {
       debugPrint(
         "[FORN_MAPA] backend=$backend isFieldpec=$isFieldpec data=$ymd trato=$t "
-        "fazendaFiltro='${fazendaFiltro ?? ""}' idRacao='${racaoFinal ?? ""}' rows=${rows.length}",
+        "idRacao='${racaoFinal ?? ""}' "
+        "strictRacao=$strictRacaoFilter omitirTrato=$omitirFiltroTrato rows=${rows.length}",
       );
     }
 
     return rows.map((m) => CurralPrev.fromMap(m)).toList();
+  }
+
+  /// Tratos com previsão para a ração/dia (para seletor do mapa).
+  Future<List<int>> listTratosPrevisao({
+    required DateTime data,
+    required String idRacao,
+    String? idFazenda,
+  }) async {
+    final ymd = _ymd(data);
+    final racao = _normalizeRacaoId(idRacao.trim());
+    if (racao.isEmpty) return const [];
+
+    final args = <Object?>[ymd, racao];
+    final where = StringBuffer(
+      "substr(a.${FornTables.pvData}, 1, 10) = ? "
+      "AND REPLACE(UPPER(TRIM(CAST(a.${FornTables.pvIdRacao} AS TEXT))), ' ', '') "
+      "= REPLACE(UPPER(TRIM(CAST(? AS TEXT))), ' ', '') ",
+    );
+
+    final sql = """
+      SELECT DISTINCT a.${FornTables.pvTrato} AS trato
+      FROM ${FornTables.previsao} a
+      WHERE ${where.toString()}
+      ORDER BY a.${FornTables.pvTrato}
+    """;
+
+    final rows = await _dao.rawQuery(sql, args);
+    final list = <int>[];
+    for (final r in rows) {
+      final t = int.tryParse((r["trato"] ?? "0").toString()) ?? 0;
+      if (t > 0) list.add(t);
+    }
+    return list;
   }
 
   Future<List<CurralPrev>> listCurraisPrevistosHojeSimple() =>
@@ -507,9 +557,14 @@ class FornecimentoRepo {
   Future<void> prefetchMapaDoDia({
     required String idFazenda,
     DateTime? data,
+    int? trato,
   }) async {
     final cfg = await _cfg.getConfig();
     if (cfg == null) return;
+
+    if (trato != null && trato > 0) {
+      setTrato(trato);
+    }
 
     final bootstrap = BootstrapSync(
       cfgRepo: _cfg,
@@ -520,7 +575,22 @@ class FornecimentoRepo {
 
     final ymd = _ymd(data ?? DateTime.now());
     await bootstrap.baixarBaias(cfg, idFazenda);
-    await bootstrap.baixarPrevisaoTrato(cfg, idFazenda, ymd);
+
+    final tratoAlvo = trato ?? tratoAtual;
+    for (var tentativa = 0; tentativa < 2; tentativa++) {
+      await bootstrap.baixarPrevisaoTrato(cfg, idFazenda, ymd);
+      if (tratoAlvo <= 0) break;
+
+      final rows = await _listPrevRaw(
+        dataYYYYMMDD: ymd,
+        trato: tratoAlvo,
+      );
+      if (rows.isNotEmpty) break;
+
+      if (tentativa < 1) {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    }
   }
 
   // ===========================
@@ -589,7 +659,8 @@ class FornecimentoRepo {
       await assertFabricacaoParaFornecimento(data: data);
       if (kDebugMode) {
         debugPrint(
-          "🟦 iniciarCadastroFornecimento: reutiliza aberto id=${aberto.idCadastro}",
+          "🟦 iniciarCadastroFornecimento: reutiliza aberto id=${aberto.idCadastro} "
+          "pesoIni=${aberto.pesoInicio}",
         );
       }
       return aberto.idCadastro;
@@ -632,6 +703,30 @@ class FornecimentoRepo {
 
     return newId;
   }
+
+  Future<double?> getPesoInicioCadastroAberto({
+    required String idFornecimento,
+    required String idCurral,
+    required DateTime data,
+    required int trato,
+  }) async {
+    final aberto = await _dao.getFornecimentoAberto(
+      idFornecimento: idFornecimento,
+      idBaia: idCurral,
+      data: data,
+      trato: trato,
+    );
+    return aberto?.pesoInicio;
+  }
+
+  Future<void> rebasePesoInicioCadastroAberto({
+    required String idCadastro,
+    required double pesoInicio,
+  }) =>
+      _dao.atualizarPesoInicioAberto(
+        idCadastro: idCadastro,
+        pesoInicio: pesoInicio,
+      );
 
   Future<void> cancelarCadastroFornecimentoAberto({
     required String idCadastro,
@@ -685,6 +780,14 @@ class FornecimentoRepo {
         realizado: realizadoKg,
       );
 
+      await _dao.aplicarRealizadoLocalPrevisao(
+        idFornecimento: idFornecimento,
+        idBaia: idCurral,
+        trato: trato,
+        dataYmd: _ymd(data),
+        deltaRealizado: realizadoKg,
+      );
+
       if (kDebugMode) {
         debugPrint(
           "✅ FINALIZADO id=$idAberto data=${_ymd(data)} trato=$trato "
@@ -711,6 +814,14 @@ class FornecimentoRepo {
       realizado: realizadoKg,
       previsto: previstoKg,
       mapa: origemMapa,
+    );
+
+    await _dao.aplicarRealizadoLocalPrevisao(
+      idFornecimento: idFornecimento,
+      idBaia: idCurral,
+      trato: trato,
+      dataYmd: _ymd(data),
+      deltaRealizado: realizadoKg,
     );
 
     if (kDebugMode) {
@@ -877,13 +988,9 @@ class FornecimentoRepo {
     String? curralNome,
     bool? realizadoMaiorZero,
   }) async {
-    final backend = await _cfg.getBackend();
-    final isFieldpec = backend == 1;
-
     final rows = await _listPrevRaw(
       dataYYYYMMDD: dataYYYYMMDD,
       trato: trato,
-      idFazenda: isFieldpec ? null : idFazenda,
       idRacao: idRacao,
       racaoNome: racaoNome,
       linha: linha,
@@ -1108,7 +1215,6 @@ class FornecimentoRepo {
   Future<List<Map<String, Object?>>> _listPrevRaw({
     required String dataYYYYMMDD,
     int? trato,
-    String? idFazenda,
     String? idRacao,
     String? racaoNome,
     String? linha,
@@ -1120,15 +1226,6 @@ class FornecimentoRepo {
 
     where.write(" AND substr(a.${FornTables.pvData}, 1, 10) = ? ");
     args.add(dataYYYYMMDD);
-
-    final faz = (idFazenda ?? "").trim();
-    if (faz.isNotEmpty) {
-      final hasIdFaz = await _hasColumn(FornTables.detalhesBaias, "ID_FAZENDA");
-      if (hasIdFaz) {
-        where.write(" AND TRIM(db.ID_FAZENDA) = TRIM(?) ");
-        args.add(faz);
-      }
-    }
 
     if (trato != null) {
       where.write(" AND a.${FornTables.pvTrato} = ? ");
@@ -1211,14 +1308,11 @@ class FornecimentoRepo {
         db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
         $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(NULLIF(a.${FornTables.pvPrevistoOriginalKg}, 0), 0)
+          AS previstoOriginalKg,
         COALESCE(
-          a.${FornTables.pvPrevistoOriginalKg},
-          a.${FornTables.pvPrevistoKg},
-          0
-        ) AS previstoOriginalKg,
-        COALESCE(
-          a.${FornTables.pvPrevistoRecalculadoKg},
-          a.${FornTables.pvPrevistoKg},
+          NULLIF(a.${FornTables.pvPrevistoRecalculadoKg}, 0),
+          NULLIF(a.${FornTables.pvPrevistoKg}, 0),
           0
         ) AS previstoRecalculadoKg,
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
@@ -1256,14 +1350,11 @@ class FornecimentoRepo {
         db.${FornTables.dbNomeLocal}              AS nomeLocalRaw,
         $nomeLocalExpr                            AS nomeLocal,
         COALESCE(a.${FornTables.pvPrevistoKg}, 0) AS previstoKg,
+        COALESCE(NULLIF(a.${FornTables.pvPrevistoOriginalKg}, 0), 0)
+          AS previstoOriginalKg,
         COALESCE(
-          a.${FornTables.pvPrevistoOriginalKg},
-          a.${FornTables.pvPrevistoKg},
-          0
-        ) AS previstoOriginalKg,
-        COALESCE(
-          a.${FornTables.pvPrevistoRecalculadoKg},
-          a.${FornTables.pvPrevistoKg},
+          NULLIF(a.${FornTables.pvPrevistoRecalculadoKg}, 0),
+          NULLIF(a.${FornTables.pvPrevistoKg}, 0),
           0
         ) AS previstoRecalculadoKg,
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,

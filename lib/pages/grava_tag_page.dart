@@ -2,6 +2,7 @@ import "dart:async";
 
 import "package:flutter/material.dart";
 
+import "../constants/config_options.dart";
 import "../repo/config_repo.dart";
 import "../repo/grava_tag_repo.dart";
 import "../helpers/rfid_comm.dart";
@@ -44,9 +45,9 @@ class _GravaTagPageState extends State<GravaTagPage> {
     setState(() => _loading = true);
     try {
       final backend = await _cfg.getBackend();
-      final isFieldpec = backend == 1;
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
       final idFazenda = await _cfg.getIdFazendaSelecionada();
-      final filtroFazenda = isFieldpec ? "" : idFazenda;
+      final filtroFazenda = skipFazendaFilter ? "" : idFazenda;
 
       final linhas = await _repo.listLinhas(idFazenda: filtroFazenda);
       final currais = await _repo.listCurrais(
@@ -156,8 +157,8 @@ class _GravaTagPageState extends State<GravaTagPage> {
       setState(() => _ultimoEpc = epcNorm);
 
       final backend = await _cfg.getBackend();
-      final isFieldpec = backend == 1;
-      final filtroFazenda = isFieldpec ? "" : _idFazenda;
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
+      final filtroFazenda = skipFazendaFilter ? "" : _idFazenda;
 
       final vinculo = await _repo.findCurralByEpc(
         epcNorm,
