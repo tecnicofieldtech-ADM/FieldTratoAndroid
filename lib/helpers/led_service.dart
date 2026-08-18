@@ -27,8 +27,7 @@ class LedService {
   String _address = "";
   String _deviceName = "";
 
-  int _model = 0;
-  int _color = 0;
+  int _color = 1;
 
   final ListQueue<_LedJob> _queue = ListQueue<_LedJob>();
   bool _busy = false;
@@ -44,8 +43,7 @@ class LedService {
   Future<void> configure({
     required String address,
     String name = "",
-    int model = 0,
-    int color = 0,
+    int color = 1,
   }) async {
     final addr = address.trim().toUpperCase();
     if (addr.isEmpty) {
@@ -57,7 +55,6 @@ class LedService {
     _enabled = true;
     _address = addr;
     _deviceName = name.trim();
-    _model = model;
     _color = color.clamp(0, 2);
 
     if (same && _connected) return;
@@ -243,7 +240,7 @@ class LedService {
     }
   }
 
-  int get _intensity => _model == 0 ? 0 : 9;
+  int get _intensity => 9;
 
   String _buildStaticCommand(String msg) =>
       _buildCommand(_LedJob(text: msg, mode: 1, scrollOnce: 0));

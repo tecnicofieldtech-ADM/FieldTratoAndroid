@@ -304,10 +304,10 @@ class _MenuPageState extends State<MenuPage> {
                   // 2 colunas fixas
                   final tileW = (w - gap) / 2;
 
-                  // â altura um pouco maior (antes ~56-70)
+                  // altura dos tiles (evita overflow com textScale / telas estreitas)
                   final tileH = isPhone
-                      ? (w * 0.15).clamp(52.0, 68.0)
-                      : (w * 0.18).clamp(66.0, 86.0);
+                      ? (w * 0.18).clamp(64.0, 80.0)
+                      : (w * 0.18).clamp(70.0, 90.0);
 
                   final t = _tipoTrabalho;
                   final hibrido = _modoHibrido;
@@ -697,31 +697,28 @@ class _Tile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: borderColor),
         ),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-        child: Column(
-          children: [
-            Align(
-              alignment: Alignment.topCenter,
-              child: Icon(icon, size: 28, color: fgFinal),
-            ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: fgFinal,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    height: 1.05,
-                  ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 26, color: fgFinal),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  color: fgFinal,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  height: 1.0,
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

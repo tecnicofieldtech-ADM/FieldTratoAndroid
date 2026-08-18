@@ -150,14 +150,31 @@ class MirrorServer {
         final cmd = Map<String, dynamic>.from(obj);
         final t = (cmd["t"] ?? cmd["cmd"] ?? "").toString();
 
-        if (t == "req_state" && _lastStateJson.isNotEmpty) {
+        if (t == "ping") {
           final client = _clients[key];
           if (client != null) {
             try {
-              client.socket
-                  .add(Uint8List.fromList(utf8.encode("$_lastStateJson\n")));
+              client.socket.add(
+                Uint8List.fromList(utf8.encode('{"t":"pong"}\n')),
+              );
             } catch (_) {}
           }
+          return;
+        }
+
+        if (t == "req_state") {
+          if (_lastStateJson.isNotEmpty) {
+            final client = _clients[key];
+            if (client != null) {
+              try {
+                client.socket
+                    .add(Uint8List.fromList(utf8.encode("$_lastStateJson\n")));
+              } catch (_) {}
+            }
+            return;
+          }
+
+          onCommand?.call(cmd);
           return;
         }
 

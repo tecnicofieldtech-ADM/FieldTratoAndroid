@@ -55,6 +55,20 @@ begin
   Result := ParseFlexNumber(ExtractStrCI(Obj, Keys));
 end;
 
+function JsonHasKeyCI(const Obj: TJSONObject; const Keys: array of string): Boolean;
+var
+  Pair: TJSONPair;
+  k: string;
+begin
+  Result := False;
+  if not Assigned(Obj) then
+    Exit;
+  for k in Keys do
+    for Pair in Obj do
+      if SameText(Pair.JsonString.Value, k) then
+        Exit(True);
+end;
+
 function ParseFlexDate(const S: string; out Dt: TDateTime): Boolean;
 var
   T, D, M, Y: string;
@@ -189,30 +203,41 @@ begin
     Result := TryFetchDietaMsCgPec(dm, IdD);
 end;
 
-function ResolveMsInsumoCgPec(dm: TdmDB; const IdInsumo, IdDieta: string): Double;
+function TryResolveMsInsumoCgPec(dm: TdmDB; const IdInsumo, IdDieta: string;
+  out Ms: Double): Boolean;
 var
   Q: TFDQuery;
 begin
-  Result := 0;
+  Result := False;
+  Ms := 0;
   if (Trim(IdInsumo) = '') or (Trim(IdDieta) = '') then
     Exit;
   Q := TFDQuery.Create(nil);
   try
     Q.Connection := dm.FBCon;
     Q.SQL.Text :=
-      'SELECT FIRST 1 MS_INSUMO FROM DETALHES_DIETAS ' +
+      'SELECT FIRST 1 COALESCE(MS_INSUMO, 0) AS MS_INSUMO FROM DETALHES_DIETAS ' +
       'WHERE UPPER(TRIM(CAST(ID_INSUMO AS VARCHAR(64)))) = UPPER(TRIM(:ID_INSUMO)) ' +
-      '  AND UPPER(TRIM(CAST(ID_DIETA AS VARCHAR(64)))) = UPPER(TRIM(:ID_DIETA)) ' +
-      '  AND COALESCE(MS_INSUMO, 0) > 0';
+      '  AND UPPER(TRIM(CAST(ID_DIETA AS VARCHAR(64)))) = UPPER(TRIM(:ID_DIETA))';
     Q.ParamByName('ID_INSUMO').AsString := IdInsumo;
     Q.ParamByName('ID_DIETA').AsString := IdDieta;
     Q.Open;
     if not Q.IsEmpty then
-      Result := Q.FieldByName('MS_INSUMO').AsFloat;
+    begin
+      Ms := Q.FieldByName('MS_INSUMO').AsFloat;
+      Result := True;
+    end;
   except
-    Result := 0;
+    Result := False;
+    Ms := 0;
   end;
   Q.Free;
+end;
+
+function ResolveMsInsumoCgPec(dm: TdmDB; const IdInsumo, IdDieta: string): Double;
+begin
+  if not TryResolveMsInsumoCgPec(dm, IdInsumo, IdDieta, Result) then
+    Result := 0;
 end;
 
 function ResolveMsPercentFabricacao(dm: TdmDB; const IdDieta: string;
@@ -1397,14 +1422,15 @@ begin
       if vIdDieta = '' then
         vIdDieta := ResolveIdDietaFabricacao(dmGlobal, vIdFabricacao);
 
-      if (vMsInsumo <= 0) and (vIdDieta <> '') then
+      // ms_insumo=0 é válido (água). Só resolve fallback se a chave NÃO veio no JSON.
+      if not JsonHasKeyCI(Item, ['ms_insumo']) then
       begin
-        vMsInsumo := ResolveMsInsumoCgPec(dmGlobal, vIdInsumo, vIdDieta);
-        if vMsInsumo > 0 then
-          Inc(vMsFallback);
+        if (vIdDieta <> '') and
+          TryResolveMsInsumoCgPec(dmGlobal, vIdInsumo, vIdDieta, vMsInsumo) then
+          Inc(vMsFallback)
+        else
+          vMsInsumo := ResolveMsPercentFabricacao(dmGlobal, vIdDieta, 0, 0);
       end;
-      if vMsInsumo <= 0 then
-        vMsInsumo := ResolveMsPercentFabricacao(dmGlobal, vIdDieta, 0, 0);
 
       vValorkgFloat := dmGlobal.GetCustoMedioKgInsumo(
         vIdInsumo,

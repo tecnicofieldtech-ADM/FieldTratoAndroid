@@ -2,7 +2,7 @@
 description: Field Trato - Automacao de fabricacao e fornecimento
 publish_to: "none"
 
-version: 1.0.16+82
+version: 1.0.17+97
 
 environment:
   sdk: ">=3.2.0 <4.0.0"

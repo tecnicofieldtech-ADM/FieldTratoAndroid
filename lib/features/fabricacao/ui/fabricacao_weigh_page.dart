@@ -1,4 +1,4 @@
-﻿// lib/features/fabricacao/ui/fabricacao_weigh_page.dart
+// lib/features/fabricacao/ui/fabricacao_weigh_page.dart
 import "dart:async";
 import "package:flutter/material.dart";
 
@@ -89,6 +89,9 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     c.onRemoteFinishRequested = () async {
       await _finalizarRemotoViaMirror();
     };
+    c.onAutoFinalizarUltimoInsumo = () async {
+      await _finalizarFluxoCompleto(confirmar: false, navegarAposFinalizar: true);
+    };
     _boot();
 
     _uiTicker = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -102,6 +105,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     _uiTicker?.cancel();
     c.removeListener(_onChange);
     c.onRemoteFinishRequested = null;
+    c.onAutoFinalizarUltimoInsumo = null;
 
     // ignore: unawaited_futures
     unawaited(c.shutdown());
@@ -701,6 +705,113 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     return previstoKg.toDouble() * (toleranciaPct / 100.0);
   }
 
+  /// Barra 0..100% do previsto; faixa âmbar = zona de tolerância (ex.: 95–100%).
+  Widget _barraProgressoComTolerancia({
+    required double real,
+    required double prev,
+    required double tolPct,
+    required bool dentroTol,
+    required double height,
+    required String pctLabel,
+    required double labelSize,
+  }) {
+    final tolFrac = tolPct > 0 ? (tolPct / 100.0).clamp(0.0, 1.0) : 0.0;
+    // Escala fixa no previsto: 100% da barra = peso previsto (não passa do alvo).
+    final progress = prev > 0 ? (real / prev).clamp(0.0, 1.0) : 0.0;
+    final bandStart = tolFrac > 0 ? (1.0 - tolFrac).clamp(0.0, 1.0) : 1.0;
+
+    // Verde forte na tolerância; verde médio enquanto carrega; laranja se passou.
+    final Color fillColor;
+    if (prev <= 0) {
+      fillColor = Colors.white54;
+    } else if (dentroTol) {
+      fillColor = const Color(0xFF00E676); // greenAccent A400
+    } else if (real > prev) {
+      fillColor = Colors.orangeAccent.shade400;
+    } else {
+      fillColor = const Color(0xFF66BB6A); // green 400 — barra verde ao carregar
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final fillW = (w * progress).clamp(0.0, w);
+        final bandLeft = w * bandStart;
+        final bandW = (w - bandLeft).clamp(0.0, w);
+
+        return SizedBox(
+          height: height,
+          width: w,
+          child: Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.hardEdge,
+            children: [
+              // track
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              // faixa de tolerância (atrás do preenchimento): do (100%-tol) ao previsto
+              if (tolFrac > 0 && bandW > 0)
+                Positioned(
+                  left: bandLeft,
+                  width: bandW,
+                  top: 0,
+                  bottom: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.amberAccent.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              // preenchimento (capado em 100% do previsto)
+              if (fillW > 0)
+                Positioned(
+                  left: 0,
+                  width: fillW,
+                  top: 0,
+                  bottom: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: fillColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              // início da tolerância
+              if (tolFrac > 0)
+                Positioned(
+                  left: (bandLeft - 1).clamp(0.0, (w - 2).clamp(0.0, w)),
+                  width: 2,
+                  top: 0,
+                  bottom: 0,
+                  child: ColoredBox(
+                    color: Colors.white.withValues(alpha: 0.90),
+                  ),
+                ),
+              Text(
+                pctLabel,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: labelSize,
+                  color: Colors.white,
+                  shadows: const [
+                    Shadow(blurRadius: 4, color: Colors.black54),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   bool _dentroTolPct({
     required int previstoKg,
     required int realizadoKg,
@@ -1192,7 +1303,6 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
     final percent = (prev > 0) ? (real * 100 / prev) : 0.0;
     final pctLabel = prev > 0 ? "${percent.toStringAsFixed(0)}%" : "--";
-    final barValue = prev > 0 ? (real / prev).clamp(0.0, 1.0) : 0.0;
 
     final faltando = prev > 0 ? (prev - real) : 0;
     final difText = (prev > 0 && real > prev) ? "+${real - prev}" : "$faltando";
@@ -1256,9 +1366,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
               ),
               if (c.autoCountdown > 0)
                 _PulseChip(
-                  icon: Icons.timer,
+                  icon: (c.idx >= c.ingredientes.length - 1)
+                      ? Icons.check_circle
+                      : Icons.timer,
                   active: true,
-                  label: "${c.autoCountdown}s",
+                  label: (c.idx >= c.ingredientes.length - 1)
+                      ? "Finalizando ${c.autoCountdown}s"
+                      : "${c.autoCountdown}s",
                 ),
             ],
           ),
@@ -1282,25 +1396,14 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             ),
           ),
           SizedBox(height: isPhone ? 4 : 10),
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  minHeight: isPhone ? 12 : 18,
-                  value: barValue,
-                ),
-              ),
-              Text(
-                pctLabel,
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: isPhone ? 10 : 12,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          _barraProgressoComTolerancia(
+            real: real.toDouble(),
+            prev: prev.toDouble(),
+            tolPct: tolPct,
+            dentroTol: dentroTol,
+            height: isPhone ? 12 : 18,
+            pctLabel: pctLabel,
+            labelSize: isPhone ? 10 : 12,
           ),
           SizedBox(height: isPhone ? 6 : 10),
           Row(

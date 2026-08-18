@@ -125,8 +125,6 @@ class PaClientController extends ChangeNotifier {
       final line = "${jsonEncode(payload)}\n";
       _sock?.add(Uint8List.fromList(utf8.encode(line)));
       await _sock?.flush();
-      status = "Comando enviado: $command";
-      notifyListeners();
       return true;
     } catch (_) {
       _markDisconnected();
@@ -308,6 +306,18 @@ class PaClientController extends ChangeNotifier {
 
         _applyFinalizacaoLatch(map);
 
+        // Event messages (t=event) don't carry display state —
+        // process for latch logic but never replace lastState.
+        final msgType = (map["t"] ?? "").toString();
+        if (msgType == "event") {
+          lastMsgAt = now;
+          if (_isFinalizacaoEvent(map)) {
+            lastState = {...?lastState, ...map};
+            notifyListeners();
+          }
+          continue;
+        }
+
         if (map["auto"] is Map) {
           _lastAuto = Map<String, dynamic>.from(map["auto"] as Map);
           _lastAutoAt = now;
@@ -316,6 +326,11 @@ class PaClientController extends ChangeNotifier {
         final atual = (map["atual"] is Map)
             ? Map<String, dynamic>.from(map["atual"] as Map)
             : null;
+
+        if (atual == null) {
+          lastMsgAt = now;
+          continue;
+        }
 
         final isPre = _isPreFromAtual(atual);
         final pos = _posFromAtual(atual);
@@ -336,11 +351,31 @@ class PaClientController extends ChangeNotifier {
           }
         }
 
-        lastState = map;
         lastMsgAt = now;
+
+        if (!_stateChanged(lastState, map)) {
+          lastState = map;
+          continue;
+        }
+
+        lastState = map;
         notifyListeners();
       } catch (_) {}
     }
+  }
+
+  String _lastStateFingerprint = "";
+
+  bool _stateChanged(Map<String, dynamic>? prev, Map<String, dynamic> next) {
+    final atual = next["atual"];
+    final auto = next["auto"];
+    final fp = "${atual?["real"] ?? 0}|${atual?["prev"] ?? 0}|"
+        "${atual?["pos"] ?? 0}|${atual?["nome"] ?? ""}|"
+        "${auto?["countdown"] ?? 0}|${next["finalizada"] ?? 0}|"
+        "${next["type"] ?? ""}";
+    if (fp == _lastStateFingerprint) return false;
+    _lastStateFingerprint = fp;
+    return true;
   }
 
   bool _isTrue(dynamic v) => v == true || v == 1 || v == "1";

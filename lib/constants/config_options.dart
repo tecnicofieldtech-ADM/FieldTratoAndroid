@@ -40,11 +40,13 @@ class ConfigOptions {
 
   static bool isTgcBackend(int backend) => backend == backendTgc;
 
-  /// FieldPec e TGC: GETs/POSTs sem idFazenda na URL nem no body.
+  /// FieldPec e TGC: GETs de lista sem idFazenda na URL.
   static bool usesOpenApiLists(int backend) =>
       isFieldPecBackend(backend) || isTgcBackend(backend);
 
-  static bool ignoresFazendaId(int backend) => usesOpenApiLists(backend);
+  /// TGC nao usa ID_PROPRIEDADE no POST.
+  /// FieldPec POST /Post/Fabricacao exige id_fazenda/ID_PROPRIEDADE.
+  static bool ignoresFazendaId(int backend) => isTgcBackend(backend);
 
   /// Fabricação em pacote único (POST /Post/Fabricacao com itens).
   static bool usesFabricacaoPacote(int backend) =>

@@ -626,7 +626,8 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     return list;
   }
 
-  num get _totalPrev => _items.fold<num>(0, (a, b) => a + b.previstoKg);
+  num get _totalPrev =>
+      _items.fold<num>(0, (a, b) => a + b.previstoListaKg);
   num get _totalReal => _isPrevistos
       ? _items.fold<num>(0, (a, b) => a + b.realizadoKg)
       : _realizados.fold<num>(0, (a, b) => a + b.realizadoKg);
@@ -648,6 +649,12 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
   }
 
   String _money(num v) => v.toStringAsFixed(2).replaceAll(".", ",");
+
+  String _fmtAjuste(num v) {
+    final n = v.round();
+    if (n > 0) return "+$n";
+    return "$n";
+  }
 
   String _resolveLinha(CurralPrev c) {
     final resolved = resolveLinhaCurral(
@@ -1270,7 +1277,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
                       children: [
                         _pill(
                           title: "Previsto",
-                          value: c.previstoKg.toStringAsFixed(0),
+                          value: c.previstoListaKg.toStringAsFixed(0),
                           gradient: const [
                             Color(0xFF2F6BFF),
                             Color(0xFF0B45D6)
@@ -1287,6 +1294,30 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
                         ),
                       ],
                     ),
+                    if (c.mostrarAjusteUltimoTrato) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _pill(
+                            title: "Ajuste",
+                            value: _fmtAjuste(c.ajusteUltimoTratoKg),
+                            gradient: const [
+                              Color(0xFFE07A1F),
+                              Color(0xFFC45C0C)
+                            ],
+                          ),
+                          const SizedBox(width: 6),
+                          _pill(
+                            title: "A fornecer",
+                            value: c.aFornecerUltimoTratoKg.toStringAsFixed(0),
+                            gradient: const [
+                              Color(0xFF163A8A),
+                              Color(0xFF0B245C)
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     if (c.qtdSessoes > 1)
                       Align(

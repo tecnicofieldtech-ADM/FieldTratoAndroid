@@ -15,6 +15,8 @@ implementation
 uses
   System.Classes,
   System.DateUtils,
+  System.IniFiles,
+  System.IOUtils,
   UdmTGC,
   Controllers.Mirror;
 
@@ -70,6 +72,7 @@ function StrToFloatBR(const S: string): Double;
 var
   L: string;
   FS: TFormatSettings;
+  PosDot, PosComma: Integer;
 begin
   L := Trim(S);
   if L = '' then
@@ -77,8 +80,30 @@ begin
   FS := TFormatSettings.Create;
   FS.DecimalSeparator := '.';
   FS.ThousandSeparator := #0;
-  L := StringReplace(L, '.', '', [rfReplaceAll]);
-  L := StringReplace(L, ',', '.', [rfReplaceAll]);
+
+  PosDot := LastDelimiter('.', L);
+  PosComma := LastDelimiter(',', L);
+
+  if (PosDot > 0) and (PosComma > 0) then
+  begin
+    // ambos presentes: o ultimo separador e o decimal
+    if PosComma > PosDot then
+    begin
+      // BR: 1.234,56 -> remove milhar (ponto), virgula vira ponto
+      L := StringReplace(L, '.', '', [rfReplaceAll]);
+      L := StringReplace(L, ',', '.', [rfReplaceAll]);
+    end
+    else
+    begin
+      // US: 1,234.56 -> remove milhar (virgula)
+      L := StringReplace(L, ',', '', [rfReplaceAll]);
+    end;
+  end
+  else if PosComma > 0 then
+    // so virgula: decimal BR
+    L := StringReplace(L, ',', '.', [rfReplaceAll]);
+  // so ponto (ou sem separador): ja e decimal com ponto (ex.: "52.000" = 52,0)
+
   Result := StrToFloat(L, FS);
 end;
 
@@ -201,6 +226,28 @@ begin
   end;
 end;
 
+function ResolveMotoristaNome(Conn: TFDConnection; const AItem: TJSONObject): string;
+var
+  IdMot, CfornMot: string;
+begin
+  Result := Trim(JSONStrFirst(AItem, ['nome_motorista', 'motorista_nome']));
+  if Result <> '' then
+    Exit;
+
+  IdMot := Trim(JSONStrFirst(AItem,
+    ['id_tratador', 'id_usuario_lancamento', 'id_motorista']));
+  CfornMot := Trim(JSONStrFirst(AItem, ['CFORN_MOTORISTA']));
+
+  if (CfornMot <> '') and (not SameText(CfornMot, IdMot)) then
+  begin
+    Result := CfornMot;
+    Exit;
+  end;
+
+  if IdMot <> '' then
+    Result := LookupNomeOperador(Conn, IdMot);
+end;
+
 function LookupCustoKgInsumo(Conn: TFDConnection; const CodRacao, CodAlimento: string): Double;
 var
   Q: TFDQuery;
@@ -311,19 +358,210 @@ begin
   end;
 end;
 
-function RetornaMaxIDFabricacaoTGC(Conn: TFDConnection): string;
+function TgcApiConfigIniPath: string;
+begin
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'ApiConfig.ini';
+  if not FileExists(Result) then
+    Result := IncludeTrailingPathDelimiter(GetCurrentDir) + 'ApiConfig.ini';
+end;
+
+function ReadTgcIniGenerator(const IniKey: string): string;
+var
+  LIni: TIniFile;
+  LPath: string;
+begin
+  Result := '';
+  LPath := TgcApiConfigIniPath;
+  if not FileExists(LPath) then
+    Exit;
+  LIni := TIniFile.Create(LPath);
+  try
+    Result := UpperCase(Trim(LIni.ReadString('TGC', IniKey, '')));
+  finally
+    LIni.Free;
+  end;
+end;
+
+function GeneratorExists(Conn: TFDConnection; const GenName: string): Boolean;
 var
   Q: TFDQuery;
+  N: string;
 begin
+  Result := False;
+  N := UpperCase(Trim(GenName));
+  if N = '' then
+    Exit;
   Q := TFDQuery.Create(nil);
   try
     Q.Connection := Conn;
-    Q.SQL.Text := 'SELECT COALESCE(MAX(CBT_CODIGO), 0) AS MX FROM CAD_BATIDA';
+    Q.SQL.Text :=
+      'SELECT COUNT(*) AS C FROM RDB$GENERATORS ' +
+      'WHERE RDB$SYSTEM_FLAG = 0 AND RDB$GENERATOR_NAME = :N';
+    Q.ParamByName('N').AsString := N;
     Q.Open;
-    Result := Q.FieldByName('MX').AsString;
+    Result := Q.FieldByName('C').AsInteger > 0;
   finally
     Q.Free;
   end;
+end;
+
+function ResolveTgcGeneratorName(const IniKey: string): string;
+begin
+  Result := ReadTgcIniGenerator(IniKey);
+end;
+
+function FindExistingGenerator(
+  Conn: TFDConnection;
+  const CandidateNames: array of string): string;
+var
+  I: Integer;
+  N: string;
+begin
+  Result := '';
+  for I := 0 to High(CandidateNames) do
+  begin
+    N := UpperCase(Trim(CandidateNames[I]));
+    if (N <> '') and GeneratorExists(Conn, N) then
+      Exit(N);
+  end;
+end;
+
+function TableMaxId(Conn: TFDConnection; const TableName, IdColumn: string): Int64;
+var
+  Q: TFDQuery;
+begin
+  Result := 0;
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text := Format(
+      'SELECT COALESCE(MAX(%s), 0) AS MX FROM %s',
+      [IdColumn, TableName]);
+    Q.Open;
+    Result := Q.FieldByName('MX').AsLargeInt;
+  finally
+    Q.Free;
+  end;
+end;
+
+procedure SyncGeneratorToTableMax(
+  Conn: TFDConnection;
+  const GeneratorName, TableName, IdColumn: string);
+var
+  Q: TFDQuery;
+  MaxId, CurGen: Int64;
+  Gen: string;
+begin
+  Gen := UpperCase(Trim(GeneratorName));
+  if (Gen = '') or not GeneratorExists(Conn, Gen) then
+    Exit;
+
+  MaxId := TableMaxId(Conn, TableName, IdColumn);
+  if MaxId < 0 then
+    MaxId := 0;
+
+  // valor atual do generator (incremento 0 nao altera o valor)
+  CurGen := 0;
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text := Format('SELECT GEN_ID(%s, 0) AS CUR FROM RDB$DATABASE', [Gen]);
+    Q.Open;
+    CurGen := Q.FieldByName('CUR').AsLargeInt;
+  finally
+    Q.Free;
+  end;
+
+  // so SOBE o generator; nunca abaixa (evita colisao com IDs ja alocados pelo ERP TGC)
+  if CurGen >= MaxId then
+    Exit;
+
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text := Format('SET GENERATOR %s TO %d', [Gen, MaxId]);
+    Q.ExecSQL;
+  finally
+    Q.Free;
+  end;
+end;
+
+procedure SyncTgcFabricacaoGenerators(Conn: TFDConnection);
+const
+  CadBatidaFallback: array[0..4] of string = (
+    'AUT_CAD_BATIDA', 'GEN_CAD_BATIDA', 'GEN_CBT_CODIGO', 'CAD_BATIDA_GEN', 'GEN_CBT');
+  DetBatidaFallback: array[0..4] of string = (
+    'AUT_DET_BATIDA', 'GEN_DET_BATIDA', 'GEN_DBT_CODIGO', 'DET_BATIDA_GEN', 'GEN_DBT');
+var
+  GenCad, GenDet: string;
+begin
+  GenCad := ResolveTgcGeneratorName('GenCadBatida');
+  if (GenCad = '') or not GeneratorExists(Conn, GenCad) then
+    GenCad := FindExistingGenerator(Conn, CadBatidaFallback);
+
+  GenDet := ResolveTgcGeneratorName('GenDetBatida');
+  if (GenDet = '') or not GeneratorExists(Conn, GenDet) then
+    GenDet := FindExistingGenerator(Conn, DetBatidaFallback);
+
+  SyncGeneratorToTableMax(Conn, GenCad, 'CAD_BATIDA', 'CBT_CODIGO');
+  SyncGeneratorToTableMax(Conn, GenDet, 'DET_BATIDA', 'DBT_CODIGO');
+end;
+
+function AllocateTgcTableId(
+  Conn: TFDConnection;
+  const TableName, IdColumn, IniGenKey: string;
+  const FallbackGenNames: array of string): Integer;
+var
+  Q: TFDQuery;
+  GenName: string;
+  UsedMaxFallback: Boolean;
+begin
+  Result := 0;
+  UsedMaxFallback := False;
+
+  GenName := ResolveTgcGeneratorName(IniGenKey);
+  if (GenName = '') or not GeneratorExists(Conn, GenName) then
+    GenName := FindExistingGenerator(Conn, FallbackGenNames);
+
+  SyncGeneratorToTableMax(Conn, GenName, TableName, IdColumn);
+
+  if GenName <> '' then
+  begin
+    Q := TFDQuery.Create(nil);
+    try
+      Q.Connection := Conn;
+      Q.SQL.Text := Format('SELECT GEN_ID(%s, 1) AS NX FROM RDB$DATABASE', [GenName]);
+      Q.Open;
+      Result := Q.FieldByName('NX').AsInteger;
+      if Result > 0 then
+        Exit;
+    finally
+      Q.Free;
+    end;
+  end;
+
+  UsedMaxFallback := True;
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text := Format(
+      'SELECT COALESCE(MAX(%s), 0) + 1 AS NX FROM %s',
+      [IdColumn, TableName]);
+    Q.Open;
+    Result := Q.FieldByName('NX').AsInteger;
+    if Result <= 0 then
+      Result := 1;
+  finally
+    Q.Free;
+  end;
+
+  if UsedMaxFallback then
+    SyncGeneratorToTableMax(Conn, GenName, TableName, IdColumn);
+end;
+
+function RetornaMaxIDFabricacaoTGC(Conn: TFDConnection): string;
+begin
+  Result := IntToStr(TableMaxId(Conn, 'CAD_BATIDA', 'CBT_CODIGO'));
 end;
 
 function NormalizeEPC(const S: string): string;
@@ -359,10 +597,12 @@ end;
 
 function ResolveLoteFabricacaoTGC(const Obj: TJSONObject; const MaxLen: Integer): string;
 begin
+  // Nao usar 'id'/'id_fornecimento' como lote — cada trato tem CFORN_CODIGO
+  // diferente e isso gerava lote errado no mesmo carregamento.
   Result := TruncateLoteTGC(
     JSONStrFirst(Obj,
       ['lote_fabricacao', 'CBT_LOTE_FABRICACAO', 'CFORN_LOTE_FABRICACAO',
-       'handoff_id', 'handoff_id_fabricacao', 'id_local', 'id']),
+       'handoff_id', 'handoff_id_fabricacao', 'id_local']),
     MaxLen);
 end;
 
@@ -370,6 +610,25 @@ procedure PostGravaTag(Req: THorseRequest; Res: THorseResponse; Next: TProc); fo
 procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc); forward;
 procedure PostFabricacaoInsumo(Req: THorseRequest; Res: THorseResponse; Next: TProc); forward;
 procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc); forward;
+procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc); forward;
+procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc); forward;
+
+function ExtractStrCI(const Obj: TJSONObject; const Keys: array of string): string;
+var
+  Pair: TJSONPair;
+  k: string;
+begin
+  Result := '';
+  if not Assigned(Obj) then
+    Exit;
+  for k in Keys do
+    for Pair in Obj do
+      if SameText(Pair.JsonString.Value, k) then
+      begin
+        Result := JSONValueToStr(Pair.JsonValue);
+        Exit;
+      end;
+end;
 
 procedure RegistraRotas;
 begin
@@ -377,6 +636,8 @@ begin
   THorse.Post('/Post/Fabricacao', PostFabricacao);
   THorse.Post('/Post/Fabricacao_Insumo', PostFabricacaoInsumo);
   THorse.Post('/Post/GravaTag', PostGravaTag);
+  THorse.Post('/Post/FornecimentoAudit', PostFornecimentoAudit);
+  THorse.Post('/Post/FabricacaoAudit', PostFabricacaoAudit);
 end;
 
 procedure InsertFabricacaoTGC(
@@ -384,36 +645,38 @@ procedure InsertFabricacaoTGC(
   const CodRacaoProd, QtdeBatida: string;
   const CustoTotal: Double;
   const DataFab, HoraIni, HoraFim, Usuario,
-    QtdePrevista, LoteFab, NomeOperador, CodOperadorPA: string;
+    QtdePrevista, LoteFab, NomeOperador, CodOperadorPA, NomeMotorista: string;
   out IdBatida: string);
 var
   Q: TFDQuery;
   NextId: Integer;
-  NomeOp: string;
+  NomeOp, NomeMot: string;
 begin
   NomeOp := Trim(NomeOperador);
   if NomeOp = '' then
     NomeOp := LookupNomeOperador(Conn, CodOperadorPA);
 
+  NomeMot := Trim(NomeMotorista);
+
+  NextId := AllocateTgcTableId(
+    Conn,
+    'CAD_BATIDA',
+    'CBT_CODIGO',
+    'GenCadBatida',
+    ['AUT_CAD_BATIDA', 'GEN_CAD_BATIDA', 'GEN_CBT_CODIGO', 'CAD_BATIDA_GEN', 'GEN_CBT']);
+
   Q := TFDQuery.Create(nil);
   try
     Q.Connection := Conn;
-    Q.SQL.Text := 'SELECT COALESCE(MAX(CBT_CODIGO), 0) + 1 AS NX FROM CAD_BATIDA';
-    Q.Open;
-    NextId := Q.FieldByName('NX').AsInteger;
-    if NextId <= 0 then
-      NextId := 1;
-
-    Q.Close;
     Q.SQL.Text :=
       'INSERT INTO CAD_BATIDA ( ' +
       '  CBT_CODIGO, CBT_CODRACAOPROD, CBT_QTDEBATIDA, CBT_CUSTO, CBT_DATA, ' +
       '  CBT_INICIO, CBT_FIM, CBT_USUARIO, CBT_QTDEPREVISTA, CBT_LOTE_FABRICACAO, ' +
-      '  CBT_NOMEOPERADOR, CBT_COD_OPERADOR_PA ' +
+      '  CBT_NOMEOPERADOR, CBT_COD_OPERADOR_PA, CBT_NOME_MOTORISTA ' +
       ') VALUES ( ' +
       '  :CBT_CODIGO, :CBT_CODRACAOPROD, :CBT_QTDEBATIDA, :CBT_CUSTO, :CBT_DATA, ' +
       '  :CBT_INICIO, :CBT_FIM, :CBT_USUARIO, :CBT_QTDEPREVISTA, :CBT_LOTE_FABRICACAO, ' +
-      '  :CBT_NOMEOPERADOR, :CBT_COD_OPERADOR_PA ' +
+      '  :CBT_NOMEOPERADOR, :CBT_COD_OPERADOR_PA, :CBT_NOME_MOTORISTA ' +
       ')';
     Q.ParamByName('CBT_CODIGO').AsInteger := NextId;
     Q.ParamByName('CBT_CODRACAOPROD').AsString := CodRacaoProd;
@@ -427,6 +690,7 @@ begin
     Q.ParamByName('CBT_LOTE_FABRICACAO').AsString := LoteFab;
     Q.ParamByName('CBT_NOMEOPERADOR').AsString := NomeOp;
     SetParamAsIntStr(Q, 'CBT_COD_OPERADOR_PA', CodOperadorPA);
+    Q.ParamByName('CBT_NOME_MOTORISTA').AsString := NomeMot;
     Q.ExecSQL;
     IdBatida := IntToStr(NextId);
   finally
@@ -449,14 +713,16 @@ begin
   if Item = nil then
     Exit;
 
+  NextId := AllocateTgcTableId(
+    Conn,
+    'DET_BATIDA',
+    'DBT_CODIGO',
+    'GenDetBatida',
+    ['AUT_DET_BATIDA', 'GEN_DET_BATIDA', 'GEN_DBT_CODIGO', 'DET_BATIDA_GEN', 'GEN_DBT']);
+
   Q := TFDQuery.Create(nil);
   try
     Q.Connection := Conn;
-    Q.SQL.Text := 'SELECT COALESCE(MAX(DBT_CODIGO), 0) + 1 AS NX FROM DET_BATIDA';
-    Q.Open;
-    NextId := Q.FieldByName('NX').AsInteger;
-    if NextId <= 0 then
-      NextId := 1;
 
     CodBatida := DefaultCodBatida;
     if CodBatida = '' then
@@ -584,6 +850,7 @@ begin
         LoteFab,
         JSONStrFirst(Body, ['CBT_NOMEOPERADOR', 'nome_operador']),
         ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
+        ResolveMotoristaNome(dm.FBCon, Body),
         IdBatida);
 
       Itens := JSONArrayFirst(Body, ['itens', 'FabricacaoAlimentosTGC', 'TGCFabricacao']);
@@ -601,6 +868,7 @@ begin
         end;
       end;
 
+      SyncTgcFabricacaoGenerators(dm.FBCon);
       dm.FBCon.Commit;
 
       Resp := TJSONObject.Create;
@@ -678,6 +946,7 @@ begin
           ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
           CodRacao);
       end;
+      SyncTgcFabricacaoGenerators(dm.FBCon);
       dm.FBCon.Commit;
       Resp := TJSONObject.Create;
       Resp.AddPair('Ok', IdBatida);
@@ -715,36 +984,15 @@ var
   procedure ApplyFornecimentoItem(const AItem: TJSONObject);
   var
     Q: TFDQuery;
-    LoteForn, CodRacao, RealizadoStr: string;
+    LoteForn, CodRacao, RealizadoStr, CodForn: string;
     CustoKg: Double;
-  begin
-    LoteForn := ResolveLoteFabricacaoTGC(AItem, 20);
-    CodRacao := JSONStrFirst(AItem, ['id_racao', 'CFORN_CODRACAOPROD_PREV', 'id_dieta']);
-    RealizadoStr := JSONStrFirst(AItem, ['realizado', 'CFORN_REALIZADO'], '0');
-    CustoKg := LookupCustoKgRacao(dm.FBCon, CodRacao);
 
-    Q := TFDQuery.Create(nil);
-    try
-      Q.Connection := dm.FBCon;
-      Q.SQL.Text :=
-        'UPDATE CAD_FORNECIMENTO SET ' +
-        '  CFORN_FLAG = ''S'', ' +
-        '  CFORN_REALIZADO = CFORN_REALIZADO + :CFORN_REALIZADO, ' +
-        '  CFORN_CUSTO = :CFORN_CUSTO, ' +
-        '  CFORN_MOTORISTA = :CFORN_MOTORISTA, ' +
-        '  CFORN_HORA = :CFORN_HORA, ' +
-        '  CFORN_LOTE_FABRICACAO = :CFORN_LOTE_FABRICACAO, ' +
-        '  CFORN_HORA_INI = :CFORN_HORA_INI, ' +
-        '  CFORN_HORA_FIM = :CFORN_HORA_FIM, ' +
-        '  CFORN_DATAFORNECIDO = :CFORN_DATAFORNECIDO, ' +
-        '  CFORN_CODRACAOPROD_PREV = :CFORN_CODRACAOPROD_PREV ' +
-        'WHERE CFORN_CODBAIA = :CFORN_CODBAIA ' +
-        '  AND CFORN_TRATO = :CFORN_TRATO ' +
-        '  AND CFORN_DATAFORNECIDO = :CFORN_DATAFORNECIDO_W';
+    procedure BindUpdateCommon;
+    begin
       SetParamAsIntRound(Q, 'CFORN_REALIZADO', RealizadoStr);
       Q.ParamByName('CFORN_CUSTO').AsFloat := CustoKg;
       Q.ParamByName('CFORN_MOTORISTA').AsString :=
-        JSONStrFirst(AItem, ['id_tratador', 'CFORN_MOTORISTA', 'id_motorista']);
+        ResolveMotoristaNome(dm.FBCon, AItem);
       SetParamAsTimeStr(Q, 'CFORN_HORA',
         JSONStrFirst(AItem, ['hora_forn', 'CFORN_HORA', 'hora_fim']));
       Q.ParamByName('CFORN_LOTE_FABRICACAO').AsString := LoteForn;
@@ -756,19 +1004,79 @@ var
         JSONStrFirst(AItem, ['data', 'CFORN_DATAFORNECIDO', 'DATA_FORN']));
       Q.ParamByName('CFORN_CODRACAOPROD_PREV').AsString :=
         JSONStrFirst(AItem, ['id_racao', 'CFORN_CODRACAOPROD_PREV', 'id_dieta']);
-      Q.ParamByName('CFORN_CODBAIA').AsString :=
-        JSONStrFirst(AItem, ['id_baia', 'CFORN_CODBAIA', 'IDCURRAL']);
-      Q.ParamByName('CFORN_TRATO').AsString :=
-        JSONStrFirst(AItem, ['trato', 'CFORN_TRATO']);
-      SetParamAsDateBR(Q, 'CFORN_DATAFORNECIDO_W',
-        JSONStrFirst(AItem, ['data', 'CFORN_DATAFORNECIDO', 'DATA_FORN']));
-      Q.ExecSQL;
+    end;
+
+  begin
+    LoteForn := ResolveLoteFabricacaoTGC(AItem, 20);
+    CodRacao := JSONStrFirst(AItem, ['id_racao', 'CFORN_CODRACAOPROD_PREV', 'id_dieta']);
+    RealizadoStr := JSONStrFirst(AItem, ['realizado', 'CFORN_REALIZADO'], '0');
+    CodForn := JSONStrFirst(AItem,
+      ['id_fornecimento', 'CFORN_CODIGO', 'idFornecimento']);
+    // 'id' sozinho pode ser ambiguo; so usa se nao veio id_fornecimento.
+    if CodForn = '' then
+      CodForn := JSONStrFirst(AItem, ['id']);
+    CustoKg := LookupCustoKgRacao(dm.FBCon, CodRacao);
+
+    Q := TFDQuery.Create(nil);
+    try
+      Q.Connection := dm.FBCon;
+
+      // 1) Preferencia: CFORN_CODIGO (cada trato do mesmo carregamento tem o seu).
+      if Trim(CodForn) <> '' then
+      begin
+        Q.SQL.Text :=
+          'UPDATE CAD_FORNECIMENTO SET ' +
+          '  CFORN_FLAG = ''S'', ' +
+          '  CFORN_REALIZADO = CFORN_REALIZADO + :CFORN_REALIZADO, ' +
+          '  CFORN_CUSTO = :CFORN_CUSTO, ' +
+          '  CFORN_MOTORISTA = :CFORN_MOTORISTA, ' +
+          '  CFORN_HORA = :CFORN_HORA, ' +
+          '  CFORN_LOTE_FABRICACAO = :CFORN_LOTE_FABRICACAO, ' +
+          '  CFORN_HORA_INI = :CFORN_HORA_INI, ' +
+          '  CFORN_HORA_FIM = :CFORN_HORA_FIM, ' +
+          '  CFORN_DATAFORNECIDO = :CFORN_DATAFORNECIDO, ' +
+          '  CFORN_CODRACAOPROD_PREV = :CFORN_CODRACAOPROD_PREV ' +
+          'WHERE CFORN_CODIGO = :CFORN_CODIGO';
+        BindUpdateCommon;
+        SetParamAsIntStr(Q, 'CFORN_CODIGO', CodForn);
+        Q.ExecSQL;
+      end;
+
+      // 2) Fallback: chave natural baia + trato + data (trato como inteiro).
+      if Q.RowsAffected = 0 then
+      begin
+        Q.SQL.Text :=
+          'UPDATE CAD_FORNECIMENTO SET ' +
+          '  CFORN_FLAG = ''S'', ' +
+          '  CFORN_REALIZADO = CFORN_REALIZADO + :CFORN_REALIZADO, ' +
+          '  CFORN_CUSTO = :CFORN_CUSTO, ' +
+          '  CFORN_MOTORISTA = :CFORN_MOTORISTA, ' +
+          '  CFORN_HORA = :CFORN_HORA, ' +
+          '  CFORN_LOTE_FABRICACAO = :CFORN_LOTE_FABRICACAO, ' +
+          '  CFORN_HORA_INI = :CFORN_HORA_INI, ' +
+          '  CFORN_HORA_FIM = :CFORN_HORA_FIM, ' +
+          '  CFORN_DATAFORNECIDO = :CFORN_DATAFORNECIDO, ' +
+          '  CFORN_CODRACAOPROD_PREV = :CFORN_CODRACAOPROD_PREV ' +
+          'WHERE CFORN_CODBAIA = :CFORN_CODBAIA ' +
+          '  AND CFORN_TRATO = :CFORN_TRATO ' +
+          '  AND CFORN_DATAFORNECIDO = :CFORN_DATAFORNECIDO_W';
+        BindUpdateCommon;
+        Q.ParamByName('CFORN_CODBAIA').AsString :=
+          JSONStrFirst(AItem, ['id_baia', 'CFORN_CODBAIA', 'IDCURRAL']);
+        SetParamAsIntStr(Q, 'CFORN_TRATO',
+          JSONStrFirst(AItem, ['trato', 'CFORN_TRATO', 'TRATO']));
+        SetParamAsDateBR(Q, 'CFORN_DATAFORNECIDO_W',
+          JSONStrFirst(AItem, ['data', 'CFORN_DATAFORNECIDO', 'DATA_FORN']));
+        Q.ExecSQL;
+      end;
+
       if Q.RowsAffected = 0 then
         raise Exception.CreateFmt(
-          'Fornecimento nao encontrado (baia=%s trato=%s data=%s).',
+          'Fornecimento nao encontrado (id=%s baia=%s trato=%s data=%s).',
           [
+            CodForn,
             JSONStrFirst(AItem, ['id_baia', 'CFORN_CODBAIA', 'IDCURRAL']),
-            JSONStrFirst(AItem, ['trato', 'CFORN_TRATO']),
+            JSONStrFirst(AItem, ['trato', 'CFORN_TRATO', 'TRATO']),
             JSONStrFirst(AItem, ['data', 'CFORN_DATAFORNECIDO', 'DATA_FORN'])
           ]);
     finally
@@ -921,6 +1229,174 @@ begin
   if Assigned(Resp) then
     Resp.Free;
   dm.Free;
+end;
+
+procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fornecimento');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fornecimento_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
+procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fabricacao');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fabricacao_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
 end;
 
 end.

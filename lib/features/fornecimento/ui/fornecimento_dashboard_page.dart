@@ -655,7 +655,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                   _pickTratoModal();
                 },
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: (MediaQuery.of(context).size.width < 600) ? 4 : 8),
               Expanded(
                 child: _ctrl.loading
                     ? const Center(child: CircularProgressIndicator())
@@ -793,6 +793,63 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     );
   }
 
+  Widget _resumoDietaTratoBar() {
+    final h = _ctrl.header;
+    final t = _ctrl.totais;
+    final dieta = (h?.racaoNome ?? "").trim().isEmpty
+        ? "Dieta"
+        : h!.racaoNome!.trim();
+    final trato = h?.tratoSelecionado == true ? "Trato ${h!.trato}" : "Trato —";
+    String n0(num v) => v.toStringAsFixed(0).replaceAll(".", ",");
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.blueGrey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: Text(
+              "$dieta · $trato",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+          ),
+          _resumoChip("Prev", n0(t.totalPrevistoKg)),
+          const SizedBox(width: 6),
+          _resumoChip("Real", n0(t.totalRealizadoKg)),
+          const SizedBox(width: 6),
+          _resumoChip("Falta", n0(t.faltaKg), emphasize: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _resumoChip(String label, String value, {bool emphasize = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: emphasize ? Colors.orange.shade100 : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
+      ),
+      child: Text(
+        "$label $value",
+        style: TextStyle(
+          fontWeight: FontWeight.w900,
+          fontSize: 12,
+          color: emphasize ? Colors.orange.shade900 : Colors.black87,
+        ),
+      ),
+    );
+  }
+
   Widget _mapaHorizontalBar() {
     return AnimatedBuilder(
       animation: _ctrl,
@@ -850,6 +907,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 ],
               ),
               const SizedBox(height: 8),
+              _resumoDietaTratoBar(),
+              const SizedBox(height: 8),
               SizedBox(
                 height: 125,
                 child: list.isEmpty
@@ -870,7 +929,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                             child: _CurralCardSmall(
                               c: c,
                               isSelected: isSel,
-                              onTap: () async {
+                              // Duplo clique: evita abrir curral ao arrastar o mapa.
+                              onDoubleTap: () async {
                                 await _ctrl.selecionarCurralPorClique(c);
                                 // ignore: unawaited_futures
                                 _saveCurralSelecionadoPref(c.idFornecimento);
@@ -925,6 +985,8 @@ class _HeaderBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
     final dietaTxt = (racaoNome ?? "").trim().isNotEmpty
         ? racaoNome!.trim()
         : ((racaoId ?? "-").trim().isEmpty ? "-" : racaoId!.trim());
@@ -935,7 +997,10 @@ class _HeaderBar extends StatelessWidget {
       required IconData icon,
     }) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: EdgeInsets.symmetric(
+          horizontal: isPhone ? 10 : 14,
+          vertical: isPhone ? 8 : 12,
+        ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
@@ -943,8 +1008,8 @@ class _HeaderBar extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 28, color: Colors.teal.shade700),
-            const SizedBox(width: 10),
+            Icon(icon, size: isPhone ? 22 : 28, color: Colors.teal.shade700),
+            SizedBox(width: isPhone ? 6 : 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -952,7 +1017,7 @@ class _HeaderBar extends StatelessWidget {
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: isPhone ? 10 : 12,
                       fontWeight: FontWeight.w800,
                       color: Colors.grey.shade700,
                     ),
@@ -962,8 +1027,8 @@ class _HeaderBar extends StatelessWidget {
                     value,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 22,
+                    style: TextStyle(
+                      fontSize: isPhone ? 15 : 22,
                       fontWeight: FontWeight.w900,
                       height: 1.1,
                     ),
@@ -977,34 +1042,38 @@ class _HeaderBar extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: onTratoTap,
-                child: cardBody(
-                  label: "Trato",
-                  value: (trato ?? 0) > 0 ? trato.toString() : "Selecione",
-                  icon: Icons.restaurant,
+      padding: EdgeInsets.fromLTRB(
+        isPhone ? 8 : 12, isPhone ? 8 : 12, isPhone ? 8 : 12, 0,
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: onTratoTap,
+                  child: cardBody(
+                    label: "Trato",
+                    value: (trato ?? 0) > 0 ? trato.toString() : "Selecione",
+                    icon: Icons.restaurant,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 2,
-            child: cardBody(
-              label: "Dieta",
-              value: dietaTxt,
-              icon: Icons.grass,
+            SizedBox(width: isPhone ? 6 : 10),
+            Expanded(
+              flex: 2,
+              child: cardBody(
+                label: "Dieta",
+                value: dietaTxt,
+                icon: Icons.grass,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1076,12 +1145,14 @@ class _CurralCardSmall extends StatelessWidget {
   const _CurralCardSmall({
     required this.c,
     required this.isSelected,
-    required this.onTap,
+    this.onTap,
+    this.onDoubleTap,
   });
 
   final CurralCardVM c;
   final bool isSelected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,6 +1185,7 @@ class _CurralCardSmall extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
+        onDoubleTap: onDoubleTap,
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Column(
@@ -1373,25 +1445,25 @@ class _RightPanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: isPhone ? 4 : 10),
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(isPhone ? 8 : 12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(isPhone ? 14 : 18),
               border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
               color: hasSel ? Colors.white : const Color(0xFFF3F5F8),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
+                Text(
                   "Modo Pesagem",
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 16,
+                    fontSize: isPhone ? 13 : 16,
                   ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: isPhone ? 4 : 8),
                 Text(
                   curralNome,
                   maxLines: 1,

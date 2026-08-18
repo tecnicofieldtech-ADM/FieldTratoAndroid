@@ -163,13 +163,21 @@
       try {
         const res = await fetch("/api/config");
         const data = await res.json();
-        activeClient = data.activeClient === "tgc" ? "tgc" : "fieldpec";
-        ENDPOINTS = activeClient === "tgc" ? ENDPOINTS_TGC : ENDPOINTS_FIELDPEC;
+        const raw = String(data.activeClient || "cgpec").toLowerCase();
+        activeClient = raw === "tgc" || raw === "outros" ? "tgc"
+          : raw === "fieldpec" || raw === "field" ? "fieldpec"
+          : "cgpec";
+        ENDPOINTS = activeClient === "tgc" ? ENDPOINTS_TGC
+          : activeClient === "fieldpec" ? ENDPOINTS_FIELDPEC
+          : ENDPOINTS_CGPEC;
         rebuildEndpointSelect();
         document.getElementById("dataPrev").value = new Date().toISOString().slice(0, 10);
         sel.dispatchEvent(new Event("change"));
         const badge = document.getElementById("clientBadge");
-        if (activeClient === "fieldpec") {
+        if (activeClient === "cgpec") {
+          badge.textContent = "Cliente ativo: CGPec — GETs com idfazenda na URL";
+          badge.className = "mt-3 inline-flex rounded-full bg-teal-900/50 px-3 py-1 text-xs font-medium text-teal-200 ring-1 ring-teal-700";
+        } else if (activeClient === "fieldpec") {
           badge.textContent = "Cliente ativo: FieldPec — GETs sem idfazenda na URL";
           badge.className = "mt-3 inline-flex rounded-full bg-amber-900/50 px-3 py-1 text-xs font-medium text-amber-100 ring-1 ring-amber-700";
         } else {

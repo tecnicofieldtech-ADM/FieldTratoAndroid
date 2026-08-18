@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fieldpec
+      POSTGRES_PASSWORD: fieldpec
+      POSTGRES_DB: fieldpec_online
+    ports:
+      - "5432:5432"
+    volumes:
+      - fieldpec_pg:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldpec -d fieldpec_online"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && node src/index.js"
+    environment:
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      DATABASE_URL: postgres://fieldpec:fieldpec@db:5432/fieldpec_online
+      ADMIN_TOKEN: change-me-admin-token
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./api:/app
+      - ./sql:/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  fieldpec_pg:

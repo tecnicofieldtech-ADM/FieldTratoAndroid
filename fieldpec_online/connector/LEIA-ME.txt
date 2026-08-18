@@ -1,0 +1,9 @@
+﻿FieldPec Online â€” Conector (escritorio)
+=======================================
+1. Extraia em C:\FieldPecConnector (ou similar)
+2. Copie connector\.env.example para connector\.env e edite
+3. npm install
+4. npm start
+5. Abra http://localhost:3080 e clique Sincronizar
+
+Guia: DEPLOY_CONECTOR.md

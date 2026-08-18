@@ -701,7 +701,7 @@
       const client = getActiveClient();
       const activeFb = client === "tgc" ? tg : fp;
       const activeLabel = client === "tgc" ? "Outros (TGC)" : "FieldPec";
-      if (!activeFb.host || !activeFb.database || !activeFb.user) {
+      if (!activeFb || !activeFb.host || !activeFb.database || !activeFb.user) {
         showBanner("err", "Preencha host, database e usuário do Firebird (" + activeLabel + ").");
         return;
       }
@@ -728,11 +728,11 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.erro || "Falha ao salvar.");
-        fpForm.password = data.backends.fieldpec?.password || "";
+        fpForm.password = data.backends?.fieldpec?.password || "";
         if (fpForm.password === MASK) fpForm.password = fp.password;
-        tgForm.password = data.backends.tgc?.password || "";
+        tgForm.password = data.backends?.tgc?.password || "";
         if (tgForm.password === MASK) tgForm.password = tg.password;
-        pgForm.password = data.backends.spreadsheet_import.password || "";
+        pgForm.password = data.backends?.spreadsheet_import?.password || "";
         if (pgForm.password === MASK) pgForm.password = pg.password;
         activeClient = data.activeClient === "tgc" ? "tgc" : "fieldpec";
         fpForm = { ...readFp(), password: fpForm.password !== MASK ? fpForm.password : fp.password };

@@ -23,6 +23,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   static const String _stylePrefKey = "pa_style_mode";
 
   Timer? _ticker;
+  bool _wasStale = false;
   String _versionLabel = "--";
   String _styleMode = _styleRfeed;
 
@@ -38,9 +39,15 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     // ignore: unawaited_futures
     _ensureClientStarted();
 
-    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _ticker = Timer.periodic(const Duration(seconds: 3), (_) {
       if (!mounted) return;
-      setState(() {});
+      final lastAt = widget.client.lastMsgAt;
+      final nowStale = lastAt == null ||
+          DateTime.now().difference(lastAt).inMilliseconds > 6000;
+      if (nowStale != _wasStale) {
+        _wasStale = nowStale;
+        setState(() {});
+      }
     });
   }
 
@@ -128,12 +135,12 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   Future<void> _sendNext() async {
     final ok = await widget.client.sendNextCommand();
-    _toast(ok ? "Comando enviado: pular ingrediente" : "Falha ao enviar comando");
+    if (!ok) _toast("Falha ao enviar comando");
   }
 
   Future<void> _sendPrev() async {
     final ok = await widget.client.sendPrevCommand();
-    _toast(ok ? "Comando enviado: voltar ingrediente" : "Falha ao enviar comando");
+    if (!ok) _toast("Falha ao enviar comando");
   }
 
   Future<void> _sendFinish() async {
@@ -160,7 +167,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     if (!confirm) return;
     final ok = await widget.client.sendFinishCommand();
-    _toast(ok ? "Comando enviado: finalizar fabricação" : "Falha ao enviar comando");
+    if (!ok) _toast("Falha ao enviar comando");
   }
 
   String _fmtTime(DateTime? dt) {
@@ -273,7 +280,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
     final ageSec = lastAt == null
         ? null
         : DateTime.now().difference(lastAt).inMilliseconds / 1000.0;
-    final stale = ageSec != null && ageSec > 2.5;
+    final stale = ageSec != null && ageSec > 6.0;
 
     IconData serverIcon;
     Color serverColor;

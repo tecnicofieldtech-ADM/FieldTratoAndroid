@@ -20,7 +20,7 @@ class FornTables {
   // CREATE TABLE PREVISAO (
   //   ID_FORNECIMENTO, DATA, ID_BAIA, TRATO,
   //   PREVISTO_KG, PREVISTO_ORIGINAL_KG, PREVISTO_RECALCULADO_KG,
-  //   REALIZADO_KG, ID_RACAO, ULTIMO_TRATO
+  //   PREVISTO_CADASTRO_KG, REALIZADO_KG, ID_RACAO, ULTIMO_TRATO
   // )
   // =========================
   static const String pvIdFornecimento = "ID_FORNECIMENTO";
@@ -30,6 +30,7 @@ class FornTables {
   static const String pvPrevistoKg = "PREVISTO_KG";
   static const String pvPrevistoOriginalKg = "PREVISTO_ORIGINAL_KG";
   static const String pvPrevistoRecalculadoKg = "PREVISTO_RECALCULADO_KG";
+  static const String pvPrevistoCadastroKg = "PREVISTO_CADASTRO_KG";
   static const String pvRealizadoKg = "REALIZADO_KG";
   static const String pvIdRacao = "ID_RACAO";
   static const String pvUltimoTrato = "ULTIMO_TRATO";
@@ -115,24 +116,21 @@ AND (
 )""";
   }
 
+  /// Realizado do curral = acumulado da API/TGC (PREVISAO) + sessões locais
+  /// ainda não sincronizadas. Não substitui o TGC pela automação.
   static String sqlRealizadoKgLocal(String aliasPrevisao) {
     final a = aliasPrevisao;
     final match = sqlChaveCadastroMatchPrevisao(a, "cf");
     return """
 (
-  SELECT CASE
-    WHEN (
-      SELECT COUNT(*)
+  COALESCE($a.$pvRealizadoKg, 0)
+  + COALESCE((
+      SELECT SUM(COALESCE(cf.$cfRealizado, 0))
       FROM $cadastroFornecimento cf
       WHERE $match
         AND COALESCE(cf.$cfRealizado, 0) > 0
-    ) > 0 THEN (
-      SELECT COALESCE(SUM(COALESCE(cf.$cfRealizado, 0)), 0)
-      FROM $cadastroFornecimento cf
-      WHERE $match
-    )
-    ELSE COALESCE($a.$pvRealizadoKg, 0)
-  END
+        AND IFNULL(cf.$cfFlagSync, 0) = 0
+    ), 0)
 )""";
   }
 

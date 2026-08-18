@@ -22,7 +22,11 @@ class FornecimentoAuditService {
       throw Exception("HOST/PORTA da API invalidos.");
     }
     final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
-    return ApiService(baseUrl: base, backend: backend);
+    return ApiService(
+      baseUrl: base,
+      backend: backend,
+      clientCode: cfgRepo.clienteCodigoFromCfg(cfg),
+    );
   }
 
   Future<String> _deviceId() async {
@@ -36,7 +40,7 @@ class FornecimentoAuditService {
   }
 
   Future<Map<String, dynamic>> buildPayload() async {
-    final rows = await dao.listAllCadastroForAudit();
+    final rows = _sanitizeRows(await dao.listAllCadastroForAudit());
     return {
       "device_id": await _deviceId(),
       "exported_at": DateTime.now().toIso8601String(),
@@ -56,8 +60,27 @@ class FornecimentoAuditService {
     final api = await _api();
     final resp = await api.postFornecimentoAudit(payload, log: log);
     if (resp == null) {
-      throw Exception("Falha ao enviar auditoria para a API.");
+      throw Exception(
+        "Falha ao enviar auditoria para a API (POST /Post/FornecimentoAudit). "
+        "Verifique se o servidor foi atualizado e se o endpoint existe.",
+      );
     }
     return resp;
+  }
+
+  List<Map<String, dynamic>> _sanitizeRows(List<Map<String, Object?>> rows) {
+    return rows
+        .map(
+          (row) => row.map(
+            (key, value) => MapEntry(key, _sanitizeValue(value)),
+          ),
+        )
+        .toList();
+  }
+
+  dynamic _sanitizeValue(Object? value) {
+    if (value == null) return null;
+    if (value is num || value is String || value is bool) return value;
+    return value.toString();
   }
 }

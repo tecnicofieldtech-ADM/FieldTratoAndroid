@@ -3,16 +3,40 @@ import "package:uuid/uuid.dart";
 import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
+import "../repo/user_repo.dart";
 import "../services/api_service.dart";
+import "../services/session_service.dart";
 import "../utils/ms_percent.dart";
 
 class OutboxSync {
   final ApiService api;
   static const _uuid = Uuid();
+  final UserRepo _userRepo = UserRepo();
 
   OutboxSync({required this.api});
 
   String _s(dynamic v) => (v ?? "").toString().trim();
+
+  int _toInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is num) return v.round();
+    final t = _s(v).replaceAll(",", ".");
+    if (t.isEmpty) return 0;
+    final asInt = int.tryParse(t);
+    if (asInt != null) return asInt;
+    return double.tryParse(t)?.round() ?? 0;
+  }
+
+  Future<String> _fetchUsuarioNome(String id) async {
+    final key = id.trim();
+    if (key.isEmpty) return "";
+    final row = await _userRepo.findById(key);
+    return _s(row?["NOME"]);
+  }
+
+  String _motoristaNomeLogin() =>
+      (SessionService.instance.current?.nome ?? "").trim();
 
   double _toDouble(dynamic v) {
     if (v == null) return 0;
@@ -92,12 +116,50 @@ class OutboxSync {
   Future<void> _marcarFornecimentoSyncOk(dynamic db, String idCadastro) async {
     final id = idCadastro.trim();
     if (id.isEmpty) return;
+
+    final rows = await db.rawQuery("""
+      SELECT
+        COALESCE(ID_FORNECIMENTO, '') AS id_fornecimento,
+        COALESCE(ID_BAIA, '') AS id_baia,
+        COALESCE(TRATO, 0) AS trato,
+        substr(COALESCE(DATA, ''), 1, 10) AS data_ymd,
+        COALESCE(REALIZADO, 0) AS realizado,
+        IFNULL(FLAG_SYNC, 0) AS flag_sync
+      FROM CADASTRO_FORNECIMENTO
+      WHERE ID = ?
+      LIMIT 1
+    """, [id]);
+    if (rows.isEmpty) return;
+
+    final alreadySynced =
+        (int.tryParse("${rows.first["flag_sync"]}") ?? 0) == 1;
+    if (alreadySynced) return;
+
     await db.update(
       "CADASTRO_FORNECIMENTO",
       {"FLAG_SYNC": 1},
       where: "ID = ?",
       whereArgs: [id],
     );
+
+    final delta = _toDouble(rows.first["realizado"]);
+    final idForn = _s(rows.first["id_fornecimento"]);
+    final idBaia = _s(rows.first["id_baia"]);
+    final trato = int.tryParse("${rows.first["trato"]}") ?? 0;
+    final dataYmd = _s(rows.first["data_ymd"]);
+    if (delta <= 0 || idForn.isEmpty || idBaia.isEmpty || trato <= 0) return;
+    if (dataYmd.length != 10) return;
+
+    // Absorve a sessão no acumulado da API para o mapa não perder kg
+    // entre o FLAG_SYNC=1 e o próximo download da previsão.
+    await db.rawUpdate("""
+      UPDATE PREVISAO
+      SET REALIZADO_KG = COALESCE(REALIZADO_KG, 0) + ?
+      WHERE TRIM(ID_FORNECIMENTO) = TRIM(?)
+        AND TRIM(ID_BAIA) = TRIM(?)
+        AND TRATO = ?
+        AND substr(COALESCE(DATA, ''), 1, 10) = ?
+    """, [delta, idForn, idBaia, trato, dataYmd]);
   }
 
   Future<double> _fetchDietaMs(dynamic db, String idDieta) async {
@@ -285,6 +347,7 @@ class OutboxSync {
   Future<void> syncFabricacao(
     void Function(String) log,
     String idVagaoCfg, {
+    String idFazendaCfg = "",
     required FabricacaoFlowMode flowMode,
     required int tipoTrabalho,
   }) async {
@@ -317,15 +380,41 @@ class OutboxSync {
       "Sync fabricacao: ${api.usesFabricacaoPacote ? "Pacote (POST /Post/Fabricacao)" : "Cabecalho + /Post/Fabricacao_Insumo"}",
     );
 
+    final fazendaCfg = idFazendaCfg.trim();
+
     for (final f in fab) {
       final idFabricacao = _s(f["ID"]);
-      final idFazenda = _s(f["ID_FAZENDA"]);
+      var idFazenda = _s(f["ID_FAZENDA"]);
+      var idFazendaNum = int.tryParse(idFazenda) ?? 0;
+      if (idFazendaNum <= 0 && fazendaCfg.isNotEmpty) {
+        idFazenda = fazendaCfg;
+        idFazendaNum = int.tryParse(fazendaCfg) ?? 0;
+      }
       var handoffId = _s(f["HANDOFF_ID"]);
       final usePacote = api.usesFabricacaoPacote;
 
       if (idFabricacao.isEmpty) {
         log("Pulando fabricacao sem ID");
         continue;
+      }
+
+      if (!api.ignoresFazendaId && idFazendaNum <= 0) {
+        log(
+          "Pulando fab $idFabricacao: id_fazenda/ID_PROPRIEDADE invalido "
+          "(registro='${_s(f["ID_FAZENDA"])}' config='$fazendaCfg'). "
+          "Confirme a fazenda em Config.",
+        );
+        continue;
+      }
+
+      if ((int.tryParse(_s(f["ID_FAZENDA"])) ?? 0) <= 0 && idFazendaNum > 0) {
+        await db.update(
+          "CADASTRO_FABRICA_RACAO",
+          {"ID_FAZENDA": idFazendaNum.toString()},
+          where: "ID=?",
+          whereArgs: [idFabricacao],
+        );
+        log("ID_FAZENDA preenchido na fab $idFabricacao a partir da config.");
       }
 
       if (handoffId.isEmpty) {
@@ -362,9 +451,36 @@ class OutboxSync {
         continue;
       }
 
+      var nomeOperadorFab = "";
+      var nomeMotoristaFab = "";
+      if (api.isTgc) {
+        nomeOperadorFab = await _fetchUsuarioNome(idOperadorFab);
+        nomeMotoristaFab = _motoristaNomeLogin();
+        if (nomeMotoristaFab.isEmpty) {
+          nomeMotoristaFab =
+              await _fetchUsuarioNome(_s(f["ID_USUARIO"]));
+        }
+        if (nomeOperadorFab.isEmpty) {
+          log(
+            "TGC fab $idFabricacao: nome do operador nao encontrado "
+            "(ID_OPERADOR=$idOperadorFab).",
+          );
+        }
+        if (nomeMotoristaFab.isEmpty) {
+          log(
+            "TGC fab $idFabricacao: nome do motorista vazio "
+            "(sessao/login).",
+          );
+        }
+      }
+
       final payloadFab = <String, dynamic>{
         "handoff_id": handoffId,
-        if (!api.ignoresFazendaId) "id_fazenda": idFazenda,
+        if (!api.ignoresFazendaId) ...{
+          "id_fazenda": idFazendaNum.toString(),
+          "ID_PROPRIEDADE": idFazendaNum.toString(),
+          "id_propriedade": idFazendaNum.toString(),
+        },
         "id_dieta": _s(f["ID_DIETA"]),
         "data": _toBrDate(f["DATA_FABRICACAO"]),
         "id_usuario": idUsuarioFab,
@@ -372,6 +488,14 @@ class OutboxSync {
         if (api.isTgc) ...{
           "CBT_USUARIO": "1",
           "CBT_COD_OPERADOR_PA": idOperadorFab,
+          if (nomeOperadorFab.isNotEmpty) ...{
+            "nome_operador": nomeOperadorFab,
+            "CBT_NOMEOPERADOR": nomeOperadorFab,
+          },
+          if (nomeMotoristaFab.isNotEmpty) ...{
+            "nome_motorista": nomeMotoristaFab,
+            "CBT_NOME_MOTORISTA": nomeMotoristaFab,
+          },
         },
         "id_vagao": idVagaoCfg,
         "qtde_prevista": _toBrIntStr(f["QTD_PREVISTA"]),
@@ -418,7 +542,10 @@ class OutboxSync {
           final item = <String, dynamic>{
             if (!usePacote) "id": _s(i["ID"]),
             if (usePacote) "id_local": _s(i["ID"]),
-            if (!api.ignoresFazendaId) "id_fazenda": idFazenda,
+            if (!api.ignoresFazendaId) ...{
+              "id_fazenda": idFazendaNum.toString(),
+              "ID_PROPRIEDADE": idFazendaNum.toString(),
+            },
             "id_insumo": _s(i["ID_INSUMO"]),
             "qtde_prevista": _br3(i["QTD_PREVISTA"]),
             "qtd_realizada": _br3(i["QTD_REALIZADA"]),
@@ -635,10 +762,17 @@ class OutboxSync {
       log("Fabricacao sync OK $idFabricacao");
 
       if (api.isTgc) {
-        await _syncFornecimentoTgc(
-          log,
-          onlyFabricacaoId: idFabricacao,
-        );
+        // Nao aborta a fabricacao se um trato falhar — o passo
+        // "Sincronizando Fornecimento" tenta o restante.
+        try {
+          await _syncFornecimentoTgc(
+            log,
+            onlyFabricacaoId: idFabricacao,
+            throwOnFailure: false,
+          );
+        } catch (e) {
+          log("TGC: aviso ao enviar tratos da fab $idFabricacao: $e");
+        }
       }
     }
   }
@@ -919,10 +1053,13 @@ class OutboxSync {
     }
   }
 
-  /// TGC: sem vinculo sobe livre; com vinculo exige fabricacao FLAG_SYNC=1 e envia lote (20).
+  /// TGC: sem vinculo sobe livre; com vinculo exige fabricacao FLAG_SYNC=1.
+  /// Cada CADASTRO_FORNECIMENTO = 1 POST (trato 1 e 2 do mesmo carregamento
+  /// sobem separados — nunca agrupar).
   Future<void> _syncFornecimentoTgc(
     void Function(String) log, {
     String? onlyFabricacaoId,
+    bool throwOnFailure = true,
   }) async {
     final db = await AppDb.instance.db;
     final fabFilter = (onlyFabricacaoId ?? "").trim();
@@ -1016,17 +1153,30 @@ class OutboxSync {
     }
 
     var syncedCount = 0;
+    var failedCount = 0;
+    log(
+      "TGC: enviando ${rows.length} fornecimento(s) "
+      "(1 POST por cadastro/trato; mesmo carregamento NAO agrupa).",
+    );
     for (final r in rows) {
       final idPrev = _s(r["id_fornecimento"]);
       final idCad = _s(r["id_cadastro"]);
       final idBaia = _s(r["id_baia"]);
       final idRacao = _s(r["id_racao"]);
       final idFab = _s(r["id_fabricacao"]);
-      final trato = int.tryParse(_s(r["trato"])) ?? 0;
+      final trato = _toInt(r["trato"]);
       final dataRef = _toBrDate(r["data_forn"]);
       final deltaSessao = _toDouble(r["delta_sessao"]);
-      if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) continue;
+      if (idPrev.isEmpty || idCad.isEmpty || deltaSessao <= 0) {
+        failedCount++;
+        log(
+          "TGC fornecimento IGNORADO (chave/realizado invalido): "
+          "cadastro=$idCad idFornecimento=$idPrev realizado=$deltaSessao",
+        );
+        continue;
+      }
       if (idBaia.isEmpty || idRacao.isEmpty || trato <= 0 || dataRef.isEmpty) {
+        failedCount++;
         log(
           "TGC fornecimento chave incompleta: cadastro=$idCad "
           "baia=$idBaia racao=$idRacao trato=$trato data=$dataRef",
@@ -1036,6 +1186,7 @@ class OutboxSync {
 
       final msResolved = _toDouble(r["ms_dieta_realizada"]);
       if (!MsPercent.isValid(msResolved)) {
+        failedCount++;
         log(
           "TGC fornecimento cadastro=$idCad: MS invalida "
           "(fab/dieta; deve ser > 0 e <= 100). Pulando.",
@@ -1047,12 +1198,15 @@ class OutboxSync {
         "id": idPrev,
         "id_cadastro": idCad,
         "id_fornecimento": idPrev,
+        "CFORN_CODIGO": idPrev,
         "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
         "id_tratador": _s(r["id_usuario_lancamento"]),
         "id_dieta_realizada": _s(r["id_dieta_realizada"]),
         "id_baia": idBaia,
         "id_racao": idRacao,
         "trato": trato.toString(),
+        "TRATO": trato.toString(),
+        "CFORN_TRATO": trato.toString(),
         "data": dataRef,
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
@@ -1068,10 +1222,14 @@ class OutboxSync {
           payload["CFORN_LOTE_FABRICACAO"] = lote;
         }
         log(
-          "TGC fornecimento cadastro=$idCad VINCULADO fab=$idFab lote=$lote",
+          "TGC fornecimento cadastro=$idCad VINCULADO fab=$idFab lote=$lote "
+          "trato=$trato idFornecimento=$idPrev realizado=$deltaSessao",
         );
       } else {
-        log("TGC fornecimento cadastro=$idCad SEM vinculo de fabricacao.");
+        log(
+          "TGC fornecimento cadastro=$idCad SEM vinculo de fabricacao "
+          "trato=$trato idFornecimento=$idPrev realizado=$deltaSessao",
+        );
       }
 
       _putHorasFornecimento(
@@ -1080,26 +1238,52 @@ class OutboxSync {
         horaFim: _toHora(r["hora_fim"]),
       );
 
+      var nomeMotorista = _motoristaNomeLogin();
+      if (nomeMotorista.isEmpty) {
+        nomeMotorista =
+            await _fetchUsuarioNome(_s(r["id_usuario_lancamento"]));
+      }
+      if (nomeMotorista.isNotEmpty) {
+        payload["nome_motorista"] = nomeMotorista;
+        payload["CFORN_MOTORISTA"] = nomeMotorista;
+      } else {
+        log(
+          "TGC fornecimento cadastro=$idCad: nome motorista vazio "
+          "(sessao/login).",
+        );
+      }
+
       final payloadFixed = _fixBodyDecimals(payload) as Map<String, dynamic>;
       final ok = await api.postFornecimento(payloadFixed, log: log);
       if (ok) {
         await _marcarFornecimentoSyncOk(db, idCad);
         syncedCount++;
       } else {
+        failedCount++;
         log(
-          "TGC falha fornecimento cadastro=$idCad "
-          "chave=$idBaia|$idRacao|$dataRef|$trato",
+          "TGC FALHA fornecimento cadastro=$idCad "
+          "chave=$idBaia|$idRacao|$dataRef|trato=$trato "
+          "idFornecimento=$idPrev — NAO marcado FLAG_SYNC",
         );
       }
     }
 
     if (syncedCount > 0) {
       log("TGC: $syncedCount fornecimento(s) sincronizado(s).");
-    } else if (rows.isNotEmpty) {
-      log(
-        "TGC: ${rows.length} pendente(s), nenhum enviado "
-        "(verifique MS ou resposta da API).",
-      );
+    }
+    if (failedCount > 0) {
+      final msg =
+          "TGC: $failedCount fornecimento(s) NAO subiram (de ${rows.length} "
+          "elegiveis). Verifique o log — nenhum pode ficar para tras.";
+      log(msg);
+      if (throwOnFailure) throw Exception(msg);
+    }
+    if (syncedCount == 0 && rows.isNotEmpty) {
+      final msg =
+          "TGC: ${rows.length} fornecimento(s) pendente(s) nao enviados "
+          "(verifique MS ou resposta da API).";
+      log(msg);
+      if (throwOnFailure) throw Exception(msg);
     }
   }
 }

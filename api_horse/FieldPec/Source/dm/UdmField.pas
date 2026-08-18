@@ -328,9 +328,12 @@ begin
     Add('      WHERE ss.ID_LOTE = s.ID_LOTE');
     Add('        AND ss.DATA = s.DATA');
     Add('    ),');
+    // Ultimo trato: saldo do dia sem descontar o realizado deste trato
+    // (equivale a PREVISTO_ORIGINAL do FieldPec).
     Add('    (');
     Add('      SELECT (');
     Add('        COALESCE(SUM(sss.PREV_MS_CONSUMIDA),0) - COALESCE(SUM(sss.REAL_MS_CONSUMIDA),0)');
+    Add('        + COALESCE(s.REAL_MS_CONSUMIDA,0)');
     Add('      )');
     Add('      FROM CADASTRO_FORNECIMENTO sss');
     Add('      WHERE sss.DATA = s.DATA');

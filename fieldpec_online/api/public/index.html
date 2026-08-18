@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FieldPec Online — Painel</title>
+  <style>
+    :root {
+      --bg: #0e1318;
+      --panel: #172029;
+      --panel2: #1e2a36;
+      --text: #e8eef6;
+      --muted: #8fa0b5;
+      --accent: #2f9e6d;
+      --accent2: #3b82c4;
+      --warn: #c9a227;
+      --err: #d35454;
+      --ok: #2f9e6d;
+      --border: #2a3848;
+      --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+      --sans: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 0% 0%, #1a3328 0%, transparent 55%),
+        radial-gradient(700px 380px at 100% 0%, #1a2740 0%, transparent 50%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 85%, transparent);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(8px);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    header .meta { color: var(--muted); font-size: 0.85rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+    }
+    .badge.ok { background: #1b3a2c; color: #7ddea8; border-color: #2f5a42; }
+    .badge.err { background: #3a1b1b; color: #f0a0a0; border-color: #5a2f2f; }
+    .badge.warn { background: #3a321b; color: #e6d08a; border-color: #5a4f2f; }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      padding: 0.75rem 1.25rem 0;
+    }
+    nav button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.45rem 0.85rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.9rem;
+    }
+    nav button.active {
+      background: var(--accent);
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
+    main { padding: 1rem 1.25rem 2.5rem; max-width: 1200px; margin: 0 auto; }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .panel h2 {
+      margin: 0 0 0.85rem;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      font-weight: 650;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.65rem;
+    }
+    .stat {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem;
+    }
+    .stat .n { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.03em; }
+    .stat .l { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+    label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 0.25rem; }
+    input, select, textarea {
+      width: 100%;
+      background: #0f161e;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.55rem 0.7rem;
+      font: inherit;
+      margin-bottom: 0.75rem;
+    }
+    textarea { min-height: 120px; font-family: var(--mono); font-size: 0.82rem; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: flex-end; }
+    .row > * { flex: 1 1 160px; }
+    button.primary, .actions button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
+    button.danger { background: #5a2a2a; border-color: #7a3a3a; }
+    pre, .code {
+      margin: 0;
+      background: #0b1016;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      overflow: auto;
+      max-height: 420px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.45rem 0.5rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    tr:hover td { background: #1a2430; }
+    .check-item {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.65rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .check-item:last-child { border-bottom: 0; }
+    .dot {
+      width: 0.7rem; height: 0.7rem; border-radius: 50%;
+      margin-top: 0.35rem; flex-shrink: 0;
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.err { background: var(--err); }
+    .hidden { display: none !important; }
+    .hint { color: var(--muted); font-size: 0.88rem; line-height: 1.45; margin: 0 0 0.85rem; }
+    .endpoints { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.75rem; }
+    .endpoints button { font-size: 0.78rem; padding: 0.35rem 0.55rem; }
+    .log-box {
+      background: #0b1016; border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.9rem 1rem; font-size: 0.92rem; line-height: 1.5;
+    }
+    .log-box .log-title { font-size: 1.05rem; font-weight: 650; margin: 0 0 0.5rem; }
+    .log-box .log-ok { color: #7ddea8; }
+    .log-box .log-err { color: #f0a0a0; }
+    .log-box .log-muted { color: var(--muted); font-size: 0.88rem; }
+    .log-box ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
+    .log-box li { margin: 0.15rem 0; }
+    button.tiny {
+      padding: 0.25rem 0.55rem; font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>FieldPec Online</h1>
+      <div class="meta">Painel de homologação · teste · logs · conferência</div>
+    </div>
+    <div id="hdrStatus"><span class="badge warn">carregando…</span></div>
+    <div style="display:flex;align-items:flex-end;gap:0.5rem;min-width:200px">
+      <div style="flex:1">
+        <label style="margin:0">Cliente (filtro)</label>
+        <select id="globalClientCode" style="margin:0">
+          <option value="">— todos —</option>
+          <option value="DEMO" selected>DEMO</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <button type="button" data-tab="checklist" class="active">Checklist</button>
+    <button type="button" data-tab="clientes">Clientes</button>
+    <button type="button" data-tab="config">Configuração</button>
+    <button type="button" data-tab="probe">Testar métodos</button>
+    <button type="button" data-tab="data">Conferência</button>
+    <button type="button" data-tab="logs">Logs</button>
+  </nav>
+
+  <main>
+    <section id="tab-checklist" class="tab">
+      <div class="panel">
+        <h2>Pronto para o FieldTrato?</h2>
+        <p class="hint">Marca o que falta antes de apontar o tablet para este host. Filtre pelo código do cliente acima.</p>
+        <div id="checklistBox">…</div>
+      </div>
+      <div class="panel">
+        <h2>Contadores</h2>
+        <div class="grid" id="statsGrid"></div>
+      </div>
+    </section>
+
+    <section id="tab-clientes" class="tab hidden">
+      <div class="panel">
+        <h2>Cadastrar / validar cliente</h2>
+        <p class="hint">
+          Use o <strong>código da licença</strong> (ex.: <code>2411141</code>).
+          A API consulta a GeLicenca; só grava se a licença estiver <strong>Ativa</strong>.
+        </p>
+        <div class="row">
+          <div>
+            <label>Código</label>
+            <input id="cliCodigo" placeholder="2411141" />
+          </div>
+          <div>
+            <label>Nome (opcional)</label>
+            <input id="cliNome" placeholder="Ex.: Barra do Garças" />
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" id="btnValidarCliente">Validar licença</button>
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" class="primary" id="btnSaveCliente">Salvar cliente</button>
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" id="btnReloadClientes">Atualizar lista</button>
+          </div>
+        </div>
+        <div class="log-box" id="cliLog" style="margin-top:0.85rem">
+          <div class="log-title log-muted">Aguardando</div>
+          <p class="log-muted">Valide ou salve um cliente para ver o resultado aqui.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Clientes cadastrados</h2>
+        <div style="overflow:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nome</th>
+                <th>Status</th>
+                <th>Atualizado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="clientesBody">
+              <tr><td colspan="5">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab hidden">
+      <div class="panel">
+        <h2>Banco PostgreSQL</h2>
+        <p class="hint">
+          Preencha como no DBeaver. Ao salvar, a API monta o arquivo <code>.env</code> automaticamente e testa a conexão.
+        </p>
+        <div class="row">
+          <div>
+            <label>Host</label>
+            <input id="cfgDbHost" placeholder="127.0.0.1" autocomplete="off" />
+          </div>
+          <div>
+            <label>Porta</label>
+            <input id="cfgDbPort" type="number" placeholder="5432" />
+          </div>
+          <div>
+            <label>Usuário</label>
+            <input id="cfgDbUser" placeholder="postgres" autocomplete="username" />
+          </div>
+          <div>
+            <label>Senha</label>
+            <input id="cfgDbPassword" type="password" placeholder="senha do Postgres" autocomplete="current-password" />
+          </div>
+          <div>
+            <label>Nome do banco</label>
+            <input id="cfgDbName" placeholder="nome_do_banco" />
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="primary" id="btnSaveCfg">Salvar (.env)</button>
+          <button type="button" id="btnTestDb">Testar conexão PG</button>
+          <button type="button" id="btnReloadCfg">Recarregar</button>
+        </div>
+        <p class="hint" id="cfgStatusMsg" style="margin-top:0.85rem;margin-bottom:0"></p>
+      </div>
+
+      <details class="panel" style="padding-top:0.75rem">
+        <summary style="cursor:pointer;color:var(--muted);font-size:0.85rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.75rem">
+          Avançado (porta da API)
+        </summary>
+        <div class="row">
+          <div>
+            <label>Porta HTTP da API</label>
+            <input id="cfgPort" type="number" placeholder="3111" />
+          </div>
+          <div>
+            <label>Token admin (open = aberto)</label>
+            <input id="cfgToken" placeholder="open" />
+          </div>
+        </div>
+        <p class="hint">Host de escuta fica fixo em <code>0.0.0.0</code> (aceita conexões externas).</p>
+      </details>
+
+      <div class="panel">
+        <h2>FieldTrato</h2>
+        <pre id="cfgFieldtrato"></pre>
+      </div>
+    </section>
+
+    <section id="tab-probe" class="tab hidden">
+      <div class="panel">
+        <h2>Testar endpoints (contrato Horse / FieldTrato)</h2>
+        <div class="endpoints" id="quickEndpoints"></div>
+        <div class="row">
+          <div style="flex:0 0 110px">
+            <label>Método</label>
+            <select id="probeMethod">
+              <option>GET</option>
+              <option>POST</option>
+            </select>
+          </div>
+          <div>
+            <label>Path</label>
+            <input id="probePath" value="/GetTeste" />
+          </div>
+        </div>
+        <label>Body JSON (POST)</label>
+        <textarea id="probeBody" placeholder='{"exemplo": true}'></textarea>
+        <div class="actions">
+          <button type="button" class="primary" id="btnProbe">Executar</button>
+        </div>
+        <pre id="probeOut" style="margin-top:0.85rem"></pre>
+      </div>
+    </section>
+
+    <section id="tab-data" class="tab hidden">
+      <div class="panel">
+        <h2>Conferência de dados</h2>
+        <div class="row">
+          <div>
+            <label>Tabela</label>
+            <select id="dataTable">
+              <option>fazendas</option>
+              <option>usuarios</option>
+              <option>vagoes</option>
+              <option>baias</option>
+              <option>dietas</option>
+              <option>dietas_detalhes</option>
+              <option>previsao</option>
+              <option>fabricacoes</option>
+              <option>fornecimentos</option>
+              <option>audits</option>
+              <option>grava_tags</option>
+              <option>clientes</option>
+            </select>
+          </div>
+          <div style="flex:0 0 100px">
+            <label>Limite</label>
+            <input id="dataLimit" type="number" value="50" />
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" class="primary" id="btnLoadData">Carregar</button>
+          </div>
+        </div>
+        <pre id="dataOut"></pre>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab hidden">
+      <div class="panel">
+        <h2>Logs de requisição</h2>
+        <div class="row">
+          <div>
+            <label>Filtro path</label>
+            <input id="logQ" placeholder="/Post/Fabricacao" />
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" class="primary" id="btnLogs">Atualizar</button>
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" class="danger" id="btnClearLogs">Limpar</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Quando</th>
+                <th>Cliente</th>
+                <th>Método</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>ms</th>
+                <th>IP</th>
+                <th>Body</th>
+              </tr>
+            </thead>
+            <tbody id="logsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const QUICK = [
+      ["GET", "/GetTeste"],
+      ["GET", "/fazenda/get"],
+      ["GET", "/usuarios/get"],
+      ["GET", "/baias/get"],
+      ["GET", "/dietas/get"],
+      ["GET", "/dietas_detalhes/get"],
+      ["GET", "/previsao_trato/get"],
+      ["GET", "/vagao/get"],
+      ["GET", "/admin/health"],
+      ["GET", "/admin/stats"],
+      ["GET", "/admin/checklist"],
+    ];
+
+    function selectedClientCode() {
+      const el = document.getElementById("globalClientCode");
+      return (el && el.value ? String(el.value) : "").trim().toUpperCase();
+    }
+
+    function withClientQuery(path) {
+      const cc = selectedClientCode();
+      if (!cc) return path;
+      const sep = path.includes("?") ? "&" : "?";
+      return path + sep + "client_code=" + encodeURIComponent(cc);
+    }
+
+    async function api(path, opts = {}) {
+      const cc = selectedClientCode();
+      const headers = {
+        Accept: "application/json",
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
+        ...(opts.headers || {}),
+      };
+      if (cc) headers["X-Client-Code"] = cc;
+      let r;
+      try {
+        r = await fetch(path, {
+          ...opts,
+          headers,
+          body: opts.body != null ? JSON.stringify(opts.body) : undefined,
+        });
+      } catch (e) {
+        throw new Error(
+          "Sem resposta da API (Failed to fetch). Confira se o processo Node está rodando na porta 3111 e tente de novo.",
+        );
+      }
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = text; }
+      if (!r.ok) {
+        const msg =
+          typeof data === "string"
+            ? data
+            : data.error || data.message || data.hint || r.statusText || "Erro HTTP " + r.status;
+        throw new Error(msg);
+      }
+      return data;
+    }
+
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function fmtDt(iso) {
+      if (!iso) return "—";
+      try { return new Date(iso).toLocaleString("pt-BR"); } catch { return String(iso); }
+    }
+
+    function showCliLog(html) {
+      const el = document.getElementById("cliLog");
+      if (el) el.innerHTML = html;
+    }
+
+    function formatLicencaOk(r, saved) {
+      const title = saved
+        ? "Cliente salvo com licença válida"
+        : "Licença válida";
+      const venc = r.vencimento || (r.licenca && r.licenca.vencimento) || "—";
+      const status = r.statuslicencastr || (r.licenca && r.licenca.status) || "Ativa";
+      const sistema = r.sistema || (r.licenca && r.licenca.sistema) || "FIELD PEC";
+      const codigo = r.codigo || (r.cliente && r.cliente.codigo) || "";
+      const nome = r.nome || (r.cliente && r.cliente.nome) || "";
+      return (
+        `<div class="log-title log-ok">${escHtml(title)}</div>` +
+        `<ul>` +
+        `<li><strong>Código:</strong> ${escHtml(codigo)}</li>` +
+        (nome ? `<li><strong>Nome:</strong> ${escHtml(nome)}</li>` : "") +
+        `<li><strong>Sistema:</strong> ${escHtml(sistema)}</li>` +
+        `<li><strong>Status:</strong> ${escHtml(status)}</li>` +
+        `<li><strong>Vencimento:</strong> ${escHtml(venc)}</li>` +
+        `</ul>` +
+        `<p class="log-muted">Pode usar este código no conector (CLIENT_CODE) e no FieldTrato.</p>`
+      );
+    }
+
+    function formatLicencaErr(msg) {
+      return (
+        `<div class="log-title log-err">Não foi possível validar / salvar</div>` +
+        `<p class="log-err">${escHtml(msg)}</p>` +
+        `<p class="log-muted">Confira o código na GeLicenca, se a API Node está no ar e se a tabela clientes existe no Postgres.</p>`
+      );
+    }
+
+    function renderClientesTable(rows) {
+      const tb = document.getElementById("clientesBody");
+      if (!tb) return;
+      if (!rows.length) {
+        tb.innerHTML =
+          '<tr><td colspan="5">Nenhum cliente cadastrado ainda.</td></tr>';
+        return;
+      }
+      tb.innerHTML = rows
+        .map((c) => {
+          const ok = c.ativo !== false;
+          return `<tr>
+            <td><strong>${escHtml(c.codigo)}</strong></td>
+            <td>${escHtml(c.nome || "")}</td>
+            <td>${ok ? '<span class="badge ok">Ativo</span>' : '<span class="badge err">Inativo</span>'}</td>
+            <td>${escHtml(fmtDt(c.updated_at || c.created_at))}</td>
+            <td>
+              <button type="button" class="tiny" data-use="${escHtml(c.codigo)}">Usar filtro</button>
+              ${ok ? `<button type="button" class="tiny" data-off="${escHtml(c.codigo)}">Desativar</button>` : `<button type="button" class="tiny" data-on="${escHtml(c.codigo)}">Ativar</button>`}
+            </td>
+          </tr>`;
+        })
+        .join("");
+
+      tb.querySelectorAll("[data-use]").forEach((b) => {
+        b.onclick = () => {
+          const sel = document.getElementById("globalClientCode");
+          if (sel) {
+            sel.value = b.getAttribute("data-use");
+            loadChecklist().catch(() => {});
+          }
+        };
+      });
+      tb.querySelectorAll("[data-off]").forEach((b) => {
+        b.onclick = async () => {
+          const codigo = b.getAttribute("data-off");
+          if (!confirm("Desativar cliente " + codigo + "?")) return;
+          try {
+            await api("/admin/clientes/" + encodeURIComponent(codigo), {
+              method: "PATCH",
+              body: { ativo: false },
+            });
+            await loadClientesSelect();
+          } catch (e) {
+            alert(e.message);
+          }
+        };
+      });
+      tb.querySelectorAll("[data-on]").forEach((b) => {
+        b.onclick = async () => {
+          const codigo = b.getAttribute("data-on");
+          try {
+            await api("/admin/clientes/" + encodeURIComponent(codigo), {
+              method: "PATCH",
+              body: { ativo: true },
+            });
+            await loadClientesSelect();
+          } catch (e) {
+            alert(e.message);
+          }
+        };
+      });
+    }
+
+    async function loadClientesSelect() {
+      const tb = document.getElementById("clientesBody");
+      try {
+        const r = await api("/admin/clientes");
+        const sel = document.getElementById("globalClientCode");
+        const cur = selectedClientCode() || "DEMO";
+        const rows = r.rows || [];
+        if (sel) {
+          sel.innerHTML =
+            '<option value="">— todos —</option>' +
+            rows
+              .map(
+                (c) =>
+                  `<option value="${escHtml(c.codigo)}">${escHtml(c.codigo)}${c.ativo === false ? " (inativo)" : ""}</option>`,
+              )
+              .join("");
+          if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+          else if ([...sel.options].some((o) => o.value === "DEMO")) sel.value = "DEMO";
+        }
+        renderClientesTable(rows);
+      } catch (e) {
+        if (tb) {
+          tb.innerHTML =
+            `<tr><td colspan="5" class="log-err">Erro ao listar: ${escHtml(e.message)}</td></tr>`;
+        }
+        showCliLog(formatLicencaErr(e.message));
+      }
+    }
+
+    function fillDbForm(c) {
+      if (!c) return;
+      if (c.port != null) document.getElementById("cfgPort").value = c.port;
+      if (c.admin_token != null) {
+        document.getElementById("cfgToken").value = c.admin_token || "open";
+      }
+      if (c.db_host) document.getElementById("cfgDbHost").value = c.db_host;
+      if (c.db_port) document.getElementById("cfgDbPort").value = c.db_port;
+      if (c.db_user) document.getElementById("cfgDbUser").value = c.db_user;
+      if (c.db_name != null && String(c.db_name).trim() !== "") {
+        document.getElementById("cfgDbName").value = c.db_name;
+      }
+      document.getElementById("cfgDbPassword").value = "";
+      document.getElementById("cfgDbPassword").placeholder = c.db_password_set
+        ? "•••••••• (já salva — digite de novo para testar/alterar)"
+        : "digite a senha do Postgres";
+      if (document.getElementById("cfgFieldtrato") && c.fieldtrato) {
+        document.getElementById("cfgFieldtrato").textContent =
+          JSON.stringify(c.fieldtrato, null, 2);
+      }
+    }
+
+    function restoreForm(snapshot) {
+      document.getElementById("cfgDbHost").value = snapshot.db_host || "";
+      document.getElementById("cfgDbPort").value = snapshot.db_port || 5432;
+      document.getElementById("cfgDbUser").value = snapshot.db_user || "";
+      document.getElementById("cfgDbName").value = snapshot.db_name || "";
+      document.getElementById("cfgDbPassword").value = snapshot.db_password || "";
+      if (snapshot.PORT) document.getElementById("cfgPort").value = snapshot.PORT;
+      if (snapshot.ADMIN_TOKEN != null) {
+        document.getElementById("cfgToken").value = snapshot.ADMIN_TOKEN;
+      }
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".tab").forEach((el) => el.classList.add("hidden"));
+      document.getElementById("tab-" + name).classList.remove("hidden");
+      document.querySelectorAll("nav button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === name);
+      });
+      if (name === "clientes") loadClientesSelect().catch(() => {});
+    }
+
+    document.querySelectorAll("nav button").forEach((b) => {
+      b.onclick = () => showTab(b.dataset.tab);
+    });
+
+    async function loadChecklist() {
+      const [check, stats] = await Promise.all([
+        api(withClientQuery("/admin/checklist")),
+        api(withClientQuery("/admin/stats")),
+      ]);
+      const box = document.getElementById("checklistBox");
+      if (!box) return;
+      const ready = check.ready_for_fieldtrato;
+      document.getElementById("hdrStatus").innerHTML = ready
+        ? '<span class="badge ok">pronto para FieldTrato' +
+          (check.cliente_codigo ? " · " + check.cliente_codigo : "") +
+          "</span>"
+        : '<span class="badge warn">faltam cadastros / DB</span>';
+
+      box.innerHTML = (check.items || []).map((it) => `
+        <div class="check-item">
+          <div class="dot ${it.ok ? "ok" : "err"}"></div>
+          <div>
+            <strong>${it.title}</strong>
+            <div class="meta">${it.detail || ""}</div>
+          </div>
+        </div>`).join("");
+
+      const grid = document.getElementById("statsGrid");
+      if (grid) {
+        const entries = Object.entries(stats);
+        grid.innerHTML = entries.map(([k, v]) => `
+          <div class="stat"><div class="n">${v}</div><div class="l">${k}</div></div>`).join("");
+      }
+    }
+
+    async function loadConfig() {
+      const prevName = document.getElementById("cfgDbName").value;
+      const prevUser = document.getElementById("cfgDbUser").value;
+      const prevHost = document.getElementById("cfgDbHost").value;
+      const c = await api("/admin/config");
+      fillDbForm(c);
+      // Se API ainda não tem banco no .env, preserva o que estava na tela
+      if (!document.getElementById("cfgDbName").value && prevName) {
+        document.getElementById("cfgDbName").value = prevName;
+      }
+      if (!document.getElementById("cfgDbUser").value && prevUser) {
+        document.getElementById("cfgDbUser").value = prevUser;
+      }
+      if (!document.getElementById("cfgDbHost").value && prevHost) {
+        document.getElementById("cfgDbHost").value = prevHost;
+      }
+      const msg = document.getElementById("cfgStatusMsg");
+      if (c.db_ok) {
+        msg.innerHTML =
+          '<span class="badge ok">Conectado ao Postgres</span> · ' +
+          (c.db_user || "") +
+          "@" +
+          (c.db_host || "") +
+          ":" +
+          (c.db_port || "") +
+          "/" +
+          (c.db_name || "");
+      } else {
+        msg.innerHTML =
+          '<span class="badge err">Falha no banco</span> · ' +
+          (c.db_error || "verifique os campos");
+      }
+      document.getElementById("hdrStatus").innerHTML = c.db_ok
+        ? '<span class="badge ok">DB OK · porta ' + c.port + "</span>"
+        : '<span class="badge err">DB falhou</span>';
+      return c;
+    }
+
+    function collectDbBody() {
+      return {
+        PORT: document.getElementById("cfgPort").value || "3111",
+        HOST: "0.0.0.0",
+        ADMIN_TOKEN: document.getElementById("cfgToken").value || "open",
+        db_host: document.getElementById("cfgDbHost").value.trim(),
+        db_port: document.getElementById("cfgDbPort").value,
+        db_user: document.getElementById("cfgDbUser").value.trim(),
+        db_name: document.getElementById("cfgDbName").value.trim(),
+        db_password: document.getElementById("cfgDbPassword").value,
+      };
+    }
+
+    document.getElementById("btnReloadCfg").onclick = () =>
+      loadConfig().catch(alert);
+
+    document.getElementById("btnTestDb").onclick = async () => {
+      const msg = document.getElementById("cfgStatusMsg");
+      const btn = document.getElementById("btnTestDb");
+      const snapshot = collectDbBody();
+      btn.disabled = true;
+      msg.textContent = "Testando Postgres…";
+      try {
+        if (!snapshot.db_host || !snapshot.db_user || !snapshot.db_name) {
+          alert("Preencha Host, Usuário e Nome do banco.");
+          return;
+        }
+        if (!snapshot.db_password) {
+          alert("Digite a Senha no campo para testar (obrigatório).");
+          return;
+        }
+        const r = await api("/admin/config", {
+          method: "POST",
+          body: { ...snapshot, action: "test" },
+        });
+        restoreForm(snapshot);
+        const who = (r.tested_as && r.tested_as.user) || snapshot.db_user;
+        const dbn = (r.tested_as && r.tested_as.database) || snapshot.db_name;
+        msg.innerHTML =
+          '<span class="badge ok">Conexão OK</span> · testado como <strong>' +
+          who +
+          "</strong> @ " +
+          snapshot.db_host +
+          ":" +
+          snapshot.db_port +
+          "/" +
+          dbn;
+        document.getElementById("hdrStatus").innerHTML =
+          '<span class="badge ok">PG OK</span>';
+      } catch (e) {
+        restoreForm(snapshot);
+        msg.innerHTML = '<span class="badge err">Falha</span> · ' + e.message;
+        document.getElementById("hdrStatus").innerHTML =
+          '<span class="badge err">PG falhou</span>';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    document.getElementById("btnSaveCfg").onclick = async () => {
+      const msg = document.getElementById("cfgStatusMsg");
+      const snapshot = collectDbBody();
+      msg.textContent = "Salvando…";
+      try {
+        if (!snapshot.db_host || !snapshot.db_user || !snapshot.db_name) {
+          alert("Preencha Host, Usuário e Nome do banco.");
+          return;
+        }
+        if (!snapshot.db_password) {
+          alert("Digite a Senha no campo para salvar.");
+          return;
+        }
+        const r = await api("/admin/config", {
+          method: "POST",
+          body: snapshot,
+        });
+        restoreForm(snapshot);
+        document.getElementById("cfgDbPassword").value = "";
+        document.getElementById("cfgDbPassword").placeholder =
+          "•••••••• (já salva — digite de novo para testar/alterar)";
+        const saved =
+          (r.config && r.config.saved_as) || r.saved_as || snapshot;
+        msg.innerHTML =
+          '<span class="badge ok">Salvo no .env</span> · ' +
+          (saved.db_user || snapshot.db_user) +
+          "@" +
+          (saved.db_host || snapshot.db_host) +
+          "/" +
+          (saved.db_name || snapshot.db_name);
+        document.getElementById("hdrStatus").innerHTML =
+          '<span class="badge ok">DB OK</span>';
+        alert(
+          "Salvo!\nUsuário: " +
+            (saved.db_user || snapshot.db_user) +
+            "\nBanco: " +
+            (saved.db_name || snapshot.db_name),
+        );
+      } catch (e) {
+        restoreForm(snapshot);
+        msg.innerHTML =
+          '<span class="badge err">Erro ao salvar</span> · ' + e.message;
+        alert(e.message);
+      }
+    };
+
+    const quick = document.getElementById("quickEndpoints");
+    QUICK.forEach(([m, p]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = m + " " + p;
+      b.onclick = () => {
+        document.getElementById("probeMethod").value = m;
+        document.getElementById("probePath").value = p;
+        document.getElementById("probeBody").value = "";
+      };
+      quick.appendChild(b);
+    });
+
+    document.getElementById("btnProbe").onclick = async () => {
+      const method = document.getElementById("probeMethod").value;
+      const path = document.getElementById("probePath").value;
+      let body = null;
+      const raw = document.getElementById("probeBody").value.trim();
+      if (method === "POST" && raw) {
+        try { body = JSON.parse(raw); }
+        catch (e) { alert("JSON inválido: " + e.message); return; }
+      }
+      document.getElementById("probeOut").textContent = "executando…";
+      try {
+        const r = await api("/admin/probe", {
+          method: "POST",
+          body: {
+            method,
+            path,
+            body,
+            client_code: selectedClientCode() || null,
+          },
+        });
+        document.getElementById("probeOut").textContent = JSON.stringify(r, null, 2);
+      } catch (e) {
+        document.getElementById("probeOut").textContent = e.message;
+      }
+    };
+
+    document.getElementById("btnLoadData").onclick = async () => {
+      const t = document.getElementById("dataTable").value;
+      const limit = document.getElementById("dataLimit").value || 50;
+      document.getElementById("dataOut").textContent = "…";
+      try {
+        const r = await api(
+          withClientQuery(
+            "/admin/data/" + encodeURIComponent(t) + "?limit=" + limit,
+          ),
+        );
+        document.getElementById("dataOut").textContent = JSON.stringify(r, null, 2);
+      } catch (e) {
+        document.getElementById("dataOut").textContent = e.message;
+      }
+    };
+
+    async function loadLogs() {
+      const q = document.getElementById("logQ").value.trim();
+      let path = "/admin/logs?limit=150";
+      if (q) path += "&q=" + encodeURIComponent(q);
+      path = withClientQuery(path);
+      const r = await api(path);
+      const tb = document.getElementById("logsBody");
+      tb.innerHTML = (r.rows || []).map((row) => {
+        const body = row.request_body
+          ? JSON.stringify(row.request_body).slice(0, 180)
+          : "";
+        return `<tr>
+          <td>${row.created_at || ""}</td>
+          <td>${row.cliente_codigo || ""}</td>
+          <td>${row.method || ""}</td>
+          <td>${row.path || ""}</td>
+          <td>${row.status_code ?? ""}</td>
+          <td>${row.duration_ms != null ? Number(row.duration_ms).toFixed(1) : ""}</td>
+          <td>${row.remote_ip || ""}</td>
+          <td><code>${body.replace(/</g, "&lt;")}</code></td>
+        </tr>`;
+      }).join("") || "<tr><td colspan='8'>Sem logs</td></tr>";
+    }
+
+    document.getElementById("btnLogs").onclick = () => loadLogs().catch(alert);
+    document.getElementById("btnClearLogs").onclick = async () => {
+      if (!confirm("Limpar logs?")) return;
+      await api("/admin/logs", { method: "DELETE" });
+      await loadLogs();
+    };
+
+    document.getElementById("btnReloadClientes").onclick = () =>
+      loadClientesSelect().catch(alert);
+
+    document.getElementById("btnValidarCliente").onclick = async () => {
+      const codigo = document.getElementById("cliCodigo").value.trim();
+      if (!codigo) {
+        alert("Informe o código do cliente.");
+        return;
+      }
+      showCliLog(
+        `<div class="log-title">Consultando licença…</div>` +
+          `<p class="log-muted">Código ${escHtml(codigo)} · GeLicenca / sistema 1</p>`,
+      );
+      try {
+        const r = await api("/admin/clientes/validar", {
+          method: "POST",
+          body: { codigo },
+        });
+        showCliLog(formatLicencaOk(r, false));
+        if (r.nome && !document.getElementById("cliNome").value.trim()) {
+          document.getElementById("cliNome").value = r.nome;
+        }
+      } catch (e) {
+        showCliLog(formatLicencaErr(e.message));
+      }
+    };
+
+    document.getElementById("btnSaveCliente").onclick = async () => {
+      const codigo = document.getElementById("cliCodigo").value.trim();
+      const nome = document.getElementById("cliNome").value.trim();
+      if (!codigo) {
+        alert("Informe o código do cliente.");
+        return;
+      }
+      showCliLog(
+        `<div class="log-title">Validando e salvando…</div>` +
+          `<p class="log-muted">Aguarde a consulta da GeLicenca.</p>`,
+      );
+      try {
+        const r = await api("/admin/clientes", {
+          method: "POST",
+          body: { codigo, nome: nome || undefined },
+        });
+        const merged = {
+          ...(r.cliente || {}),
+          ...(r.cliente && r.cliente.licenca ? r.cliente.licenca : {}),
+          codigo: (r.cliente && r.cliente.codigo) || codigo,
+          nome: (r.cliente && r.cliente.nome) || nome,
+          vencimento:
+            (r.cliente && r.cliente.licenca && r.cliente.licenca.vencimento) ||
+            null,
+          statuslicencastr:
+            (r.cliente && r.cliente.licenca && r.cliente.licenca.status) ||
+            "Ativa",
+          sistema:
+            (r.cliente && r.cliente.licenca && r.cliente.licenca.sistema) ||
+            "FIELD PEC",
+        };
+        showCliLog(formatLicencaOk(merged, true));
+        document.getElementById("cliCodigo").value = "";
+        document.getElementById("cliNome").value = "";
+        await loadClientesSelect();
+        const sel = document.getElementById("globalClientCode");
+        if (sel && merged.codigo) sel.value = String(merged.codigo).toUpperCase();
+      } catch (e) {
+        showCliLog(formatLicencaErr(e.message));
+      }
+    };
+
+    document.getElementById("globalClientCode").onchange = () => {
+      loadChecklist().catch(console.warn);
+    };
+
+    Promise.all([loadClientesSelect(), loadChecklist(), loadConfig()])
+      .catch((e) => {
+        document.getElementById("hdrStatus").innerHTML =
+          '<span class="badge err">' + e.message + "</span>";
+      });
+  </script>
+</body>
+</html>

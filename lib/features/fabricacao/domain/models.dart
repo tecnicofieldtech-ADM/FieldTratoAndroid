@@ -23,6 +23,11 @@ class FabIngrediente {
   final int previstoKg;
   final int realizadoKg;
 
+  final String horaInicio;
+  final String horaFim;
+  final int pesoInicio;
+  final int pesoFim;
+
   /// 0/1
   final int prePesado;
 
@@ -33,6 +38,10 @@ class FabIngrediente {
     required this.ordem,
     required this.previstoKg,
     required this.realizadoKg,
+    this.horaInicio = "",
+    this.horaFim = "",
+    this.pesoInicio = 0,
+    this.pesoFim = 0,
     required this.prePesado,
   });
 
@@ -46,6 +55,10 @@ class FabIngrediente {
       ordem: ordem,
       previstoKg: previstoKg,
       realizadoKg: realizadoKg ?? this.realizadoKg,
+      horaInicio: horaInicio,
+      horaFim: horaFim,
+      pesoInicio: pesoInicio,
+      pesoFim: pesoFim,
       prePesado: prePesado,
     );
   }
@@ -63,6 +76,10 @@ class FabIngrediente {
         ordem: _toInt(m['ordem'] ?? m['ORDEM'] ?? m['orderm'] ?? m['ORDERM']),
         previstoKg: _toInt(m['qtd_prevista'] ?? m['QTD_PREVISTA']),
         realizadoKg: _toInt(m['qtd_realizada'] ?? m['QTD_REALIZADA']),
+        horaInicio: (m['hora_inicio'] ?? m['HORA_INICIO'] ?? '').toString(),
+        horaFim: (m['hora_fim'] ?? m['HORA_FIM'] ?? '').toString(),
+        pesoInicio: _toInt(m['peso_inicio'] ?? m['PESO_INICIO']),
+        pesoFim: _toInt(m['peso_fim'] ?? m['PESO_FIM']),
         prePesado: _toInt(m['pre_pesado'] ?? m['PRE_PESADO']),
       );
 }

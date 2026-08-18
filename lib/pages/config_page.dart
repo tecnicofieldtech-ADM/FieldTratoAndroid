@@ -1,12 +1,14 @@
 // lib/pages/config_page.dart
 import "dart:async";
 import "package:flutter/material.dart";
+import "package:network_info_plus/network_info_plus.dart";
 
 import "../repo/config_repo.dart";
 import "../services/config_disk_backup.dart";
 import "../repo/vagao_repo.dart";
 import "../repo/fazenda_repo.dart";
 import "../repo/user_repo.dart";
+import "../services/api_service.dart";
 import "../services/bootstrap_sync.dart";
 import "../services/wifi_guard.dart";
 import "../features/estacionario/data/carregamento_estacionario_api.dart";
@@ -34,6 +36,7 @@ class ConfigPage extends StatefulWidget {
 
 class _ConfigPageState extends State<ConfigPage> {
   final _cfgRepo = ConfigRepo();
+  final _netInfo = NetworkInfo();
   final _vagaoRepo = VagaoRepo();
   final _fazendaRepo = FazendaRepo();
   final _userRepo = UserRepo();
@@ -47,12 +50,12 @@ class _ConfigPageState extends State<ConfigPage> {
 
   final _hostCtrl = TextEditingController();
   final _portaCtrl = TextEditingController();
+  final _clienteCodigoCtrl = TextEditingController();
   final _ipBalancaCtrl = TextEditingController();
   final _portaBalancaCtrl = TextEditingController();
   final _ipRfidCtrl = TextEditingController();
   final _portaRfidCtrl = TextEditingController();
   final _prefixoRfidCtrl = TextEditingController(text: "H");
-  final _ipEspelhoCtrl = TextEditingController();
   final _portaEspelhoCtrl = TextEditingController();
   final _hostEstacionarioCtrl = TextEditingController();
   final _portaEstacionarioCtrl = TextEditingController();
@@ -168,12 +171,30 @@ class _ConfigPageState extends State<ConfigPage> {
   }
 
   String? _backupPath;
+  String _wifiIp = "--";
+  Timer? _wifiIpTimer;
 
   @override
   void initState() {
     super.initState();
     _loadFromDb();
     unawaited(_loadBackupInfo());
+    _refreshWifiIp();
+    _wifiIpTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _refreshWifiIp(),
+    );
+  }
+
+  Future<void> _refreshWifiIp() async {
+    try {
+      final ip = (await _netInfo.getWifiIP())?.trim() ?? "";
+      if (!mounted) return;
+      setState(() => _wifiIp = ip.isEmpty ? "--" : ip);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _wifiIp = "--");
+    }
   }
 
   Future<void> _loadBackupInfo() async {
@@ -220,12 +241,12 @@ class _ConfigPageState extends State<ConfigPage> {
   void dispose() {
     _hostCtrl.dispose();
     _portaCtrl.dispose();
+    _clienteCodigoCtrl.dispose();
     _ipBalancaCtrl.dispose();
     _portaBalancaCtrl.dispose();
     _ipRfidCtrl.dispose();
     _portaRfidCtrl.dispose();
     _prefixoRfidCtrl.dispose();
-    _ipEspelhoCtrl.dispose();
     _portaEspelhoCtrl.dispose();
     _hostEstacionarioCtrl.dispose();
     _portaEstacionarioCtrl.dispose();
@@ -244,6 +265,8 @@ class _ConfigPageState extends State<ConfigPage> {
 
     _rfidTestTimeout?.cancel();
     _stopRfidTestComm();
+
+    _wifiIpTimer?.cancel();
 
     super.dispose();
   }
@@ -298,6 +321,8 @@ class _ConfigPageState extends State<ConfigPage> {
       final portaCfg = _asStr(cfg["PORTA"]);
       _portaCtrl.text =
           portaCfg.isEmpty ? "${ConfigOptions.defaultApiPort}" : portaCfg;
+      _clienteCodigoCtrl.text =
+          _asStr(cfg["CLIENTE_CODIGO"]).trim().toUpperCase();
 
       _backend = ConfigOptions.normalizeBackend(_asInt(cfg["BACKEND"], 0));
       _operacao = _asInt(cfg["TIPO_TRABALHO"], 0);
@@ -315,7 +340,6 @@ class _ConfigPageState extends State<ConfigPage> {
           ? "H"
           : _asStr(cfg["PREFIXO_RFID"]).trim().substring(0, 1).toUpperCase();
 
-      _ipEspelhoCtrl.text = _asStr(cfg["IP_ESPELHO"]);
       _portaEspelhoCtrl.text = _asStr(cfg["PORTA_ESPELHO"]);
       _modoSaidaFab = _asInt(cfg["MODO_SAIDA_FAB"], 0);
       _ledBtAddress = _asStr(cfg["LED_BT_ADDRESS"]).trim();
@@ -467,6 +491,7 @@ class _ConfigPageState extends State<ConfigPage> {
     return {
       "HOST": _hostCtrl.text.trim(),
       "PORTA": int.tryParse(_portaCtrl.text.trim()) ?? ConfigOptions.defaultApiPort,
+      "CLIENTE_CODIGO": _clienteCodigoCtrl.text.trim().toUpperCase(),
       "BACKEND": _backend,
       "TIPO_TRABALHO": _operacao,
       "MODELO_BALANCA": _modeloBalanca,
@@ -483,7 +508,6 @@ class _ConfigPageState extends State<ConfigPage> {
       "MODO_SAIDA_FAB": _modoSaidaFab,
       "LED_BT_ADDRESS": _ledBtAddress,
       "LED_BT_NAME": _ledBtName,
-      "IP_ESPELHO": _ipEspelhoCtrl.text.trim(),
       "PORTA_ESPELHO": int.tryParse(_portaEspelhoCtrl.text.trim()) ?? 9000,
       "HOST_ESTACIONARIO": hostEst,
       "PORTA_ESTACIONARIO": portaEst,
@@ -558,6 +582,54 @@ class _ConfigPageState extends State<ConfigPage> {
     }
 
     return true;
+  }
+
+  Future<bool> _validateClienteCodigoNaApi({bool toastOk = false}) async {
+    final code = _clienteCodigoCtrl.text.trim().toUpperCase();
+    // Horse/API local não usa multi-tenant. Só valida se o código foi informado
+    // (necessário na API online).
+    if (code.isEmpty) {
+      return true;
+    }
+
+    final host = _hostCtrl.text.trim();
+    final porta = int.tryParse(_portaCtrl.text.trim());
+    if (host.isEmpty || porta == null || porta <= 0) {
+      _toast("Informe IP e porta do servidor de dados.");
+      return false;
+    }
+
+    final base = _cfgRepo.buildBaseUrl({
+      "HOST": host,
+      "PORTA": porta,
+    });
+    if (base.isEmpty) {
+      _toast("HOST/PORTA inválidos.");
+      return false;
+    }
+
+    try {
+      final api = ApiService(
+        baseUrl: base,
+        backend: ConfigOptions.normalizeBackend(_backend),
+        clientCode: code,
+      );
+      final info = await api.validateClienteCodigo();
+      if (toastOk) {
+        final nome = (info["nome"] ?? "").toString().trim();
+        _toast(
+          nome.isNotEmpty
+              ? "Cliente validado: $code · $nome"
+              : "Cliente validado: $code",
+        );
+      }
+      return true;
+    } catch (e) {
+      _toast(
+        "Código do cliente inválido ou não cadastrado na API. $e",
+      );
+      return false;
+    }
   }
 
   // ============================
@@ -862,6 +934,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _onBaixarVagao() async {
     if (!_validateBase()) return;
+    if (!await _validateClienteCodigoNaApi()) return;
 
     setState(() => _loadingVagao = true);
     try {
@@ -919,6 +992,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _onBaixarFazendas() async {
     if (!_validateBase()) return;
+    if (!await _validateClienteCodigoNaApi()) return;
 
     setState(() => _loadingFazendas = true);
     try {
@@ -938,6 +1012,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _onConfirmar() async {
     if (!_validateBase()) return;
+    if (!await _validateClienteCodigoNaApi(toastOk: true)) return;
 
     if (_idVagao == null || _idVagao!.isEmpty) {
       _toast("Selecione o Vagão (ou baixe primeiro).");
@@ -1027,28 +1102,22 @@ class _ConfigPageState extends State<ConfigPage> {
         await _handleBack();
       },
       child: Scaffold(
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
-          child: SafeArea(
-            top: true,
-            bottom: false,
-            child: AppBar(
-              title: const Text("Configuração"),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: _handleBack,
-              ),
-            ),
+        appBar: AppBar(
+          title: const Text("Configuração"),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _handleBack,
           ),
         ),
         body: AbsorbPointer(
           absorbing: busy,
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 10 : 16,
-            ),
-            child: Column(
-              children: [
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(
+                MediaQuery.of(context).size.width < 600 ? 10 : 16,
+              ),
+              child: Column(
+                children: [
                 _sectionTitle("Servidor de Dados"),
                 Row(
                   children: [
@@ -1074,6 +1143,19 @@ class _ConfigPageState extends State<ConfigPage> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _clienteCodigoCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: "Código do cliente (API online)",
+                    hintText: "Opcional — ex.: 2411141",
+                    helperText:
+                        "Obrigatório só na API online. Deixe em branco na API local (Horse). "
+                        "Mesmo código do conector, cadastrado em /admin · Clientes.",
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 16),
 
@@ -1576,8 +1658,15 @@ class _ConfigPageState extends State<ConfigPage> {
                 if (_modoSaidaFab == 0) ...[
                   Text(
                     "Espelhamento multi-PA (Wi-Fi). O vagao abre um servidor na porta abaixo.\n"
-                    "As PAs conectam no IP deste tablet automaticamente.",
+                    "Cadastre o IP deste tablet na pá com a mesma porta.",
                     style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    "IP deste tablet na rede Wi-Fi: $_wifiIp",
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
                   const SizedBox(height: 8),
                   TextField(
@@ -1835,6 +1924,7 @@ class _ConfigPageState extends State<ConfigPage> {
                   ),
                 ),
               ],
+              ),
             ),
           ),
         ),

@@ -53,12 +53,26 @@
     async function load() {
       try {
         const res = await fetch("/api/request-logs?limit=300", { cache: "no-store" });
-        const data = await res.json();
+        const text = await res.text();
+        let data = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (parseErr) {
+          countBadge.textContent = "JSON invalido (HTTP " + res.status + ")";
+          countBadge.title = String(parseErr && parseErr.message ? parseErr.message : parseErr);
+          return;
+        }
+        if (!res.ok) {
+          countBadge.textContent = "HTTP " + res.status;
+          countBadge.title = data.erro || data.error || text.slice(0, 200);
+          return;
+        }
         const items = Array.isArray(data.items) ? data.items : [];
         if (filePath && data.filePath) filePath.textContent = "Arquivo: " + data.filePath;
         render(items);
-      } catch {
+      } catch (e) {
         countBadge.textContent = "Falha ao carregar";
+        countBadge.title = String(e && e.message ? e.message : e);
       }
     }
 

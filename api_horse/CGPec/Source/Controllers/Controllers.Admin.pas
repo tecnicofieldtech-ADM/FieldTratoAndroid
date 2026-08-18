@@ -152,6 +152,7 @@ begin
   dmdb.ReadMirrorIni(LMirrorEnabled, LMirrorUrl, LMirrorNextApiBase);
 
   LBackends := TJSONObject.Create;
+  LBackends.AddPair('cgpec', BackendToJson(LCgHost, LCgDb, LCgUser, LCgPass, LCgPort, LCgRole, True));
   LBackends.AddPair('fieldpec', BackendToJson(LFpHost, LFpDb, LFpUser, LFpPass, LFpPort, LFpRole, True));
   LBackends.AddPair('tgc', BackendToJson(LTgHost, LTgDb, LTgUser, LTgPass, LTgPort, LTgRole, True));
   LBackends.AddPair('spreadsheet_import',
@@ -177,6 +178,7 @@ end;
 function BuildSyncJsonForNextApi(
   const ActiveClient: string;
   const FornecimentoAcumulativo: Boolean;
+  const CgHost, CgDb, CgUser, CgPass: string; CgPort: Integer; const CgRole: string;
   const FpHost, FpDb, FpUser, FpPass: string; FpPort: Integer; const FpRole: string;
   const TgHost, TgDb, TgUser, TgPass: string; TgPort: Integer; const TgRole: string;
   const PgHost, PgDb, PgUser, PgPass: string; PgPort: Integer): string;
@@ -184,18 +186,21 @@ var
   LRoot, LBackends: TJSONObject;
   LClient: string;
 begin
+  { next-api só conhece cgpec | fieldpec | spreadsheet_import (não tem tgc). }
   LClient := LowerCase(Trim(ActiveClient));
-  if (LClient <> 'fieldpec') and (LClient <> 'tgc') and (LClient <> 'outros') and
-     (LClient <> 'spreadsheet_import') and (LClient <> 'cgpec') then
-    LClient := 'fieldpec';
   if LClient = 'outros' then
     LClient := 'tgc';
+  if LClient = 'tgc' then
+    LClient := 'fieldpec'
+  else if (LClient <> 'fieldpec') and (LClient <> 'cgpec') and
+          (LClient <> 'spreadsheet_import') then
+    LClient := 'fieldpec';
 
   LRoot := TJSONObject.Create;
   try
     LBackends := TJSONObject.Create;
+    LBackends.AddPair('cgpec', BackendToJson(CgHost, CgDb, CgUser, CgPass, CgPort, CgRole, False));
     LBackends.AddPair('fieldpec', BackendToJson(FpHost, FpDb, FpUser, FpPass, FpPort, FpRole, False));
-    LBackends.AddPair('tgc', BackendToJson(TgHost, TgDb, TgUser, TgPass, TgPort, TgRole, False));
     LBackends.AddPair('spreadsheet_import', BackendToJson(PgHost, PgDb, PgUser, PgPass, PgPort, '', False));
     LRoot.AddPair('activeClient', LClient);
     LRoot.AddPair('fornecimentoAcumulativo', TJSONBool.Create(FornecimentoAcumulativo));
@@ -327,8 +332,9 @@ end;
 procedure PostApiConfig(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
   LBody: TJSONObject;
-  LFieldpec, LTgc, LSpreadsheet, LMirror, LResponse: TJSONObject;
+  LCgpec, LFieldpec, LTgc, LSpreadsheet, LMirror, LResponse: TJSONObject;
   LCgHost, LCgUser, LCgPass, LCgDb, LCgRole, LCgPortStr: string;
+  LCgPort: Integer;
   LFpHost, LFpUser, LFpPass, LFpDb, LFpRole: string;
   LFpPort: Integer;
   LTgHost, LTgUser, LTgPass, LTgDb, LTgRole: string;
@@ -357,12 +363,47 @@ begin
     try
       LActiveClient := LowerCase(JsonStr(LBody, 'activeClient', 'fieldpec'));
       if (LActiveClient <> 'fieldpec') and (LActiveClient <> 'tgc') and
-         (LActiveClient <> 'outros') and (LActiveClient <> 'spreadsheet_import') then
+         (LActiveClient <> 'outros') and (LActiveClient <> 'spreadsheet_import') and
+         (LActiveClient <> 'cgpec') then
         LActiveClient := 'fieldpec';
       if LActiveClient = 'outros' then
         LActiveClient := 'tgc';
 
       dmdb.ReadCgpecIni(LCurCgHost, LCurCgUser, LCurCgPass, LCurCgPort, LCurCgDb, LCurCgRole);
+
+      LCgpec := ExtractBackend(LBody, 'cgpec');
+      if LCgpec <> nil then
+      begin
+        LCgHost := JsonStr(LCgpec, 'host', LCurCgHost);
+        LCgPort := JsonInt(LCgpec, 'port', StrToIntDef(LCurCgPort, 3050));
+        LCgPortStr := IntToStr(LCgPort);
+        LCgDb := JsonStr(LCgpec, 'database', LCurCgDb);
+        LCgUser := JsonStr(LCgpec, 'user', LCurCgUser);
+        LCgPass := JsonStr(LCgpec, 'password', '');
+        LCgRole := JsonStr(LCgpec, 'role', LCurCgRole);
+        if LCgPass = MASK_PASSWORD then
+          LCgPass := LCurCgPass;
+      end
+      else
+      begin
+        LCgHost := LCurCgHost;
+        LCgUser := LCurCgUser;
+        LCgPass := LCurCgPass;
+        LCgPortStr := LCurCgPort;
+        LCgDb := LCurCgDb;
+        LCgRole := LCurCgRole;
+        LCgPort := StrToIntDef(LCurCgPort, 3050);
+      end;
+
+      if LActiveClient = 'cgpec' then
+      begin
+        if LCgHost = '' then
+          raise Exception.Create('Host CGPec obrigatório.');
+        if LCgDb = '' then
+          raise Exception.Create('Database CGPec obrigatório.');
+        if LCgUser = '' then
+          raise Exception.Create('Usuário CGPec obrigatório.');
+      end;
 
       LFieldpec := ExtractBackend(LBody, 'fieldpec');
       if LFieldpec = nil then
@@ -465,13 +506,6 @@ begin
         raise Exception.Create('Ponto de corte fornecimento (kg) deve ser 0 ou maior.');
       LPontoCorteStr := StringReplace(FormatFloat('0.###', LPontoCorteKg), ',', '.', [rfReplaceAll]);
 
-      LCgHost := LCurCgHost;
-      LCgUser := LCurCgUser;
-      LCgPass := LCurCgPass;
-      LCgPortStr := LCurCgPort;
-      LCgDb := LCurCgDb;
-      LCgRole := LCurCgRole;
-
       dmdb.WriteApiConfigIni(LActiveClient,
         LCgHost, LCgUser, LCgPass, LCgPortStr, LCgDb, LCgRole,
         LFpHost, LFpUser, LFpPass, IntToStr(LFpPort), LFpDb, LFpRole,
@@ -483,6 +517,7 @@ begin
       BiMirrorReloadConfig;
 
       TrySyncConfigToNextApi(BuildSyncJsonForNextApi(LActiveClient, LFornAcumulativo,
+        LCgHost, LCgDb, LCgUser, LCgPass, StrToIntDef(LCgPortStr, 3050), LCgRole,
         LFpHost, LFpDb, LFpUser, LFpPass, LFpPort, LFpRole,
         LTgHost, LTgDb, LTgUser, LTgPass, LTgPort, LTgRole,
         LPgHost, LPgDb, LPgUser, LPgPass, LPgPort), LSyncOk, LSyncMsg);
@@ -669,6 +704,7 @@ begin
       LTgPort := StrToIntDef(LTgPortStr, 3050);
       TrySyncConfigToNextApi(BuildSyncJsonForNextApi(dmdb.GetActiveClient,
         dmdb.GetFornecimentoAcumulativo,
+        LCgHost, LCgDb, LCgUser, LCgPass, StrToIntDef(LCgPortStr, 3050), LCgRole,
         LFpHost, LFpDb, LFpUser, LFpPass, LFpPort, LFpRole,
         LTgHost, LTgDb, LTgUser, LTgPass, LTgPort, LTgRole,
         LPgHost, LPgDb, LPgUser, LPgPass, LPgPort), LSyncOk, LSyncMsg);

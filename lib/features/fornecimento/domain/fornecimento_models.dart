@@ -110,6 +110,7 @@ class CurralPrev {
     required this.previstoKg,
     this.previstoOriginalKg,
     this.previstoRecalculadoKg,
+    this.previstoCadastroKg,
     this.isUltimoTrato = false,
     this.realizadoKg = 0,
     this.faltaKg = 0,
@@ -134,6 +135,7 @@ class CurralPrev {
   final double previstoKg;
   final double? previstoOriginalKg;
   final double? previstoRecalculadoKg;
+  final double? previstoCadastroKg;
   final bool isUltimoTrato;
 
   double realizadoKg;
@@ -164,6 +166,28 @@ class CurralPrev {
   /// Quantidade de linhas em CADASTRO_FORNECIMENTO (realizado > 0) na chave.
   final int qtdSessoes;
 
+  /// Previsto da lista/resumo: cadastro do trato, sem o ajuste do último.
+  double get previstoListaKg {
+    final cad = previstoCadastroKg ?? 0;
+    if (cad > 0) return cad;
+    return previstoKg;
+  }
+
+  /// Meta do último trato já com o saldo dos anteriores (não encolhe).
+  double get aFornecerUltimoTratoKg {
+    final orig = previstoOriginalKg ?? 0;
+    if (orig > 0) return orig;
+    final rec = previstoRecalculadoKg ?? 0;
+    if (rec > 0) return rec;
+    return previstoKg;
+  }
+
+  double get ajusteUltimoTratoKg =>
+      aFornecerUltimoTratoKg - previstoListaKg;
+
+  bool get mostrarAjusteUltimoTrato =>
+      isUltimoTrato && ajusteUltimoTratoKg.abs() > 0.5;
+
   CurralPrev copyWith({
     double? realizadoKg,
     double? faltaKg,
@@ -178,6 +202,7 @@ class CurralPrev {
     int? qtdSessoes,
     double? previstoOriginalKg,
     double? previstoRecalculadoKg,
+    double? previstoCadastroKg,
     bool? isUltimoTrato,
   }) {
     return CurralPrev(
@@ -188,6 +213,7 @@ class CurralPrev {
       previstoOriginalKg: previstoOriginalKg ?? this.previstoOriginalKg,
       previstoRecalculadoKg:
           previstoRecalculadoKg ?? this.previstoRecalculadoKg,
+      previstoCadastroKg: previstoCadastroKg ?? this.previstoCadastroKg,
       isUltimoTrato: isUltimoTrato ?? this.isUltimoTrato,
       realizadoKg: realizadoKg ?? this.realizadoKg,
       faltaKg: faltaKg ?? this.faltaKg,
@@ -256,6 +282,13 @@ class CurralPrev {
       "PREVISTO_RECALCULADO_KG",
       "PREVISTO_RECALCULADO",
     ]);
+    final previstoCadastro = dAny([
+      "previstoCadastroKg",
+      "previstoCadastro",
+      "previsto_cadastro",
+      "PREVISTO_CADASTRO_KG",
+      "PREVISTO_CADASTRO",
+    ]);
     final previstoRecalcFinal = previstoRecalculado > 0
         ? previstoRecalculado
         : previstoApi;
@@ -269,6 +302,12 @@ class CurralPrev {
         previstoOriginal > 0 &&
         previstoRecalcFinal >= 0 &&
         (previstoOriginal - previstoRecalcFinal).abs() > 0.01) {
+      isUltimoTrato = true;
+    }
+    if (!isUltimoTrato &&
+        previstoCadastro > 0 &&
+        previstoOriginal > 0 &&
+        (previstoCadastro - previstoOriginal).abs() > 0.01) {
       isUltimoTrato = true;
     }
 
@@ -318,6 +357,7 @@ class CurralPrev {
       previstoKg: previstoExibicao,
       previstoOriginalKg: previstoOrigFinal,
       previstoRecalculadoKg: previstoRecalcFinal,
+      previstoCadastroKg: previstoCadastro > 0 ? previstoCadastro : null,
       isUltimoTrato: isUltimoTrato,
       realizadoKg: realizado,
       faltaKg: falta,

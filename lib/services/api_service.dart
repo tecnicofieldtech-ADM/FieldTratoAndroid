@@ -12,7 +12,7 @@ class ApiService {
   bool get isFieldpec => ConfigOptions.isFieldPecBackend(_backend);
   bool get isTgc => ConfigOptions.isTgcBackend(_backend);
   bool get _usesOpenApiLists => ConfigOptions.usesOpenApiLists(_backend);
-  bool get ignoresFazendaId => _usesOpenApiLists;
+  bool get ignoresFazendaId => ConfigOptions.ignoresFazendaId(_backend);
   bool get usesFabricacaoPacote => ConfigOptions.usesFabricacaoPacote(_backend);
 
   bool _isHttpSuccess(int? statusCode) {
@@ -40,8 +40,11 @@ class ApiService {
         t.contains("nao encontrado para atualização");
   }
 
-  ApiService({required String baseUrl, int backend = 0})
-      : _backend = backend,
+  ApiService({
+    required String baseUrl,
+    int backend = 0,
+    String clientCode = "",
+  })  : _backend = backend,
         _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
@@ -51,6 +54,8 @@ class ApiService {
             headers: {
               "Accept": "application/json",
               "Content-Type": "application/json",
+              if (clientCode.trim().isNotEmpty)
+                "X-Client-Code": clientCode.trim().toUpperCase(),
             },
           ),
         ) {
@@ -72,6 +77,62 @@ class ApiService {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Confirma que o código do header X-Client-Code está cadastrado na API.
+  /// Usa /fazenda/get (sempre presente). /cliente/validar só se a API já tiver a rota.
+  Future<Map<String, dynamic>> validateClienteCodigo() async {
+    try {
+      final r = await _dio.get(
+        "/cliente/validar",
+        options: Options(validateStatus: (s) => s != null),
+      );
+      if (_isHttpSuccess(r.statusCode) && r.data is Map) {
+        final data = Map<String, dynamic>.from(r.data as Map);
+        if (data["ok"] == true || data["success"] == true) {
+          return data;
+        }
+      }
+      // 404 = rota ainda não deployada → cai no fallback abaixo
+      if (r.statusCode != 404) {
+        final err = _extractApiError(r.data);
+        if (err.isNotEmpty &&
+            !err.toLowerCase().contains("not found") &&
+            !err.toLowerCase().contains("route")) {
+          throw Exception(err);
+        }
+      }
+    } catch (e) {
+      // Rota ausente / rede: tenta validação compatível
+      final s = e.toString().toLowerCase();
+      final canFallback = s.contains("not found") ||
+          s.contains("404") ||
+          s.contains("route") ||
+          s.contains("dioexception");
+      if (!canFallback) rethrow;
+    }
+
+    return _validateClienteCodigoViaFazenda();
+  }
+
+  Future<Map<String, dynamic>> _validateClienteCodigoViaFazenda() async {
+    final r = await _dio.get(
+      "/fazenda/get",
+      options: Options(validateStatus: (s) => s != null),
+    );
+    if (_isHttpSuccess(r.statusCode)) {
+      return {
+        "ok": true,
+        "success": true,
+        "via": "fazenda/get",
+      };
+    }
+    final err = _extractApiError(r.data);
+    throw Exception(
+      err.isNotEmpty
+          ? err
+          : "Código do cliente não cadastrado na API (HTTP ${r.statusCode}).",
+    );
   }
 
   Future<List<dynamic>> getVagoes() async {
@@ -483,6 +544,8 @@ class ApiService {
         options: Options(
           validateStatus: (s) => s != null,
           contentType: Headers.jsonContentType,
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 60),
         ),
       );
 
@@ -490,6 +553,17 @@ class ApiService {
         final data = r.data;
         if (data is Map) {
           final m = Map<String, dynamic>.from(data);
+          final err = (m["Erro"] ?? m["erro"] ?? m["error"] ?? "").toString();
+          if (err.trim().isNotEmpty) {
+            log?.call("❌ /Post/Fornecimento HTTP ${r.statusCode} $err");
+            return false;
+          }
+          if (m["ok"] == false || m["Ok"] == false) {
+            log?.call(
+              "❌ /Post/Fornecimento HTTP ${r.statusCode} ${_extractApiError(data)}",
+            );
+            return false;
+          }
           if (m["ignorado_ponto_corte"] == true) {
             final kg = m["realizado_recebido"] ?? m["realizado"];
             final corte = m["ponto_corte_kg"];
@@ -535,7 +609,9 @@ class ApiService {
       );
 
       if (!_isHttpSuccess(r.statusCode)) {
-        log?.call("❌ /Post/FornecimentoAudit HTTP ${r.statusCode}");
+        log?.call(
+          "❌ /Post/FornecimentoAudit HTTP ${r.statusCode} ${_extractApiError(r.data)}",
+        );
         return null;
       }
 
@@ -549,7 +625,8 @@ class ApiService {
       return {"ok": true};
     } on DioException catch (e) {
       log?.call(
-        "❌ /Post/FornecimentoAudit EXC HTTP ${e.response?.statusCode}",
+        "❌ /Post/FornecimentoAudit EXC HTTP ${e.response?.statusCode} "
+        "${_extractApiError(e.response?.data)}",
       );
       return null;
     } catch (e) {
@@ -576,7 +653,9 @@ class ApiService {
       );
 
       if (!_isHttpSuccess(r.statusCode)) {
-        log?.call("❌ /Post/FabricacaoAudit HTTP ${r.statusCode}");
+        log?.call(
+          "❌ /Post/FabricacaoAudit HTTP ${r.statusCode} ${_extractApiError(r.data)}",
+        );
         return null;
       }
 
@@ -590,7 +669,8 @@ class ApiService {
       return {"ok": true};
     } on DioException catch (e) {
       log?.call(
-        "❌ /Post/FabricacaoAudit EXC HTTP ${e.response?.statusCode}",
+        "❌ /Post/FabricacaoAudit EXC HTTP ${e.response?.statusCode} "
+        "${_extractApiError(e.response?.data)}",
       );
       return null;
     } catch (e) {

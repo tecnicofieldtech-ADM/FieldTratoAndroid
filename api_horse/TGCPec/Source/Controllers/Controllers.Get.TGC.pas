@@ -288,6 +288,12 @@ begin
 end;
 
 procedure GetPrevisaoTrato(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+{ Ultimo trato (igual FieldPec):
+  PREVISTO_CADASTRO     = CFORN_PREVISTO                        — previsto do trato, sem ajuste
+  PREVISTO_ORIGINAL     = (SumPrev - SumReal) + RealizadoAtual  — meta, nao encolhe
+  PREVISTO_RECALCULADO  = (SumPrev - SumReal)                   — saldo com ajuste
+  PREVISTO / KGPREVISTO = PREVISTO_RECALCULADO
+  Demais tratos: cadastro/original/recalculado = CFORN_PREVISTO. }
 const
   SQL_PREVISAO =
     'SELECT ' +
@@ -301,8 +307,12 @@ const
     '  y.STATUS, ' +
     '  y.TRATO, ' +
     '  y.TIPO, ' +
-    '  y.KGPREVISTO AS PREVISTO, ' +
-    '  y.KGPREVISTO, ' +
+    '  y.PREVISTO_CADASTRO, ' +
+    '  y.PREVISTO_ORIGINAL, ' +
+    '  y.PREVISTO_RECALCULADO, ' +
+    '  y.PREVISTO_RECALCULADO AS PREVISTO, ' +
+    '  y.PREVISTO_RECALCULADO AS KGPREVISTO, ' +
+    '  y.ULTIMO_TRATO, ' +
     '  COALESCE(y.KGREALIZADO, 0) AS REALIZADO, ' +
     '  COALESCE(y.KGREALIZADO, 0) AS KGREALIZADO ' +
     'FROM ( ' +
@@ -314,6 +324,28 @@ const
     '    ''1'' AS STATUS, ' +
     '    A.CFORN_TRATO AS TRATO, ' +
     '    1 AS TIPO, ' +
+    '    ROUND(A.CFORN_PREVISTO) AS PREVISTO_CADASTRO, ' +
+    '    CASE ' +
+    '      WHEN A.CFORN_TRATO = ( ' +
+    '        SELECT MAX(F.CFORN_TRATO) FROM CAD_FORNECIMENTO F ' +
+    '        WHERE F.CFORN_DATAFORNECIDO = A.CFORN_DATAFORNECIDO ' +
+    '          AND F.CFORN_CODLOTE = A.CFORN_CODLOTE ' +
+    '          AND F.CFORN_CODBAIA = A.CFORN_CODBAIA) THEN 1 ' +
+    '      ELSE 0 ' +
+    '    END AS ULTIMO_TRATO, ' +
+    '    CASE ' +
+    '      WHEN A.CFORN_TRATO = ( ' +
+    '        SELECT MAX(F.CFORN_TRATO) FROM CAD_FORNECIMENTO F ' +
+    '        WHERE F.CFORN_DATAFORNECIDO = A.CFORN_DATAFORNECIDO ' +
+    '          AND F.CFORN_CODLOTE = A.CFORN_CODLOTE ' +
+    '          AND F.CFORN_CODBAIA = A.CFORN_CODBAIA) THEN ' +
+    '        ROUND((SELECT SUM(F.CFORN_PREVISTO) - SUM(F.CFORN_REALIZADO) ' +
+    '               FROM CAD_FORNECIMENTO F ' +
+    '               WHERE F.CFORN_DATAFORNECIDO = A.CFORN_DATAFORNECIDO ' +
+    '                 AND F.CFORN_CODBAIA = A.CFORN_CODBAIA) ' +
+    '              + COALESCE(A.CFORN_REALIZADO, 0)) ' +
+    '      ELSE ROUND(A.CFORN_PREVISTO) ' +
+    '    END AS PREVISTO_ORIGINAL, ' +
     '    CASE ' +
     '      WHEN A.CFORN_TRATO = ( ' +
     '        SELECT MAX(F.CFORN_TRATO) FROM CAD_FORNECIMENTO F ' +
@@ -325,7 +357,7 @@ const
     '               WHERE F.CFORN_DATAFORNECIDO = A.CFORN_DATAFORNECIDO ' +
     '                 AND F.CFORN_CODBAIA = A.CFORN_CODBAIA)) ' +
     '      ELSE ROUND(A.CFORN_PREVISTO) ' +
-    '    END AS KGPREVISTO, ' +
+    '    END AS PREVISTO_RECALCULADO, ' +
     '    ROUND(A.CFORN_REALIZADO) AS KGREALIZADO ' +
     '  FROM CAD_FORNECIMENTO A ' +
     '  WHERE A.CFORN_DATAFORNECIDO = (SELECT MAX(CFORN_DATAFORNECIDO) FROM CAD_FORNECIMENTO) ' +

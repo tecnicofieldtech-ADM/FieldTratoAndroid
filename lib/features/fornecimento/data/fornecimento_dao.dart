@@ -34,6 +34,16 @@ class FornecimentoDao {
   String toSqlDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${_pad2(d.month)}-${_pad2(d.day)}";
 
+  DateTime? _parseYmd(String ymd) {
+    final t = ymd.trim();
+    if (t.length < 10) return null;
+    final y = int.tryParse(t.substring(0, 4));
+    final m = int.tryParse(t.substring(5, 7));
+    final d = int.tryParse(t.substring(8, 10));
+    if (y == null || m == null || d == null) return null;
+    return DateTime(y, m, d);
+  }
+
   String nowTime() {
     final d = DateTime.now();
     return "${_pad2(d.hour)}:${_pad2(d.minute)}:${_pad2(d.second)}";
@@ -237,7 +247,7 @@ class FornecimentoDao {
       a.${FornTables.pvTrato}          AS trato,
       a.${FornTables.pvIdBaia}         AS id_baia,
       a.${FornTables.pvPrevistoKg}     AS previsto,
-      COALESCE(a.${FornTables.pvRealizadoKg},0) AS realizado,
+      ${FornTables.sqlRealizadoKgLocal("a")} AS realizado,
       a.${FornTables.pvIdRacao}        AS id_racao,
 
       db.${FornTables.dbNomeLocal}     AS nome_local,
@@ -532,7 +542,8 @@ class FornecimentoDao {
     );
   }
 
-  /// Não altera PREVISTO na PREVISAO local — realizado fica em CADASTRO_FORNECIMENTO.
+  /// Não espelha o cadastro local por cima do realizado da API/TGC.
+  /// O mapa soma PREVISAO (TGC) + sessões com FLAG_SYNC=0.
   Future<void> aplicarRealizadoLocalPrevisao({
     required String idFornecimento,
     required String idBaia,
@@ -540,8 +551,14 @@ class FornecimentoDao {
     required String dataYmd,
     required double deltaRealizado,
   }) async {
-    // Previsto original/recalculado permanecem como vieram da API.
-    // A fornecer = previsto fixo − soma(CADASTRO_FORNECIMENTO).
+    if (deltaRealizado <= 0) return;
+    if (kDebugMode) {
+      debugPrint(
+        "[FORN] PREVISAO.REALIZADO_KG preservado (API/TGC). "
+        "Delta local=$deltaRealizado idForn=$idFornecimento "
+        "baia=$idBaia trato=$trato data=$dataYmd",
+      );
+    }
   }
 
   // =========================================================
@@ -603,21 +620,19 @@ class FornecimentoDao {
     final idF = idFornecimento.trim();
     final idB = idBaia.trim();
 
-    final rows = await db.query(
-      FornTables.previsao,
-      columns: [FornTables.pvRealizadoKg],
-      where: """
-      TRIM(${FornTables.pvIdFornecimento}) = TRIM(?)
-      AND TRIM(${FornTables.pvIdBaia}) = TRIM(?)
-      AND substr(${FornTables.pvData},1,10) = ?
-      AND ${FornTables.pvTrato} = ?
-    """,
-      whereArgs: [idF, idB, d, trato],
-      limit: 1,
-    );
+    final rows = await db.rawQuery("""
+    SELECT ${FornTables.sqlRealizadoKgLocal("a")} AS realizado
+    FROM ${FornTables.previsao} a
+    WHERE
+      TRIM(a.${FornTables.pvIdFornecimento}) = TRIM(?)
+      AND TRIM(a.${FornTables.pvIdBaia}) = TRIM(?)
+      AND substr(a.${FornTables.pvData},1,10) = ?
+      AND a.${FornTables.pvTrato} = ?
+    LIMIT 1
+    """, [idF, idB, d, trato]);
 
     if (rows.isEmpty) return 0.0;
-    return _toDouble(rows.first[FornTables.pvRealizadoKg]);
+    return _toDouble(rows.first["realizado"]);
   }
 
   Future<double> _maxRealizadoPrevisaoBaiaTrato({
@@ -809,7 +824,7 @@ class FornecimentoDao {
   Future<List<Map<String, Object?>>> listAllCadastroForAudit() async {
     final db = await _db;
 
-    return db.rawQuery("""
+    const sqlWithMapa = """
       SELECT
         F.${FornTables.cfId}              AS id,
         F.${FornTables.cfIdFornecimento}  AS id_fornecimento,
@@ -837,7 +852,43 @@ class FornecimentoDao {
         F.${FornTables.cfTrato} ASC,
         F.${FornTables.cfHoraInicio} ASC,
         F.${FornTables.cfId} ASC
-    """);
+    """;
+
+    const sqlWithoutMapa = """
+      SELECT
+        F.${FornTables.cfId}              AS id,
+        F.${FornTables.cfIdFornecimento}  AS id_fornecimento,
+        F.${FornTables.cfIdFabricacao}    AS id_fabricacao,
+        F.${FornTables.cfIdBaia}          AS id_baia,
+        F.${FornTables.cfData}            AS data,
+        F.${FornTables.cfHoraInicio}      AS hora_inicio,
+        F.${FornTables.cfHoraFim}         AS hora_fim,
+        F.${FornTables.cfPesoInicio}      AS peso_inicio,
+        F.${FornTables.cfPesoFim}         AS peso_fim,
+        F.${FornTables.cfPrevisto}        AS previsto,
+        F.${FornTables.cfRealizado}       AS realizado,
+        F.${FornTables.cfFlagSync}        AS flag_sync,
+        F.${FornTables.cfTrato}           AS trato,
+        F.${FornTables.cfIdUsuario}       AS id_usuario,
+        F.${FornTables.cfIdDieta}         AS id_dieta,
+        0                                 AS mapa,
+        COALESCE(B.${FornTables.dbNomeLocal}, '') AS nome_baia,
+        COALESCE(CAST(B.${FornTables.dbLinha} AS TEXT), '') AS linha
+      FROM ${FornTables.cadastroFornecimento} F
+      LEFT JOIN ${FornTables.detalhesBaias} B
+        ON TRIM(CAST(B.${FornTables.dbId} AS TEXT)) = TRIM(CAST(F.${FornTables.cfIdBaia} AS TEXT))
+      ORDER BY
+        substr(F.${FornTables.cfData}, 1, 10) DESC,
+        F.${FornTables.cfTrato} ASC,
+        F.${FornTables.cfHoraInicio} ASC,
+        F.${FornTables.cfId} ASC
+    """;
+
+    try {
+      return db.rawQuery(sqlWithMapa);
+    } catch (_) {
+      return db.rawQuery(sqlWithoutMapa);
+    }
   }
 
   Future<List<FornecimentoRow>> listPendentesSync({int limit = 200}) async {
@@ -893,6 +944,21 @@ class FornecimentoDao {
         AND TRIM(${FornTables.cfIdBaia}) = TRIM(?)
       """,
       whereArgs: [dataSql, trato, idFornecimento, idBaia],
+    );
+  }
+
+  /// Reabilita TODOS os cadastros do dia com realizado > 0 (todos os tratos).
+  Future<int> marcarSyncPendenteDoDia({required DateTime data}) async {
+    final db = await _db;
+    final dataSql = toSqlDate(data);
+    return db.update(
+      FornTables.cadastroFornecimento,
+      {FornTables.cfFlagSync: 0},
+      where: """
+        substr(${FornTables.cfData},1,10) = ?
+        AND COALESCE(${FornTables.cfRealizado}, 0) > 0
+      """,
+      whereArgs: [dataSql],
     );
   }
 

@@ -6,9 +6,9 @@ uses
   System.JSON;
 
 const
-  API_VERSION_NAME = '1.0.14';
-  API_VERSION_BUILD = 2021;
-  API_VERSION_LABEL = '1.0.14+2021';
+  API_VERSION_NAME = '1.0.18';
+  API_VERSION_BUILD = 2032;
+  API_VERSION_LABEL = '1.0.18+2032';
 
 function ApiVersionLabel: string;
 function ApiExeModifiedIso: string;

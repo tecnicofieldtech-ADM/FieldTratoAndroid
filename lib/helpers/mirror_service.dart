@@ -1,5 +1,3 @@
-import "dart:async";
-
 import "mirror_server.dart";
 
 typedef MirrorOnMessage = void Function(Map<String, dynamic> msg);
@@ -26,8 +24,6 @@ class MirrorService {
   List<String> get clientIps => _server?.clientIps ?? [];
 
   MirrorOnMessage? _onCommand;
-
-  Timer? _debounceStart;
 
   /// Configure and start the mirror server.
   /// [port] is the TCP port to listen on (default 9000).
@@ -61,17 +57,13 @@ class MirrorService {
       },
     );
 
-    _ensureStartedSoon();
-  }
-
-  void _ensureStartedSoon() {
-    _debounceStart?.cancel();
-    _debounceStart = Timer(const Duration(milliseconds: 80), () async {
-      if (!_enabled) return;
-      try {
-        await _server?.start();
-      } catch (_) {}
-    });
+    try {
+      await _server?.start();
+    } catch (e) {
+      _server = null;
+      _enabled = false;
+      rethrow;
+    }
   }
 
   /// Broadcast state to all connected PAs.
@@ -95,9 +87,6 @@ class MirrorService {
   }
 
   Future<void> _stopInternal() async {
-    _debounceStart?.cancel();
-    _debounceStart = null;
-
     final s = _server;
     _server = null;
 

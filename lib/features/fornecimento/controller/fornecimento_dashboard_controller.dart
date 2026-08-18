@@ -74,6 +74,23 @@ class CurralCardVM {
         previstoOriginalKg > previstoKg + 0.01;
   }
 
+  CurralCardVM copyWith({double? realizadoKg}) {
+    return CurralCardVM(
+      idFornecimento: idFornecimento,
+      idBaia: idBaia,
+      curralNome: curralNome,
+      linha: linha,
+      orderTrato: orderTrato,
+      previstoKg: previstoKg,
+      previstoOriginalKg: previstoOriginalKg,
+      previstoRecalculadoKg: previstoRecalculadoKg,
+      isUltimoTrato: isUltimoTrato,
+      previsaoDuplaFieldpec: previsaoDuplaFieldpec,
+      realizadoKg: realizadoKg ?? this.realizadoKg,
+      epc: epc,
+    );
+  }
+
   /// Meta fixa de previsto (nunca muda após fornecimento parcial).
   double get previstoFixoKg =>
       previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
@@ -97,6 +114,12 @@ class TotaisVM {
   });
 
   double get diffKg => totalRealizadoKg - totalPrevistoKg;
+
+  /// Quanto ainda falta fornecer (0 se já bateu/passou).
+  double get faltaKg {
+    final f = totalPrevistoKg - totalRealizadoKg;
+    return f > 0 ? f : 0;
+  }
 }
 
 class UltimoFornecimentoVM {
@@ -874,6 +897,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
           return;
         }
 
+        _selected = await _hydrateCurral(target);
         await iniciarCarregamento();
         if (_consumeBlockingErrorAsNotice(
           title: "Falha ao iniciar sessao para a tag lida.",
@@ -898,7 +922,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
         }
       }
 
-      _selected = target;
+      _selected = await _hydrateCurral(target);
       _origemMapa = 0;
       clearNotice();
       notifyListeners();
@@ -1186,8 +1210,41 @@ class FornecimentoDashboardController extends ChangeNotifier {
     }
   }
 
+  CurralCardVM? _cardDoMapa(String idFornecimento) {
+    final id = idFornecimento.trim();
+    if (id.isEmpty) return null;
+    for (final c in _curraisAll) {
+      if (c.idFornecimento == id) return c;
+    }
+    return null;
+  }
+
+  /// Recarrega realizado do SQLite (soma CADASTRO + PREVISAO) antes de abrir sessão.
+  Future<CurralCardVM> _hydrateCurral(CurralCardVM c) async {
+    CurralCardVM base = _cardDoMapa(c.idFornecimento) ?? c;
+    final h = _header;
+    if (h == null || !h.tratoSelecionado) return base;
+
+    try {
+      final snap = await _repo.loadCurralSnapshot(
+        c.idFornecimento,
+        data: h.data,
+        trato: h.trato!,
+      );
+      if (snap != null && snap.realizadoKg > base.realizadoKg) {
+        base = base.copyWith(realizadoKg: snap.realizadoKg);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("_hydrateCurral: falha ao reler realizado: $e");
+      }
+    }
+    return base;
+  }
+
   /// ✅ ao clicar manualmente, aplica a mesma regra do RFID:
   /// - se tinha sessão ativa em outro curral, salva
+  /// - relê realizado local (não usa card stale)
   /// - seleciona o curral
   /// - inicia carregamento
   Future<void> selecionarCurralPorClique(CurralCardVM c) async {
@@ -1197,9 +1254,12 @@ class FornecimentoDashboardController extends ChangeNotifier {
         current != null &&
         current.idFornecimento != c.idFornecimento) {
       await salvarFornecimento(idFazenda: _idFazenda);
+    } else if (_idFazenda.trim().isNotEmpty) {
+      await _reloadMapa(idFazenda: _idFazenda);
     }
 
-    _selected = c;
+    final fresh = await _hydrateCurral(c);
+    _selected = fresh;
     _origemMapa = 1;
     clearNotice();
     notifyListeners();
@@ -1284,8 +1344,11 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   Future<void> iniciarCarregamento() async {
     final h = _header;
-    final s = _selected;
+    var s = _selected;
     if (h == null || s == null) return;
+
+    s = await _hydrateCurral(s);
+    _selected = s;
 
     if (!h.tratoSelecionado) {
       setError("Selecione o trato antes de iniciar o fornecimento.");
@@ -1418,7 +1481,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
       }
 
       // ✅ Grava 1 linha em CADASTRO_FORNECIMENTO (kg da sessão).
-      // Acumulado fica na API; mapa local = soma das linhas + PREVISAO da API.
+      // Mapa = realizado da API/TGC + sessões locais ainda não sincronizadas.
       await _repo.salvarCadastroFinalizado(
         idFornecimento: s.idFornecimento,
         idCurral: s.idBaia,

@@ -20,7 +20,7 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 11, // PREVISAO FieldPec: original + recalculado
+      version: 13, // PREVISAO: previsto de cadastro (sem ajuste do último trato)
       onConfigure: (db) async {
         await db.execute("PRAGMA foreign_keys = ON;");
       },
@@ -65,7 +65,6 @@ class AppDb {
       BACKEND         INTEGER,
       ID_VAGAO        TEXT,   -- ✅ UUID do vagão (vem da config)
       NOME_VAGAO      TEXT,
-      IP_ESPELHO      TEXT,
       PORTA_ESPELHO   INTEGER DEFAULT 9000,
       MODO_SAIDA_FAB  INTEGER DEFAULT 0,
 
@@ -85,7 +84,8 @@ class AppDb {
       TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0,
 
       -- Mínimo (kg) para gravar fornecimento no tablet (0 = aceita qualquer > 0)
-      PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50
+      PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50,
+      CLIENTE_CODIGO TEXT DEFAULT ''
     );
     """);
 
@@ -337,6 +337,8 @@ class AppDb {
       ORDEM INTEGER,
       HORA_INICIO TEXT,
       HORA_FIM TEXT,
+      PESO_INICIO NUMERIC DEFAULT 0,
+      PESO_FIM NUMERIC DEFAULT 0,
       ID_OPERADOR TEXT NOT NULL,
       ID_USUARIO TEXT NOT NULL,
       STATUS INTEGER NOT NULL DEFAULT 1,
@@ -385,6 +387,7 @@ class AppDb {
       PREVISTO_KG NUMERIC NOT NULL,
       PREVISTO_ORIGINAL_KG NUMERIC,
       PREVISTO_RECALCULADO_KG NUMERIC,
+      PREVISTO_CADASTRO_KG NUMERIC,
       REALIZADO_KG NUMERIC DEFAULT 0,
       ID_RACAO TEXT,
       ULTIMO_TRATO INTEGER DEFAULT 0,
@@ -436,7 +439,7 @@ class AppDb {
         "BACKEND": null,
         "ID_VAGAO": null,
         "NOME_VAGAO": null,
-        "IP_ESPELHO": null,
+        "PORTA_ESPELHO": 9000,
         "PULO_AUTOMATICO": 1,
         "TEMPO_EM_SEGUNDOS_PULO": 10,
         "INCREMENTO_PESO": 1,
@@ -448,6 +451,7 @@ class AppDb {
         "STATION_WIFI_SSID": null,
         "STATION_WIFI_PASSWORD": null,
         "STATION_BASE_URL": null,
+        "CLIENTE_CODIGO": "",
       });
     }
   }
@@ -687,6 +691,32 @@ class AppDb {
       WHERE PREVISTO_ORIGINAL_KG IS NULL
          OR PREVISTO_RECALCULADO_KG IS NULL;
       """);
+    }
+
+    if (oldV < 12) {
+      await _addColumnIgnore(
+        db,
+        "DETALHES_FABRICA_RACAO",
+        "PESO_INICIO NUMERIC DEFAULT 0",
+      );
+      await _addColumnIgnore(
+        db,
+        "DETALHES_FABRICA_RACAO",
+        "PESO_FIM NUMERIC DEFAULT 0",
+      );
+      await db.execute("""
+      UPDATE DETALHES_FABRICA_RACAO
+      SET HORA_INICIO = NULL
+      WHERE COALESCE(QTD_REALIZADA, 0) = 0;
+      """);
+    }
+
+    if (oldV < 13) {
+      await _addColumnIgnore(
+        db,
+        "PREVISAO",
+        "PREVISTO_CADASTRO_KG NUMERIC",
+      );
     }
   }
 }

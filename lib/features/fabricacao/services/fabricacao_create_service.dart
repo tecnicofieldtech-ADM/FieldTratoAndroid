@@ -114,7 +114,7 @@ class FabricacaoCreateService {
           "QTD_REALIZADA": 0,
           "DATA_FABRICACAO": now.toIso8601String(),
           "ORDEM": ordem,
-          "HORA_INICIO": horaInicio,
+          "HORA_INICIO": null,
           "HORA_FIM": null,
           "ID_OPERADOR": idOperador,
           "ID_USUARIO": idUsuarioLogado,

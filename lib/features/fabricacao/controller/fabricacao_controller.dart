@@ -237,8 +237,8 @@ class FabricacaoController extends ChangeNotifier {
           return;
         }
 
-        if (t == "ping") {
-          MirrorService.instance.sendState({"t": "pong"}, force: true);
+        if (t == "req_state") {
+          _sendMirrorState(force: true);
           return;
         }
 
@@ -525,14 +525,21 @@ class FabricacaoController extends ChangeNotifier {
   DateTime _lastRemoteNavAt = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastRemoteNavCmd = "";
 
+  /// Dispara quando o último insumo atinge o previsto e o countdown termina.
+  /// A UI registra callback para finalizar sem confirmação.
+  Future<void> Function()? onAutoFinalizarUltimoInsumo;
+
   Timer? _ledTimer;
   String _ledDetId = "";
   DateTime? _ledIngredienteAt;
   String _lastLedMsg = "";
   DateTime _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// Aguarda o nome do insumo passar 2× no LED antes de enviar peso.
-  static const _ledEsperaInsumoMs = 10000;
+  /// Mantém só o nome no LED até carregar mais de 10 kg do insumo.
+  static const _ledInicioCarregamentoKg = 10;
+
+  /// Após o scroll 2× do nome (~8 s), reenvia o nome estático enquanto aguarda.
+  static const _ledNomeScrollMs = 8000;
 
   /// Cadência do peso no LED (igual ritmo do espelhamento para o pazeiro).
   static const _ledPesoIntervalMs = 500;
@@ -618,12 +625,24 @@ class FabricacaoController extends ChangeNotifier {
       return;
     }
 
-    if (DateTime.now().difference(t0).inMilliseconds < _ledEsperaInsumoMs) {
+    // Somente o nome até o carregamento passar de 10 kg.
+    if (ing.realizadoKg <= _ledInicioCarregamentoKg) {
+      if (DateTime.now().difference(t0).inMilliseconds >= _ledNomeScrollMs) {
+        final nome = ing.insumoNome.trim();
+        if (nome.isNotEmpty) {
+          _enqueueLed(nome, pesoAoVivo: true);
+        }
+      }
       return;
     }
 
-    final falta = max(ing.previstoKg - ing.realizadoKg, 0);
-    _enqueueLed(falta.toString(), pesoAoVivo: true);
+    final diff = ing.previstoKg - ing.realizadoKg;
+    if (diff >= 0) {
+      _enqueueLed(diff.round().toString(), pesoAoVivo: true);
+    } else {
+      // Excesso: +30 (não negativo, sem texto PASSOU).
+      _enqueueLed("+${(-diff).round()}", pesoAoVivo: true);
+    }
   }
 
   // =========================================================
@@ -700,7 +719,7 @@ class FabricacaoController extends ChangeNotifier {
     try {
       _cancelAutoPulo();
 
-      await salvarIngredienteAtual();
+      await salvarIngredienteAtual(fecharHoras: true);
       await atualizaFabricacaoParcial();
 
       idx = index;
@@ -1075,7 +1094,7 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   // SALVAR ingrediente atual
   // =========================================================
-  Future<void> salvarIngredienteAtual() async {
+  Future<void> salvarIngredienteAtual({bool fecharHoras = false}) async {
     final ing = atual;
     if (ing == null) return;
     if (ing.isPrePesado) return;
@@ -1084,17 +1103,43 @@ class FabricacaoController extends ChangeNotifier {
     final newReal = ing.realizadoKg;
     final oldReal = _realizadoAcumBanco;
 
-    if ((newReal - oldReal).abs() < 1) return;
+    final pesoChanged = (newReal - oldReal).abs() >= 1;
+    if (!pesoChanged && !fecharHoras) return;
+    if (newReal <= 0 && !fecharHoras) return;
 
     final agora = _fmtHHmmss(DateTime.now());
 
     final oldIni = await repo.getHoraInicioByDetId(ing.idDet);
     final oldFim = await repo.getHoraFimByDetId(ing.idDet);
+    final oldPesoIni = await repo.getPesoInicioByDetId(ing.idDet);
+    final oldPesoFim = await repo.getPesoFimByDetId(ing.idDet);
 
-    final newIni = (oldIni.trim().isEmpty && newReal > 0) ? agora : oldIni;
+    final newIni =
+        oldIni.trim().isEmpty && newReal > 0 ? agora : oldIni;
 
     final dentro = _dentroTolerancia(prev, newReal);
-    final newFim = (dentro && oldFim.trim().isEmpty) ? agora : oldFim;
+    final newFim = (oldFim.trim().isEmpty &&
+            newReal > 0 &&
+            (dentro || fecharHoras))
+        ? agora
+        : oldFim;
+
+    int? newPesoIni;
+    if (oldPesoIni > 0) {
+      newPesoIni = oldPesoIni;
+    } else if (_pesoInicialPrimeiro > 0) {
+      newPesoIni = _pesoInicialPrimeiro;
+    }
+
+    int? newPesoFim;
+    if (pesoChanged || fecharHoras) {
+      final pesoAtual = _pesoKgIntParaRealizado(lastWeight);
+      if (pesoAtual > 0) {
+        newPesoFim = pesoAtual;
+      } else if (oldPesoFim > 0) {
+        newPesoFim = oldPesoFim;
+      }
+    }
 
     final updated = await repo.updateIngredienteFabricacaoRobusto(
       idDet: ing.idDet,
@@ -1104,6 +1149,8 @@ class FabricacaoController extends ChangeNotifier {
       qtdRealizada: newReal.toDouble(),
       horaInicio: newIni,
       horaFim: newFim,
+      pesoInicio: newPesoIni,
+      pesoFim: newPesoFim,
     );
 
     if (updated <= 0) {
@@ -1229,10 +1276,11 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   // ✅ AUTO PULO + EVENTO
   // =========================================================
+  bool get _isUltimoInsumo => idx >= ingredientes.length - 1;
+
   void _applyAutoPuloIfNeeded() {
     if (_jumping) return;
     if (_autoPuloDisparado) return;
-    if (idx >= ingredientes.length - 1) return;
 
     final ing = atual;
     if (ing == null) return;
@@ -1255,10 +1303,6 @@ class FabricacaoController extends ChangeNotifier {
 
   Future<void> _startAutoCountdown() async {
     if (_autoTimer != null) return;
-    if (idx >= ingredientes.length - 1) {
-      _cancelAutoPulo();
-      return;
-    }
 
     final puloAuto = await _cfgRepo.getPuloAutomatico();
     final secs = await _cfgRepo.getTempoPuloSegundos();
@@ -1269,6 +1313,7 @@ class FabricacaoController extends ChangeNotifier {
     }
 
     final s = secs <= 0 ? 1 : secs;
+    final isLast = _isUltimoInsumo;
 
     _autoCountdown = s;
     notifyListeners();
@@ -1276,11 +1321,14 @@ class FabricacaoController extends ChangeNotifier {
     _sendMirrorEvent("auto_pulo", {
       "seconds": s,
       "fromPos": idx + 1,
-      "toPos": (idx < ingredientes.length - 1) ? (idx + 2) : (idx + 1),
+      "toPos": isLast ? (idx + 1) : (idx + 2),
       "atual": (atual?.insumoNome ?? ""),
-      "prox": (idx < ingredientes.length - 1)
-          ? (ingredientes[idx + 1].insumoNome)
-          : "",
+      "prox": isLast
+          ? "FINALIZAR"
+          : (idx < ingredientes.length - 1
+              ? (ingredientes[idx + 1].insumoNome)
+              : ""),
+      "isLast": isLast,
       "ts": DateTime.now().toIso8601String(),
     });
 
@@ -1300,7 +1348,8 @@ class FabricacaoController extends ChangeNotifier {
 
         _sendMirrorEvent("auto_pulo_end", {
           "fromPos": idx + 1,
-          "toPos": (idx < ingredientes.length - 1) ? (idx + 2) : (idx + 1),
+          "toPos": isLast ? (idx + 1) : (idx + 2),
+          "isLast": isLast,
           "ts": DateTime.now().toIso8601String(),
         });
 
@@ -1308,12 +1357,15 @@ class FabricacaoController extends ChangeNotifier {
 
         unawaited(() async {
           try {
-            if (idx < ingredientes.length - 1) {
-              await next();
+            if (isLast) {
+              final cb = onAutoFinalizarUltimoInsumo;
+              if (cb != null) {
+                await cb();
+              } else {
+                await finalizarFabricacaoAntesDoTimer();
+              }
             } else {
-              _autoPuloDisparado = false;
-              _sendMirrorState(force: true);
-              notifyListeners();
+              await next();
             }
           } catch (_) {}
         }());
@@ -1338,7 +1390,7 @@ class FabricacaoController extends ChangeNotifier {
     try {
       _cancelAutoPulo();
 
-      await salvarIngredienteAtual();
+      await salvarIngredienteAtual(fecharHoras: true);
       await atualizaFabricacaoParcial();
 
       if (idx < ingredientes.length - 1) {
@@ -1371,7 +1423,7 @@ class FabricacaoController extends ChangeNotifier {
     try {
       _cancelAutoPulo();
 
-      await salvarIngredienteAtual();
+      await salvarIngredienteAtual(fecharHoras: true);
       await atualizaFabricacaoParcial();
 
       if (idx > 0) {
@@ -1395,7 +1447,7 @@ class FabricacaoController extends ChangeNotifier {
   // =========================================================
   /// Grava ingrediente atual e totais parciais (sem marcar finalizada).
   Future<void> prepararFinalizacao() async {
-    await salvarIngredienteAtual();
+    await salvarIngredienteAtual(fecharHoras: true);
     await atualizaFabricacaoParcial();
 
     final h = header;
@@ -1454,7 +1506,7 @@ class FabricacaoController extends ChangeNotifier {
     final h = header;
     if (h == null) return;
 
-    await salvarIngredienteAtual();
+    await salvarIngredienteAtual(fecharHoras: true);
     await repo.updateFabricacaoParcial(h.id);
 
     final db = await AppDb.instance.db;

@@ -52,8 +52,7 @@ class ConfigRepo {
       // ✅ GARANTE que ID_VAGAO exista como TEXT (UUID)
       await addIfMissing("id_vagao", "ID_VAGAO TEXT");
       await addIfMissing("nome_vagao", "NOME_VAGAO TEXT");
-      await addIfMissing("ip_espelho", "IP_ESPELHO TEXT");
-        await addIfMissing(
+      await addIfMissing(
           "porta_espelho", "PORTA_ESPELHO INTEGER DEFAULT 9000");
         await addIfMissing(
           "modo_saida_fab", "MODO_SAIDA_FAB INTEGER DEFAULT 0");
@@ -73,6 +72,7 @@ class ConfigRepo {
         "IGNORAR_PREFIXO_RFID INTEGER DEFAULT 0",
       );
       await addIfMissing("prefixo_rfid", "PREFIXO_RFID TEXT DEFAULT 'H'");
+      await addIfMissing("cliente_codigo", "CLIENTE_CODIGO TEXT DEFAULT ''");
     } catch (_) {
       // se der erro (tabela não existe, etc.), ignora aqui.
       // seu AppDb.onCreate garante a criação.
@@ -215,6 +215,19 @@ class ConfigRepo {
 
     Future<int> getBackend() async =>
       _toInt(await _getField("BACKEND"), def: 0);
+
+  /// Código do cliente na API online (multi-tenant). Header X-Client-Code.
+  Future<String> getClienteCodigo() async {
+    return _toStr(await _getField("CLIENTE_CODIGO"), def: "")
+        .trim()
+        .toUpperCase();
+  }
+
+  String clienteCodigoFromCfg(Map<String, Object?> cfg) {
+    return _toStr(_getFieldFromCfg(cfg, "CLIENTE_CODIGO"), def: "")
+        .trim()
+        .toUpperCase();
+  }
 
   /// ✅ ID do vagão é TEXT (UUID)
   Future<String> getIdVagao() async =>
@@ -534,13 +547,6 @@ class ConfigRepo {
   // -------------------------
   // ESPELHO (PÁ)
   // -------------------------
-  Future<String> getIpEspelho() async {
-    final v1 = await _getField("IP_ESPELHO");
-    final v2 = await _getField("HOST_ESPELHO");
-    final v3 = await _getField("ESPELHO_IP");
-    return _toStr(v1 ?? v2 ?? v3, def: "").trim();
-  }
-
   Future<int> getPortaEspelho() async {
     final v1 = await _getField("PORTA_ESPELHO");
     final v = _toInt(v1, def: 9000);

@@ -1,0 +1,20 @@
+[Unit]
+Description=FieldPec Online API (contrato Horse FieldPec)
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__API_DIR__
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+# Usuário dedicado (ajuste se necessário)
+# User=fieldpec
+# Group=fieldpec
+StandardOutput=append:__API_DIR__/logs/stdout.log
+StandardError=append:__API_DIR__/logs/stderr.log
+
+[Install]
+WantedBy=multi-user.target

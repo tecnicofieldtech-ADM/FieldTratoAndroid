@@ -94,31 +94,64 @@ class _IngredientesModalState extends State<IngredientesModal> {
                           borderRadius: BorderRadius.circular(14),
                           side: BorderSide(color: Colors.grey.shade200),
                         ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            // withOpacity deprecated -> withValues
-                            backgroundColor:
-                                Colors.blueGrey.withValues(alpha: 0.12),
-                            child: Text(
-                              "${i + 1}",
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w900),
-                            ),
-                          ),
-                          title: Text(
-                            // remove ?? "" se insumoNome não for nullable
-                            it.insumoNome.trim().isEmpty
-                                ? "Ingrediente ${i + 1}"
-                                : it.insumoNome.trim(),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              "Prev ${prev.toStringAsFixed(0)}  •  Real ${real.toStringAsFixed(0)}  •  Dif ${dif.toStringAsFixed(0)}",
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                backgroundColor:
+                                    Colors.blueGrey.withValues(alpha: 0.12),
+                                child: Text(
+                                  "${i + 1}",
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      it.insumoNome.trim().isEmpty
+                                          ? "Ingrediente ${i + 1}"
+                                          : it.insumoNome.trim(),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      "Prev ${prev.toStringAsFixed(0)}  •  Real ${real.toStringAsFixed(0)}  •  Dif ${dif.toStringAsFixed(0)}",
+                                      style: TextStyle(
+                                        color: Colors.grey.shade800,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      "Peso balança: ini ${_fmtPeso(it.pesoInicio)}  •  fim ${_fmtPeso(it.pesoFim)}",
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      "Horário: ini ${_fmtHora(it.horaInicio)}  •  fim ${_fmtHora(it.horaFim)}",
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -131,6 +164,14 @@ class _IngredientesModalState extends State<IngredientesModal> {
       ),
     );
   }
+
+  String _fmtHora(String v) {
+    final s = v.trim();
+    if (s.isEmpty) return "—";
+    return s.length > 8 ? s.substring(0, 8) : s;
+  }
+
+  String _fmtPeso(int v) => v > 0 ? "${v.toStringAsFixed(0)} kg" : "—";
 
   Widget _chartCard(List<FabIngrediente> itens) {
     final previstos = itens.map((e) => e.previstoKg.toDouble()).toList();

@@ -407,51 +407,7 @@ class FabricacaoRepo {
   // INGREDIENTES
   // =========================================================
   Future<List<FabIngrediente>> listIngredientesModal(String fabId) async {
-    const t = "DETALHES_FABRICA_RACAO";
-    if (!await _hasTable(t)) return [];
-
-    final idCol = await _pickCol(t, ["ID"]) ?? "ID";
-    final idFabCol = await _pickCol(t,
-            ["ID_FABRICACAO", "IDFABRICACAO", "ID_CABECALHO", "ID_HEADER"]) ??
-        "ID_FABRICACAO";
-    final statusCol = await _pickCol(t, ["STATUS"]);
-
-    final idInsumoCol = await _pickCol(t, ["ID_INSUMO", "IDINSUMO"]);
-    final insumoNomeCol =
-        await _pickCol(t, ["INSUMO_NOME", "NOME_INSUMO", "INSUMO"]);
-    final prevCol = await _pickCol(t, ["QTD_PREVISTA", "PREVKG", "PREV_KG"]);
-    final realCol =
-        await _pickCol(t, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG"]);
-    final ordemCol = await _pickCol(t, ["ORDEM", "ORDEM_INSUMO", "SEQ"]);
-    final prePesadoCol = await _pickCol(t, ["PRE_PESADO", "PREPESADO"]);
-
-    String sel(String alias, String? col, String fallback) {
-      if (col == null) return "$fallback AS $alias";
-      return "COALESCE($col, $fallback) AS $alias";
-    }
-
-    final sql = """
-      SELECT
-        $idCol AS id,
-        ${sel("id_insumo", idInsumoCol, "''")},
-        ${sel("insumo_nome", insumoNomeCol, "''")},
-        ${sel("ordem", ordemCol, "0")},
-        ${sel("qtd_prevista", prevCol, "0")},
-        ${sel("qtd_realizada", realCol, "0")},
-        ${sel("pre_pesado", prePesadoCol, "0")}
-      FROM $t
-      WHERE $idFabCol = ?
-      ${statusCol != null ? "AND $statusCol = 1" : ""}
-      ORDER BY ${ordemCol != null ? "COALESCE($ordemCol,0)" : "1"} ASC
-    """;
-
-    final db = await _db;
-    final rows = await db.rawQuery(sql, [fabId]);
-
-    return rows
-        .map((m) =>
-            FabIngrediente.fromMap(_lowerKeys(Map<String, Object?>.from(m))))
-        .toList();
+    return listIngredientesDaFabricacao(fabId);
   }
 
   Future<List<FabIngrediente>> listIngredientesDaFabricacao(
@@ -475,6 +431,13 @@ class FabricacaoRepo {
         await _pickCol(t, ["QTD_REALIZADA", "REALIZADOKG", "REALIZADO_KG"]);
     final prePesadoCol = await _pickCol(
         t, ["PRE_PESADO", "PREPESADO", "PRE_PESADO_FLAG", "PREPESADO_FLAG"]);
+    final horaIniCol = await _pickCol(t, ["HORA_INICIO", "HORAINI", "HORA_INI"]);
+    final horaFimCol =
+        await _pickCol(t, ["HORA_FIM", "HORAFIM", "HORA_FIM_INSUMO"]);
+    final pesoIniCol =
+        await _pickCol(t, ["PESO_INICIO", "PESOINICIO", "PESO_INI"]);
+    final pesoFimCol =
+        await _pickCol(t, ["PESO_FIM", "PESOFIM", "PESO_FIM_INSUMO"]);
 
     String sel(String alias, String? col, String fallback) {
       if (col == null) return "$fallback AS $alias";
@@ -489,7 +452,11 @@ class FabricacaoRepo {
         ${sel("ordem", ordemCol, "0")},
         ${sel("qtd_prevista", prevCol, "0")},
         ${sel("qtd_realizada", realCol, "0")},
-        ${sel("pre_pesado", prePesadoCol, "0")}
+        ${sel("pre_pesado", prePesadoCol, "0")},
+        ${sel("hora_inicio", horaIniCol, "''")},
+        ${sel("hora_fim", horaFimCol, "''")},
+        ${sel("peso_inicio", pesoIniCol, "0")},
+        ${sel("peso_fim", pesoFimCol, "0")}
       FROM $t
       WHERE $idFabCol = ?
       ${statusCol != null ? "AND $statusCol = 1" : ""}
@@ -659,11 +626,43 @@ class FabricacaoRepo {
     return rows.isEmpty ? "" : (rows.first["v"] ?? "").toString();
   }
 
+  Future<int> getPesoInicioByDetId(String idDet) async {
+    const t = "DETALHES_FABRICA_RACAO";
+    if (!await _hasTable(t)) return 0;
+
+    final col = await _pickCol(t, ["PESO_INICIO", "PESOINICIO", "PESO_INI"]);
+    if (col == null) return 0;
+
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE($col,0) AS v FROM $t WHERE ID = ? LIMIT 1",
+      [idDet],
+    );
+    return rows.isEmpty ? 0 : (rows.first["v"] as num?)?.toInt() ?? 0;
+  }
+
+  Future<int> getPesoFimByDetId(String idDet) async {
+    const t = "DETALHES_FABRICA_RACAO";
+    if (!await _hasTable(t)) return 0;
+
+    final col = await _pickCol(t, ["PESO_FIM", "PESOFIM", "PESO_FIM_INSUMO"]);
+    if (col == null) return 0;
+
+    final db = await _db;
+    final rows = await db.rawQuery(
+      "SELECT COALESCE($col,0) AS v FROM $t WHERE ID = ? LIMIT 1",
+      [idDet],
+    );
+    return rows.isEmpty ? 0 : (rows.first["v"] as num?)?.toInt() ?? 0;
+  }
+
   Future<void> updateIngredienteFabricacao({
     required String idDet,
     required double qtdRealizada,
     required String horaInicio,
     required String horaFim,
+    int? pesoInicio,
+    int? pesoFim,
   }) async {
     const t = "DETALHES_FABRICA_RACAO";
     if (!await _hasTable(t)) return;
@@ -675,12 +674,18 @@ class FabricacaoRepo {
         await _pickCol(t, ["HORA_INICIO", "HORAINI", "HORA_INI"]);
     final horaFimCol =
         await _pickCol(t, ["HORA_FIM", "HORAFIM", "HORA_FIM_INSUMO"]);
+    final pesoIniCol =
+        await _pickCol(t, ["PESO_INICIO", "PESOINICIO", "PESO_INI"]);
+    final pesoFimCol =
+        await _pickCol(t, ["PESO_FIM", "PESOFIM", "PESO_FIM_INSUMO"]);
 
     final values = <String, Object?>{
       realCol: qtdRealizada,
     };
     if (horaIniCol != null) values[horaIniCol] = horaInicio;
     if (horaFimCol != null) values[horaFimCol] = horaFim;
+    if (pesoIniCol != null && pesoInicio != null) values[pesoIniCol] = pesoInicio;
+    if (pesoFimCol != null && pesoFim != null) values[pesoFimCol] = pesoFim;
 
     final db = await _db;
     await db.update(
@@ -699,6 +704,8 @@ class FabricacaoRepo {
     required double qtdRealizada,
     required String horaInicio,
     required String horaFim,
+    int? pesoInicio,
+    int? pesoFim,
   }) async {
     const t = "DETALHES_FABRICA_RACAO";
     if (!await _hasTable(t)) return 0;
@@ -710,12 +717,18 @@ class FabricacaoRepo {
         await _pickCol(t, ["HORA_INICIO", "HORAINI", "HORA_INI"]);
     final horaFimCol =
         await _pickCol(t, ["HORA_FIM", "HORAFIM", "HORA_FIM_INSUMO"]);
+    final pesoIniCol =
+        await _pickCol(t, ["PESO_INICIO", "PESOINICIO", "PESO_INI"]);
+    final pesoFimCol =
+        await _pickCol(t, ["PESO_FIM", "PESOFIM", "PESO_FIM_INSUMO"]);
 
     final values = <String, Object?>{
       realCol: qtdRealizada,
     };
     if (horaIniCol != null) values[horaIniCol] = horaInicio;
     if (horaFimCol != null) values[horaFimCol] = horaFim;
+    if (pesoIniCol != null && pesoInicio != null) values[pesoIniCol] = pesoInicio;
+    if (pesoFimCol != null && pesoFim != null) values[pesoFimCol] = pesoFim;
 
     final db = await _db;
     final det = idDet.trim();
@@ -1239,6 +1252,57 @@ class FabricacaoRepo {
       pesoCarregado: pesoCarregado,
       idVagao: idVagao,
     );
+  }
+
+  /// Finaliza o carregamento aberto desta fabricação (STATUS=2).
+  Future<void> finalizarCarregamentoDaFabricacao(String idFabricacao) async {
+    final id = idFabricacao.trim();
+    if (id.isEmpty) throw Exception("ID da fabricação inválido.");
+
+    final aberto = await _carregDao.getAbertoByFabricacao(id);
+    if (aberto == null) {
+      throw Exception("Não há carregamento aberto para esta fabricação.");
+    }
+    final idCar = (aberto["ID"] ?? aberto["id"] ?? "").toString().trim();
+    if (idCar.isEmpty) {
+      throw Exception("Carregamento aberto sem ID.");
+    }
+    final n = await _carregDao.finalizar(idCar);
+    if (n <= 0) {
+      throw Exception("Falha ao finalizar o carregamento.");
+    }
+  }
+
+  /// Reabre o último carregamento fechado da fabricação, se não houver nenhum aberto.
+  Future<void> reabrirCarregamentoDaFabricacao(String idFabricacao) async {
+    final id = idFabricacao.trim();
+    if (id.isEmpty) throw Exception("ID da fabricação inválido.");
+
+    if (await _carregDao.existeAlgumAberto()) {
+      throw Exception(
+        "Já existe um carregamento aberto. Finalize-o antes de reabrir outro.",
+      );
+    }
+
+    final ultimo = await _carregDao.getUltimoPorFabricacao(id);
+    if (ultimo == null) {
+      throw Exception("Esta fabricação não possui carregamento para reabrir.");
+    }
+
+    final st = int.tryParse((ultimo["STATUS"] ?? "0").toString().trim()) ?? 0;
+    if (st == CarregamentoDao.statusAberto) {
+      throw Exception("O carregamento desta fabricação já está aberto.");
+    }
+
+    final idCar = (ultimo["ID"] ?? ultimo["id"] ?? "").toString().trim();
+    if (idCar.isEmpty) {
+      throw Exception("Carregamento sem ID.");
+    }
+
+    final n = await _carregDao.reabrir(idCar);
+    if (n <= 0) {
+      throw Exception("Falha ao reabrir o carregamento.");
+    }
   }
 
   // =========================================================

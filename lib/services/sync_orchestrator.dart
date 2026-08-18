@@ -42,7 +42,11 @@ class SyncOrchestrator {
     final tipoTrabalho = int.tryParse((cfg["TIPO_TRABALHO"] ?? "0").toString()) ?? 0;
     final flowMode = fabricacaoFlowModeFromDb(cfg["FLOW_MODE"]);
 
-    final api = ApiService(baseUrl: baseUrl, backend: backend);
+    final api = ApiService(
+      baseUrl: baseUrl,
+      backend: backend,
+      clientCode: cfgRepo.clienteCodigoFromCfg(cfg),
+    );
     final outbox = OutboxSync(api: api);
 
     final today = _todayYmd();
@@ -78,6 +82,7 @@ class SyncOrchestrator {
           run: () => outbox.syncFabricacao(
             log,
             idVagao,
+            idFazendaCfg: idFazenda,
             flowMode: flowMode,
             tipoTrabalho: tipoTrabalho,
           ),
@@ -88,6 +93,7 @@ class SyncOrchestrator {
           run: () => outbox.syncFabricacao(
             log,
             idVagao,
+            idFazendaCfg: idFazenda,
             flowMode: flowMode,
             tipoTrabalho: tipoTrabalho,
           ),
@@ -102,6 +108,7 @@ class SyncOrchestrator {
           run: () => outbox.syncFabricacao(
             log,
             idVagao,
+            idFazendaCfg: idFazenda,
             flowMode: flowMode,
             tipoTrabalho: tipoTrabalho,
           ),

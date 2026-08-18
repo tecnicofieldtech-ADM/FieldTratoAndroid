@@ -246,6 +246,7 @@ end;
 
 function GetRequestLogJson(ALimit: Integer): string;
 var
+  LRoot: TJSONObject;
   LArr: TJSONArray;
   LObj: TJSONObject;
   I, LStart, LCount: Integer;
@@ -256,6 +257,7 @@ begin
   if ALimit > MAX_MEMORY_ENTRIES then
     ALimit := MAX_MEMORY_ENTRIES;
 
+  LRoot := TJSONObject.Create;
   LArr := TJSONArray.Create;
   try
     GLock.Enter;
@@ -287,9 +289,15 @@ begin
     finally
       GLock.Leave;
     end;
-    Result := '{"items":' + LArr.ToJSON + ',"filePath":"' + DailyLogPath + '"}';
+
+    // filePath via TJSONObject: evita JSON invalido com '\' do Windows.
+    LRoot.AddPair('items', LArr);
+    LArr := nil;
+    LRoot.AddPair('filePath', DailyLogPath);
+    Result := LRoot.ToJSON;
   finally
     LArr.Free;
+    LRoot.Free;
   end;
 end;
 

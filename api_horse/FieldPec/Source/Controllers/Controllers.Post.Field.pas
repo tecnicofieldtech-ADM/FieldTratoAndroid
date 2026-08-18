@@ -13,7 +13,9 @@ uses
   System.DateUtils,
   System.Hash,
   System.AnsiStrings,
-  FireDAC.Comp.Client;
+  Data.DB,
+  FireDAC.Comp.Client,
+  FireDAC.Stan.Param;
 
 procedure LimpaJSONObject(JSON: TJSONObject);
 procedure RegistraRotas;
@@ -21,6 +23,8 @@ procedure PostFornecimento(Req: THorseRequest; Res: THorseResponse; Next: TProc)
 procedure PostGravaTag(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 procedure PostGpsTrack(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 function VerificaCampoObrigatorio(const JSON: TJSONObject; const NomeCampo: string; out Valor: string): Boolean;
 procedure UploadLog(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 
@@ -187,6 +191,7 @@ function StrToFloatBR(const S: string): Double;
 var
   L: string;
   FS: TFormatSettings;
+  PosDot, PosComma: Integer;
 begin
   L := Trim(S);
   if L = '' then
@@ -196,8 +201,28 @@ begin
   FS.DecimalSeparator := '.';
   FS.ThousandSeparator := #0;
 
-  L := StringReplace(L, '.', '', [rfReplaceAll]);
-  L := StringReplace(L, ',', '.', [rfReplaceAll]);
+  PosDot := LastDelimiter('.', L);
+  PosComma := LastDelimiter(',', L);
+
+  if (PosDot > 0) and (PosComma > 0) then
+  begin
+    // Ambos presentes: o ultimo separador e o decimal.
+    if PosComma > PosDot then
+    begin
+      // BR: 1.234,56 -> remove milhar (ponto), virgula vira ponto
+      L := StringReplace(L, '.', '', [rfReplaceAll]);
+      L := StringReplace(L, ',', '.', [rfReplaceAll]);
+    end
+    else
+    begin
+      // US: 1,234.56 -> remove milhar (virgula)
+      L := StringReplace(L, ',', '', [rfReplaceAll]);
+    end;
+  end
+  else if PosComma > 0 then
+    // So virgula: decimal BR (ex.: "550,00")
+    L := StringReplace(L, ',', '.', [rfReplaceAll]);
+  // So ponto (ou sem separador): ja e decimal com ponto (ex.: "550.000" = 550)
 
   Result := StrToFloat(L, FS);
 end;
@@ -436,6 +461,174 @@ begin
   MirrorPostBody('/Post/GpsTrack', Body, JSONResult.ToJSON, 200);
 end;
 
+procedure PostFornecimentoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fornecimento');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fornecimento_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
+procedure PostFabricacaoAudit(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+const
+  MAX_SIZE_BYTES = 50 * 1024 * 1024;
+var
+  Body: TJSONObject;
+  JSONResult: TJSONObject;
+  Registros: TJSONArray;
+  DeviceId, SaveBase, SaveDir, SaveName, SavePath, JsonText: string;
+  BytesUtf8: TBytes;
+  Qtd: Integer;
+
+  function GetAuditBaseDir: string;
+  var
+    Env: string;
+  begin
+    Env := GetEnvironmentVariable('RFEED_AUDIT_DIR');
+    if Env <> '' then
+      Exit(IncludeTrailingPathDelimiter(Env));
+
+    Result := TPath.Combine(GetEnvironmentVariable('PROGRAMDATA'), 'RFeed');
+    Result := TPath.Combine(Result, 'audit');
+    Result := TPath.Combine(Result, 'fabricacao');
+    Result := IncludeTrailingPathDelimiter(Result);
+  end;
+
+  procedure EnsureDir(const P: string);
+  begin
+    if not TDirectory.Exists(P) then
+      ForceDirectories(P);
+  end;
+
+begin
+  Body := nil;
+  JSONResult := nil;
+  try
+    Body := Req.Body<TJSONObject>;
+    if not Assigned(Body) then
+      raise Exception.Create('JSON invalido ou corpo vazio');
+
+    DeviceId := ExtractStrCI(Body, ['device_id', 'deviceId', 'DEVICE_ID']);
+    if DeviceId = '' then
+      DeviceId := Trim(Req.Params.Items['device']);
+    if DeviceId = '' then
+      DeviceId := 'tablet';
+
+    if not Body.TryGetValue<TJSONArray>('registros', Registros) then
+      Body.TryGetValue<TJSONArray>('REGISTROS', Registros);
+    if not Assigned(Registros) then
+      raise Exception.Create('Campo "registros" (array) obrigatorio');
+
+    Qtd := Registros.Count;
+    JsonText := Body.ToJSON;
+    BytesUtf8 := TEncoding.UTF8.GetBytes(JsonText);
+    if (MAX_SIZE_BYTES > 0) and (Length(BytesUtf8) > MAX_SIZE_BYTES) then
+      raise Exception.Create('Payload maior que o limite de auditoria (50 MB)');
+
+    SaveBase := GetAuditBaseDir;
+    SaveDir := TPath.Combine(SaveBase, DeviceId);
+    EnsureDir(SaveDir);
+
+    SaveName := 'fabricacao_full_' + FormatDateTime('yyyymmdd_hhnnss', Now) + '.json';
+    SavePath := TPath.Combine(SaveDir, SaveName);
+
+    TFile.WriteAllBytes(SavePath, BytesUtf8);
+
+    JSONResult := TJSONObject.Create;
+    JSONResult.AddPair('ok', TJSONBool.Create(True));
+    JSONResult.AddPair('device_id', DeviceId);
+    JSONResult.AddPair('filename', SaveName);
+    JSONResult.AddPair('saved_path', SavePath);
+    JSONResult.AddPair('registros', TJSONNumber.Create(Qtd));
+    JSONResult.AddPair('bytes', TJSONNumber.Create(Length(BytesUtf8)));
+    Res.Send(JSONResult).Status(200);
+  except
+    on E: Exception do
+    begin
+      if not Assigned(JSONResult) then
+        JSONResult := TJSONObject.Create;
+      JSONResult.AddPair('erro', E.Message);
+      Res.Send(JSONResult).Status(500);
+    end;
+  end;
+end;
+
 procedure RegistraRotas;
 begin
   THorse.Post('/Post/Fornecimento', PostFornecimento);
@@ -443,6 +636,8 @@ begin
   THorse.Put('/logs/upload/:device', UploadLog);
   THorse.Post('/Post/GravaTag', PostGravaTag);
   THorse.Post('/Post/GpsTrack', PostGpsTrack);
+  THorse.Post('/Post/FornecimentoAudit', PostFornecimentoAudit);
+  THorse.Post('/Post/FabricacaoAudit', PostFabricacaoAudit);
 end;
 
 function NormalizeEPC(const S: string): string;
@@ -1196,11 +1391,18 @@ begin
 end;
 
 procedure SetParamHoraOpcional(Q: TFDQuery; const Nome: string; H: TDateTime);
+var
+  P: TFDParam;
 begin
+  P := Q.ParamByName(Nome);
+  P.DataType := ftTime;
   if Frac(H) > 0 then
-    Q.ParamByName(Nome).AsDateTime := Frac(H)
+    P.AsTime := Frac(H)
   else
-    Q.ParamByName(Nome).Clear;
+  begin
+    P.Clear;
+    P.Bound := True;
+  end;
 end;
 
 function ProximoIdTabela(Conn: TFDConnection; const TableName: string): Integer;
@@ -1309,8 +1511,9 @@ var
   Attempt: Integer;
   ErrMsg: string;
   NextId: Integer;
+  TemHora: Boolean;
 
-  procedure AplicarParams;
+  procedure AplicarParamsBase;
   begin
     Q.ParamByName('ID_FABRICACAO').AsInteger := IdServidorFab;
     Q.ParamByName('ID_ALIMENTO').AsInteger := IdInsumo;
@@ -1323,6 +1526,9 @@ var
   end;
 
 begin
+  // Sem hora no payload: nao incluir colunas TIME (evita Clear() invalido no FireDAC).
+  TemHora := (Frac(HoraIni) > 0) or (Frac(HoraFim) > 0);
+
   Q := TFDQuery.Create(nil);
   try
     Q.Connection := Conn;
@@ -1331,20 +1537,34 @@ begin
     begin
       NextId := ProximoIdTabela(Conn, 'FABRICACAO_INSUMOS');
       Q.Close;
-      Q.SQL.Text :=
-        'INSERT INTO FABRICACAO_INSUMOS ( ' +
-        '  ID, ID_FABRICACAO, ID_ALIMENTO, DATA_FAB, MS_INSUMO, ' +
-        '  KG_PREVISTO, KG_FABRICADO, ID_USUARIO, STATUS, DATAREG, VALOR_KG, ' +
-        '  HORA_INI, HORA_FIM ' +
-        ') VALUES ( ' +
-        '  :ID, :ID_FABRICACAO, :ID_ALIMENTO, :DATA_FAB, :MS_INSUMO, ' +
-        '  :KG_PREVISTO, :KG_FABRICADO, :ID_USUARIO, 1, CURRENT_DATE, :VALOR_KG, ' +
-        '  :HORA_INI, :HORA_FIM ' +
-        ')';
+      if TemHora then
+        Q.SQL.Text :=
+          'INSERT INTO FABRICACAO_INSUMOS ( ' +
+          '  ID, ID_FABRICACAO, ID_ALIMENTO, DATA_FAB, MS_INSUMO, ' +
+          '  KG_PREVISTO, KG_FABRICADO, ID_USUARIO, STATUS, DATAREG, VALOR_KG, ' +
+          '  HORA_INI, HORA_FIM ' +
+          ') VALUES ( ' +
+          '  :ID, :ID_FABRICACAO, :ID_ALIMENTO, :DATA_FAB, :MS_INSUMO, ' +
+          '  :KG_PREVISTO, :KG_FABRICADO, :ID_USUARIO, 1, CURRENT_DATE, :VALOR_KG, ' +
+          '  :HORA_INI, :HORA_FIM ' +
+          ')'
+      else
+        Q.SQL.Text :=
+          'INSERT INTO FABRICACAO_INSUMOS ( ' +
+          '  ID, ID_FABRICACAO, ID_ALIMENTO, DATA_FAB, MS_INSUMO, ' +
+          '  KG_PREVISTO, KG_FABRICADO, ID_USUARIO, STATUS, DATAREG, VALOR_KG ' +
+          ') VALUES ( ' +
+          '  :ID, :ID_FABRICACAO, :ID_ALIMENTO, :DATA_FAB, :MS_INSUMO, ' +
+          '  :KG_PREVISTO, :KG_FABRICADO, :ID_USUARIO, 1, CURRENT_DATE, :VALOR_KG ' +
+          ')';
+
       Q.ParamByName('ID').AsInteger := NextId;
-      AplicarParams;
-      SetParamHoraOpcional(Q, 'HORA_INI', HoraIni);
-      SetParamHoraOpcional(Q, 'HORA_FIM', HoraFim);
+      AplicarParamsBase;
+      if TemHora then
+      begin
+        SetParamHoraOpcional(Q, 'HORA_INI', HoraIni);
+        SetParamHoraOpcional(Q, 'HORA_FIM', HoraFim);
+      end;
 
       try
         Q.ExecSQL;
@@ -1357,8 +1577,9 @@ begin
              (Pos('UNIQUE', ErrMsg) = 0) and
              (Pos('PK_', ErrMsg) = 0) then
             raise Exception.CreateFmt(
-              'FABRICACAO_INSUMOS insumo=%d fab=%d: %s',
-              [IdInsumo, IdServidorFab, E.Message]);
+              'FABRICACAO_INSUMOS insumo=%d fab=%d prev=%.3f real=%.3f ms=%.3f valor_kg=%.4f: %s',
+              [IdInsumo, IdServidorFab, QtdePrevistaItem, QtdeRealizadaItem,
+               MsInsumo, ValorKgInsumo, E.Message]);
         end;
       end;
     end;
@@ -1452,6 +1673,17 @@ begin
       raise Exception.CreateFmt(
         'Item %d com id_insumo/ID_ALIMENTO invalido (valor recebido: %s).',
         [IdxItem + 1, JSONStrFirst(Item, ['id_insumo', 'ID_ALIMENTO', 'id_alimento'])]);
+
+    if IdUsuarioItem <= 0 then
+      raise Exception.CreateFmt(
+        'Item %d (id_insumo=%d) sem id_usuario/ID_USUARIO valido.',
+        [IdxItem + 1, IdInsumo]);
+
+    // MS tipicamente 0..100; valores absurdos indicam parse decimal errado.
+    if (MsInsumo < 0) or (MsInsumo > 1000) then
+      raise Exception.CreateFmt(
+        'Item %d (id_insumo=%d) MS_INSUMO invalido: %.3f',
+        [IdxItem + 1, IdInsumo, MsInsumo]);
 
     ValorKgInsumo := BuscarValorKgInsumoConn(Conn, IdDieta, IdInsumo);
     if ValorKgInsumo < 0 then

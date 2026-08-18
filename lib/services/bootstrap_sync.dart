@@ -27,7 +27,11 @@ class BootstrapSync {
     final base = cfgRepo.buildBaseUrl(cfg);
     if (base.isEmpty) throw Exception("HOST/PORTA inválidos.");
     final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
-    return ApiService(baseUrl: base, backend: backend);
+    return ApiService(
+      baseUrl: base,
+      backend: backend,
+      clientCode: cfgRepo.clienteCodigoFromCfg(cfg),
+    );
   }
 
   // =========================
@@ -94,16 +98,25 @@ class BootstrapSync {
     final api = await _apiFromCfg(cfg);
     final list = await api.getVagoes();
 
+    if (kDebugMode) {
+      debugPrint("[BOOT_VAGAO] API retornou ${list.length} registros");
+      if (list.isNotEmpty) {
+        debugPrint("[BOOT_VAGAO] sample keys: ${(list.first as Map).keys.toList()}");
+      }
+    }
+
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("VAGAO");
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
+        final id = _pickStr(m, ["id", "idvagao", "id_vagao", "codigo"]);
+        if (id.isEmpty) continue;
         await txn.insert(
           "VAGAO",
           {
-            "ID": (m["id"] ?? "").toString(),
-            "NOME": (m["nome"] ?? "").toString(),
+            "ID": id,
+            "NOME": _pickStr(m, ["nome", "name", "descricao", "vagao"]),
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -115,16 +128,33 @@ class BootstrapSync {
     final api = await _apiFromCfg(cfg);
     final list = await api.getFazendas();
 
+    if (kDebugMode) {
+      debugPrint("[BOOT_FAZENDA] API retornou ${list.length} registros");
+      if (list.isNotEmpty) {
+        debugPrint(
+          "[BOOT_FAZENDA] sample keys: ${(list.first as Map).keys.toList()}",
+        );
+      }
+    }
+
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("CADASTRO_FAZENDAS");
       for (final it in list) {
-        final m = Map<String, dynamic>.from(it as Map);
+        final m = _normalizeKeys(it as Map);
+        final id = _pickStr(m, [
+          "idfazenda",
+          "id_fazenda",
+          "fazendaid",
+          "fazenda_id",
+          "id",
+        ]);
+        if (id.isEmpty) continue;
         await txn.insert(
           "CADASTRO_FAZENDAS",
           {
-            "ID": (m["idfazenda"] ?? "").toString(),
-            "NOME": (m["fazenda"] ?? "").toString(),
+            "ID": id,
+            "NOME": _pickStr(m, ["fazenda", "nome", "name", "descricao"]),
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -444,9 +474,10 @@ class BootstrapSync {
       list = await api.getPrevisaoTrato(idFazenda, dataYmd);
     }
 
-    final isFieldpec = ConfigOptions.isFieldPecBackend(
-      int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0,
-    );
+    final backendCfg =
+        int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
+    final isFieldpec = ConfigOptions.isFieldPecBackend(backendCfg);
+    final isTgc = ConfigOptions.isTgcBackend(backendCfg);
 
     log?.call("📥 Previsão (API): ${list.length} registros");
 
@@ -598,10 +629,15 @@ class BootstrapSync {
           "previsto_recalculado",
           "previsto_recalculado_kg",
         ]);
+        var previstoCadastroRaw = _pickNum(m, [
+          "previstocadastro",
+          "previsto_cadastro",
+          "previsto_cadastro_kg",
+        ]);
         final hasDualPrevisao = previstoOriginalRaw > 0 &&
             previstoRecalculadoRaw > 0 &&
             (previstoOriginalRaw - previstoRecalculadoRaw).abs() > 0.01;
-        final fieldpecPrevisao = isFieldpec || hasDualPrevisao;
+        final fieldpecPrevisao = isFieldpec || isTgc || hasDualPrevisao;
 
         final previstoOriginal = fieldpecPrevisao
             ? (previstoOriginalRaw > 0 ? previstoOriginalRaw : previstoLegacy)
@@ -665,7 +701,7 @@ class BootstrapSync {
         if (fieldpecPrevisao && previstoOriginalStore <= 0) {
           final ex = await txn.query(
             "PREVISAO",
-            columns: const ["PREVISTO_ORIGINAL_KG"],
+            columns: const ["PREVISTO_ORIGINAL_KG", "PREVISTO_CADASTRO_KG"],
             where:
                 "ID_FORNECIMENTO = ? AND ID_BAIA = ? AND TRATO = ? AND substr(DATA,1,10) = ?",
             whereArgs: [idFornecimento, idBaia, trato, data],
@@ -674,6 +710,24 @@ class BootstrapSync {
           if (ex.isNotEmpty) {
             final kept = _toNum(ex.first["PREVISTO_ORIGINAL_KG"]).toDouble();
             if (kept > 0) previstoOriginalStore = kept;
+            if (previstoCadastroRaw <= 0) {
+              final keptCad =
+                  _toNum(ex.first["PREVISTO_CADASTRO_KG"]).toDouble();
+              if (keptCad > 0) previstoCadastroRaw = keptCad;
+            }
+          }
+        } else if (previstoCadastroRaw <= 0) {
+          final ex = await txn.query(
+            "PREVISAO",
+            columns: const ["PREVISTO_CADASTRO_KG"],
+            where:
+                "ID_FORNECIMENTO = ? AND ID_BAIA = ? AND TRATO = ? AND substr(DATA,1,10) = ?",
+            whereArgs: [idFornecimento, idBaia, trato, data],
+            limit: 1,
+          );
+          if (ex.isNotEmpty) {
+            final keptCad = _toNum(ex.first["PREVISTO_CADASTRO_KG"]).toDouble();
+            if (keptCad > 0) previstoCadastroRaw = keptCad;
           }
         }
 
@@ -690,6 +744,8 @@ class BootstrapSync {
               "PREVISTO_RECALCULADO_KG": previstoRecalcFinal,
               "ULTIMO_TRATO": ultimoTrato,
             },
+            "PREVISTO_CADASTRO_KG":
+                previstoCadastroRaw > 0 ? previstoCadastroRaw : null,
             "REALIZADO_KG": realizadoFinal,
             "ID_RACAO": idRacao,
           },
@@ -713,7 +769,7 @@ class BootstrapSync {
     final sample = await db.rawQuery("""
       SELECT ID_BAIA, DATA, TRATO, ID_RACAO,
              PREVISTO_KG, PREVISTO_ORIGINAL_KG, PREVISTO_RECALCULADO_KG,
-             REALIZADO_KG, ULTIMO_TRATO
+             PREVISTO_CADASTRO_KG, REALIZADO_KG, ULTIMO_TRATO
       FROM PREVISAO
       WHERE substr(DATA,1,10)=?
       LIMIT 5

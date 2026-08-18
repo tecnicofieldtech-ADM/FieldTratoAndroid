@@ -784,6 +784,7 @@ object dmFieldPec: TdmFieldPec
       ' forn.IDCURRAL ID,'
       ' forn.TRATO,'
       ' forn.IDRACAO ID_DIETA,'
+      ' forn.KGPREVISTO AS PREVISTO_CADASTRO,'
       ' CASE'
       '  WHEN forn.TRATO=forn.UltimoTrato THEN forn.TotalPrev-forn.TotalReal+forn.Realizado'
       '  ELSE forn.KGPREVISTO'

@@ -61,13 +61,17 @@ class CarregamentoDao {
   }) async {
     final db = await _db;
     final dateStr = _ymd(data ?? DateTime.now());
+    final br = _ymdToBr(dateStr);
     final vag = (idVagao ?? "").trim();
 
     final where = <String>[
       "COALESCE(CAST(STATUS AS INTEGER),0) = ?",
-      "substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?",
+      """(
+        substr(replace(COALESCE(DATA_REGISTRO,''), 'T', ' '), 1, 10) = ?
+        OR substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?
+      )""",
     ];
-    final args = <Object?>[statusAberto, dateStr];
+    final args = <Object?>[statusAberto, dateStr, br];
 
     if (vag.isNotEmpty) {
       where.add("TRIM(COALESCE(CAST(ID_VAGAO AS TEXT),'')) = TRIM(?)");
@@ -87,23 +91,47 @@ class CarregamentoDao {
   }
 
   /// Pega o carregamento aberto mais recente (status=0) no dia informado.
-  /// 🔥 FIX: usa substr(DATA_REGISTRO,1,10)=YYYY-MM-DD (mais estável que date()).
+  /// Aceita DATA_REGISTRO em ISO (`YYYY-MM-DD...`) ou BR (`DD/MM/YYYY...`).
   Future<Map<String, Object?>?> getAbertoHoje({DateTime? data}) async {
     final db = await _db;
 
     final dateStr = _ymd(data ?? DateTime.now());
+    final br = _ymdToBr(dateStr);
 
     final rows = await db.query(
       _table,
       where: """
         COALESCE(CAST(STATUS AS INTEGER),0) = ?
-        AND substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?
+        AND (
+          substr(replace(COALESCE(DATA_REGISTRO,''), 'T', ' '), 1, 10) = ?
+          OR substr(COALESCE(DATA_REGISTRO,''), 1, 10) = ?
+        )
       """,
-      whereArgs: [statusAberto, dateStr],
+      whereArgs: [statusAberto, dateStr, br],
       orderBy: "DATA_REGISTRO DESC",
       limit: 1,
     );
 
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  String _ymdToBr(String ymd) {
+    if (ymd.length < 10 || ymd[4] != '-') return ymd;
+    return "${ymd.substring(8, 10)}/${ymd.substring(5, 7)}/${ymd.substring(0, 4)}";
+  }
+
+  /// Qualquer carregamento STATUS=0 (mais recente), sem filtrar data/vagão.
+  /// Alinha com o pill "Carregamento: Aberto" da fabricação.
+  Future<Map<String, Object?>?> getQualquerAberto() async {
+    final db = await _db;
+    final rows = await db.query(
+      _table,
+      where: "COALESCE(CAST(STATUS AS INTEGER),0) = ?",
+      whereArgs: [statusAberto],
+      orderBy: "DATA_REGISTRO DESC, rowid DESC",
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return rows.first;
   }
@@ -277,6 +305,42 @@ class CarregamentoDao {
       where: "TRIM(ID) = TRIM(?)",
       whereArgs: [id],
     );
+  }
+
+  /// Ultimo carregamento (qualquer status) da fabricação.
+  Future<Map<String, Object?>?> getUltimoPorFabricacao(String idFabricacao) async {
+    final db = await _db;
+    final fab = idFabricacao.trim();
+    if (fab.isEmpty) return null;
+
+    final rows = await db.query(
+      _table,
+      where: "TRIM(COALESCE(CAST(ID_FABRICACAO AS TEXT),'')) = TRIM(?)",
+      whereArgs: [fab],
+      orderBy: "DATA_REGISTRO DESC, rowid DESC",
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Reabre carregamento fechado (STATUS -> 0).
+  Future<int> reabrir(String idCarregamento) async {
+    final db = await _db;
+    final id = idCarregamento.trim();
+    if (id.isEmpty) return 0;
+
+    return db.update(
+      _table,
+      {"STATUS": statusAberto},
+      where: "TRIM(ID) = TRIM(?)",
+      whereArgs: [id],
+    );
+  }
+
+  Future<bool> existeAlgumAberto() async {
+    final row = await getQualquerAberto();
+    return row != null;
   }
 
   Future<int> marcarConsumido(String idCarregamento) =>

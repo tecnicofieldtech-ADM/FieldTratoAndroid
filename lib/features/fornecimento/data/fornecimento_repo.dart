@@ -198,9 +198,16 @@ class FornecimentoRepo {
   Future<CarregamentoAberto?> getCarregamentoAberto({DateTime? data}) async {
     final ref = data ?? DateTime.now();
     final idVagao = (await _cfg.getIdVagao()).trim();
-    final car = idVagao.isNotEmpty
-        ? await _carregDao.getAbertoAtivo(data: ref, idVagao: idVagao)
-        : await _carregDao.getAbertoHoje(data: ref);
+
+    // Mesma regra visual da fabricação ("Carregamento: Aberto"):
+    // 1) dia + vagão config  2) vagão sem data  3) dia sem vagão  4) qualquer STATUS=0
+    Map<String, Object?>? car;
+    if (idVagao.isNotEmpty) {
+      car = await _carregDao.getAbertoAtivo(data: ref, idVagao: idVagao);
+      car ??= await _carregDao.getAbertoByVagao(idVagao);
+    }
+    car ??= await _carregDao.getAbertoHoje(data: ref);
+    car ??= await _carregDao.getQualquerAberto();
     if (car == null) return null;
 
     final id = (car["ID"] ?? "").toString().trim();
@@ -224,12 +231,8 @@ class FornecimentoRepo {
   }
 
   Future<bool> existeCarregamentoAbertoHoje({DateTime? data}) async {
-    final ref = data ?? DateTime.now();
-    final idVagao = (await _cfg.getIdVagao()).trim();
-    final car = idVagao.isNotEmpty
-        ? await _carregDao.getAbertoAtivo(data: ref, idVagao: idVagao)
-        : await _carregDao.getAbertoHoje(data: ref);
-    return car != null;
+    final car = await getCarregamentoAberto(data: data);
+    return car != null && car.status == 0;
   }
 
   /// Exige carregamento aberto. Com fabricação vinculada, exige QTD_REALIZADA > 0.
@@ -596,12 +599,16 @@ class FornecimentoRepo {
   // ===========================
   // SNAPSHOT
   // ===========================
-  Future<CurralSnapshot?> loadCurralSnapshot(String idFornecimento) {
-    final dataYmd = _ymd(DateTime.now());
+  Future<CurralSnapshot?> loadCurralSnapshot(
+    String idFornecimento, {
+    DateTime? data,
+    int? trato,
+  }) {
+    final dataYmd = _ymd(data ?? DateTime.now());
     return _dao.loadCurralSnapshot(
       idFornecimento: idFornecimento,
       dataYmd: dataYmd,
-      trato: tratoAtual,
+      trato: trato ?? tratoAtual,
     );
   }
 
@@ -888,10 +895,18 @@ class FornecimentoRepo {
 
   /// Reabilita sync local (FLAG_SYNC=0). Com FornecimentoAcumulativo=1 na API,
   /// o operador deve zerar REALIZADO no CG Pec antes de sincronizar de novo.
+  ///
+  /// Importante: reabilita TODOS os cadastros do dia (trato 1, 2, 3…), nao so
+  /// o filtro de previsao da tela — mesmo carregamento com varios tratos.
   Future<int> reabilitarSyncFiltrados({
     required DateTime data,
     required List<CurralPrev> itens,
   }) async {
+    // Sempre prioriza o dia inteiro: trato 2 do mesmo carregamento nao pode
+    // ficar de fora so porque a lista filtrada mostra so o trato 1.
+    final doDia = await _dao.marcarSyncPendenteDoDia(data: data);
+    if (doDia > 0) return doDia;
+
     final vistos = <String>{};
     var total = 0;
 
@@ -1315,6 +1330,8 @@ class FornecimentoRepo {
           NULLIF(a.${FornTables.pvPrevistoKg}, 0),
           0
         ) AS previstoRecalculadoKg,
+        COALESCE(NULLIF(a.${FornTables.pvPrevistoCadastroKg}, 0), 0)
+          AS previstoCadastroKg,
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
@@ -1357,6 +1374,8 @@ class FornecimentoRepo {
           NULLIF(a.${FornTables.pvPrevistoKg}, 0),
           0
         ) AS previstoRecalculadoKg,
+        COALESCE(NULLIF(a.${FornTables.pvPrevistoCadastroKg}, 0), 0)
+          AS previstoCadastroKg,
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,

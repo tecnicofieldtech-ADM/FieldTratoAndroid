@@ -1,6 +1,7 @@
 // lib/features/fabricacao/ui/fabricacao_list_page.dart
 import "package:flutter/material.dart";
 import "../../../repo/config_repo.dart";
+import "../../fornecimento/data/carregamento_dao.dart";
 import "../domain/fabricacao_flow.dart";
 
 import "../data/fabricacao_repo.dart";
@@ -667,9 +668,205 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     }
   }
 
+  Future<void> _finalizarCarregamento(FabricacaoHeader it) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text("Finalizar carregamento"),
+        content: const Text(
+          "Fechar o carregamento aberto desta fabricação?\n\n"
+          "Depois disso ele deixa de aparecer como aberto no fornecimento.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text("Finalizar"),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    try {
+      await widget.repo.finalizarCarregamentoDaFabricacao(it.id);
+      if (!mounted) return;
+      setState(() => _carregRefreshTick++);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Carregamento finalizado.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text("Erro ao finalizar carregamento"),
+          content: Text("$e"),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text("OK"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _reabrirCarregamento(FabricacaoHeader it) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text("Reabrir carregamento"),
+        content: const Text(
+          "Reabrir o carregamento fechado desta fabricação?\n\n"
+          "Só é permitido se não existir nenhum outro carregamento aberto.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text("Cancelar"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text("Reabrir"),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    try {
+      await widget.repo.reabrirCarregamentoDaFabricacao(it.id);
+      if (!mounted) return;
+      setState(() => _carregRefreshTick++);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Carregamento reaberto.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text("Erro ao reabrir carregamento"),
+          content: Text("$e"),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text("OK"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _abrirFerramentasCarregamento(FabricacaoHeader it) async {
+    final fabFinalizada = !_fabricacaoEmAberto(it);
+    final status = await widget.repo.getCarregamentoStatusByFabricacao(it.id);
+
+    // null = não criado; status 0 = aberto; !=0 = fechado
+    final semCarregamento = status == null;
+    final st = status == null
+        ? -1
+        : (int.tryParse((status["status"] ?? "0").toString()) ?? 0);
+    final carregAberto = !semCarregamento && st == 0;
+    final carregFechado = !semCarregamento && st != 0;
+
+    final algumAberto = await _existeCarregamentoAbertoGlobal();
+
+    if (!mounted) return;
+
+    final podeGerar = fabFinalizada && semCarregamento;
+    final podeFinalizar = fabFinalizada && carregAberto;
+    final podeReabrir = fabFinalizada && carregFechado && !algumAberto;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        Widget tile({
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required bool enabled,
+          required VoidCallback onTap,
+        }) {
+          return ListTile(
+            enabled: enabled,
+            leading: Icon(icon),
+            title: Text(title),
+            subtitle: Text(subtitle),
+            onTap: enabled
+                ? () {
+                    Navigator.of(sheetCtx).pop();
+                    onTap();
+                  }
+                : null,
+          );
+        }
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Text(
+                  "Ferramentas de carregamento",
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+              ),
+              tile(
+                icon: Icons.local_shipping_outlined,
+                title: "Gerar carregamento",
+                subtitle: podeGerar
+                    ? "Fabricação finalizada sem carregamento"
+                    : "Disponível só se finalizada e sem carregamento",
+                enabled: podeGerar,
+                onTap: () => _forcarGerarCarregamento(it),
+              ),
+              tile(
+                icon: Icons.lock_outline,
+                title: "Finalizar carregamento",
+                subtitle: podeFinalizar
+                    ? "Fecha o carregamento aberto desta fabricação"
+                    : "Disponível só com carregamento aberto",
+                enabled: podeFinalizar,
+                onTap: () => _finalizarCarregamento(it),
+              ),
+              tile(
+                icon: Icons.lock_open_outlined,
+                title: "Reabrir carregamento",
+                subtitle: podeReabrir
+                    ? "Reabre o carregamento fechado (nenhum outro aberto)"
+                    : "Disponível só se fechado e sem nenhum aberto",
+                enabled: podeReabrir,
+                onTap: () => _reabrirCarregamento(it),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<bool> _existeCarregamentoAbertoGlobal() async {
+    // Reusa a mesma regra do fornecimento: qualquer STATUS=0.
+    try {
+      final dao = CarregamentoDao();
+      return await dao.existeAlgumAberto();
+    } catch (_) {
+      return false;
+    }
+  }
+
   Widget _carregamentoPill(String fabId, {FabricacaoHeader? item}) {
-    final emAberto =
-        item != null ? _fabricacaoEmAberto(item) : false;
     return FutureBuilder<Map<String, Object?>?>(
       key: ValueKey("carreg-$fabId-$_carregRefreshTick"),
       future: widget.repo.getCarregamentoStatusByFabricacao(fabId),
@@ -692,38 +889,17 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
         final m = snap.data;
         if (m == null) {
-          return Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
-                ),
-                child: const Text(
-                  "Carregamento: Não criado",
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
-                ),
-              ),
-              if (item != null && !emAberto)
-                TextButton.icon(
-                  onPressed: () => _forcarGerarCarregamento(item),
-                  icon: const Icon(Icons.local_shipping_outlined, size: 18),
-                  label: const Text("Gerar carregamento"),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-            ],
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+            ),
+            child: const Text(
+              "Carregamento: Não criado",
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+            ),
           );
         }
 
@@ -754,6 +930,22 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
           ),
         );
       },
+    );
+  }
+
+  /// Ícone discreto: menu oculto de ferramentas de carregamento.
+  Widget _ferramentasCarregamentoBtn(FabricacaoHeader it) {
+    return IconButton(
+      tooltip: "Ferramentas",
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      icon: Icon(
+        Icons.build_outlined,
+        size: 18,
+        color: Colors.blueGrey.shade400,
+      ),
+      onPressed: () => _abrirFerramentasCarregamento(it),
     );
   }
 
@@ -1002,10 +1194,13 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
                                           ),
                                           const SizedBox(height: 8),
                                           Wrap(
-                                            spacing: 8,
+                                            spacing: 4,
                                             runSpacing: 8,
+                                            crossAxisAlignment:
+                                                WrapCrossAlignment.center,
                                             children: [
                                               _carregamentoPill(it.id, item: it),
+                                              _ferramentasCarregamentoBtn(it),
                                             ],
                                           ),
                                           Text(

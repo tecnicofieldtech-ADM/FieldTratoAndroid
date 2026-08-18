@@ -111,6 +111,7 @@
       <div class="mt-4">
         <label class="text-xs font-semibold uppercase text-slate-500">Cliente ativo</label>
         <select id="active-client" class="mt-1.5 w-full max-w-md rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          <option value="cgpec">CGPec (Firebird)</option>
           <option value="fieldpec">FieldPec (Firebird)</option>
           <option value="tgc">Outros / TGC (Firebird)</option>
         </select>
@@ -155,7 +156,42 @@
       </p>
     </section>
 
-    <section id="section-fieldpec" class="rounded-2xl border border-amber-200/80 bg-white p-6 shadow-sm">
+    <section id="section-cgpec" class="rounded-2xl border border-teal-200/80 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold text-teal-950">CGPec — Firebird</h2>
+      <p class="mt-1 text-sm text-slate-600">Conexão Firebird (seção <code class="text-xs">[CGPEC]</code> no ini). Usada quando o cliente ativo é CGPec.</p>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2">
+          <label class="text-xs font-semibold uppercase text-slate-500">Host</label>
+          <input id="cg-host" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Porta Firebird</label>
+          <input id="cg-port" type="number" min="1" max="65535" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Database (caminho .FDB)</label>
+          <input id="cg-database" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Usuário</label>
+          <input id="cg-user" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="off" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Senha</label>
+          <input id="cg-password" type="password" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" autocomplete="new-password" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase text-slate-500">Role (opcional)</label>
+          <input id="cg-role" class="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div id="testCgMsg" class="mt-4 hidden rounded-lg border px-3 py-2 text-sm"></div>
+      <button id="btnTestCg" type="button" class="mt-4 w-full rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-semibold text-teal-950 hover:bg-teal-100">
+        Testar Firebird (CGPec)
+      </button>
+    </section>
+
+    <section id="section-fieldpec" class="mt-8 rounded-2xl border border-amber-200/80 bg-white p-6 shadow-sm">
       <h2 class="text-base font-semibold text-amber-950">FieldPec — Firebird</h2>
       <p class="mt-1 text-sm text-slate-600">Conexão Firebird (seção <code class="text-xs">[FIELDPEC]</code> no ini). Usada quando o cliente ativo é FieldPec.</p>
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
@@ -340,13 +376,16 @@
   <script src="/web-admin/api-version.js"></script>
   <script>
     const MASK = "********";
-    let activeClient = "fieldpec";
+    let activeClient = "cgpec";
+    let cgForm = { host: "", port: 3050, database: "", user: "SYSDBA", password: "", role: "" };
     let fpForm = { host: "", port: 3050, database: "", user: "SYSDBA", password: "", role: "" };
     let tgForm = { host: "", port: 3050, database: "", user: "SYSDBA", password: "", role: "" };
     let pgForm = { host: "127.0.0.1", port: 5432, database: "", user: "postgres", password: "", enabled: "1" };
     let mirrorForm = { enabled: "0", nextApiBase: "http://127.0.0.1:3000", url: "http://127.0.0.1:3000/api/mirror/event" };
     let fornAcumulativo = true;
     let pontoCorteKg = 50;
+    let loadedRoutesClient = "";
+    let routesRestartRequired = false;
 
     function updatePontoCorteSummary() {
       const v = Number(document.getElementById("ponto-corte").value);
@@ -389,23 +428,37 @@
     }
 
     function getActiveClient() {
-      return document.getElementById("active-client").value || "fieldpec";
+      return document.getElementById("active-client").value || "cgpec";
     }
 
     function updateActiveClientUi() {
       const client = getActiveClient();
       activeClient = client;
+      const cg = document.getElementById("section-cgpec");
       const fp = document.getElementById("section-fieldpec");
       const tg = document.getElementById("section-tgc");
       const note = document.getElementById("activeClientNote");
+      cg.classList.remove("ring-2", "ring-teal-400");
       fp.classList.remove("ring-2", "ring-amber-400");
       tg.classList.remove("ring-2", "ring-teal-400");
-      if (client === "fieldpec") {
+      if (client === "cgpec") {
+        cg.classList.add("ring-2", "ring-teal-400");
+        note.textContent = "CGPec está ativo — reinicie a API Horse para carregar as rotas CGPec.";
+      } else if (client === "fieldpec") {
         fp.classList.add("ring-2", "ring-amber-400");
         note.textContent = "FieldPec está ativo — reinicie a API Horse para carregar as rotas FieldPec.";
       } else {
         tg.classList.add("ring-2", "ring-teal-400");
         note.textContent = "Outros (TGC) está ativo — reinicie a API Horse para carregar as rotas TGC.";
+      }
+      if (routesRestartRequired && loadedRoutesClient) {
+        note.textContent += " ATENÇÃO: rotas em execução = " + loadedRoutesClient + " (diferente do INI). Reinicie agora — o tablet continua baixando dados do " + loadedRoutesClient.toUpperCase() + ".";
+        note.className = "mt-2 text-xs font-semibold text-red-700";
+      } else if (loadedRoutesClient) {
+        note.textContent += " Rotas em execução: " + loadedRoutesClient + ".";
+        note.className = "mt-2 text-xs text-emerald-700";
+      } else {
+        note.className = "mt-2 text-xs text-amber-700";
       }
     }
 
@@ -429,13 +482,22 @@
         "FornecimentoAcumulativo=" + (document.getElementById("forn-acumulativo").checked ? "1" : "0"),
         "PontoCorteFornecimentoKg=" + (document.getElementById("ponto-corte").value || "50"),
         "",
+        "[CGPEC]",
+        "Server=" + cgForm.host,
+        "User=" + cgForm.user,
+        "Password=" + maskPass(cgForm.password),
+        "Port=" + cgForm.port,
+        "DB=" + cgForm.database,
+      ];
+      if (cgForm.role) lines.push("Role=" + cgForm.role);
+      lines.push("",
         "[FIELDPEC]",
         "Server=" + fpForm.host,
         "User=" + fpForm.user,
         "Password=" + maskPass(fpForm.password),
         "Port=" + fpForm.port,
         "DB=" + fpForm.database,
-      ];
+      );
       if (fpForm.role) lines.push("Role=" + fpForm.role);
       lines.push("", "[TGC]",
         "Server=" + tgForm.host,
@@ -476,7 +538,13 @@
     });
 
     function fillForm() {
-      document.getElementById("active-client").value = activeClient === "tgc" ? "tgc" : "fieldpec";
+      document.getElementById("active-client").value = activeClient;
+      document.getElementById("cg-host").value = cgForm.host;
+      document.getElementById("cg-port").value = cgForm.port;
+      document.getElementById("cg-database").value = cgForm.database;
+      document.getElementById("cg-user").value = cgForm.user;
+      document.getElementById("cg-password").value = cgForm.password;
+      document.getElementById("cg-role").value = cgForm.role || "";
       document.getElementById("fp-host").value = fpForm.host;
       document.getElementById("fp-port").value = fpForm.port;
       document.getElementById("fp-database").value = fpForm.database;
@@ -503,6 +571,17 @@
       updateFornAcumUi();
       updatePontoCorteSummary();
       updateActiveClientUi();
+    }
+
+    function readCg() {
+      return {
+        host: document.getElementById("cg-host").value.trim(),
+        port: Number(document.getElementById("cg-port").value) || 3050,
+        database: document.getElementById("cg-database").value.trim(),
+        user: document.getElementById("cg-user").value.trim(),
+        password: document.getElementById("cg-password").value,
+        role: document.getElementById("cg-role").value.trim(),
+      };
     }
 
     function readFp() {
@@ -549,9 +628,11 @@
     }
 
     function buildPayload() {
+      const client = getActiveClient();
       return {
-        activeClient: getActiveClient(),
+        activeClient: client,
         backends: {
+          cgpec: readCg(),
           fieldpec: readFp(),
           tgc: readTg(),
           spreadsheet_import: readPg(),
@@ -567,12 +648,23 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.erro || "Falha ao carregar configuração.");
       const backends = data.backends || {};
-      const f = backends.fieldpec || backends.cgpec || {};
+      const c = backends.cgpec || {};
+      const f = backends.fieldpec || {};
       const t = backends.tgc || {};
       const p = backends.spreadsheet_import || {};
       const m = data.mirror || {};
-      const client = String(data.activeClient || "fieldpec").toLowerCase();
-      activeClient = client === "tgc" || client === "outros" ? "tgc" : "fieldpec";
+      const client = String(data.activeClient || "cgpec").toLowerCase();
+      activeClient = client === "tgc" || client === "outros" ? "tgc"
+        : client === "fieldpec" || client === "field" ? "fieldpec"
+        : "cgpec";
+      cgForm = {
+        host: c.host || "",
+        port: c.port || 3050,
+        database: c.database || "",
+        user: c.user || "SYSDBA",
+        password: c.password || "",
+        role: c.role || "",
+      };
       fornAcumulativo = data.fornecimentoAcumulativo !== false;
       pontoCorteKg = data.pontoCorteFornecimentoKg ?? 50;
       fpForm = {
@@ -605,6 +697,9 @@
         url: m.url || (m.nextApiBase || "http://127.0.0.1:3000") + "/api/mirror/event",
       };
       fillForm();
+      loadedRoutesClient = String(data.loadedRoutesClient || "").toLowerCase();
+      routesRestartRequired = data.routesRestartRequired === true;
+      updateActiveClientUi();
       renderApiRuntimeInfo(data);
       if (window.RFeedApiVersion) {
         RFeedApiVersion.renderBadge("apiVersionBadge", data);
@@ -638,6 +733,8 @@
         msg.className = "mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900";
         if (kind === "postgres") {
           msg.textContent = "Conexão PostgreSQL OK.";
+        } else if (client === "cgpec") {
+          msg.textContent = "Conexão Firebird OK (CGPec).";
         } else if (client === "fieldpec") {
           msg.textContent = "Conexão Firebird OK (FieldPec).";
         } else if (client === "tgc") {
@@ -654,6 +751,7 @@
     document.getElementById("active-client").addEventListener("change", updateActiveClientUi);
     document.getElementById("forn-acumulativo").addEventListener("change", updateFornAcumUi);
     document.getElementById("ponto-corte").addEventListener("input", updatePontoCorteSummary);
+    document.getElementById("btnTestCg").addEventListener("click", () => runTest("firebird", readCg, "testCgMsg", "cgpec"));
     document.getElementById("btnTestFp").addEventListener("click", () => runTest("firebird", readFp, "testFpMsg", "fieldpec"));
     document.getElementById("btnTestTg").addEventListener("click", () => runTest("firebird", readTg, "testTgMsg", "tgc"));
     document.getElementById("btnTestPg").addEventListener("click", () => runTest("postgres", readPg, "testPgMsg"));
@@ -695,25 +793,34 @@
     });
 
     document.getElementById("btnSave").addEventListener("click", async () => {
+      const cg = readCg();
       const fp = readFp();
       const tg = readTg();
       const pg = readPg();
       const client = getActiveClient();
-      const activeFb = client === "tgc" ? tg : fp;
-      const activeLabel = client === "tgc" ? "Outros (TGC)" : "FieldPec";
-      if (!activeFb.host || !activeFb.database || !activeFb.user) {
+      const activeFb = client === "tgc" ? tg : client === "fieldpec" ? fp : cg;
+      const activeLabel = client === "tgc" ? "Outros (TGC)" : client === "fieldpec" ? "FieldPec" : "CGPec";
+      if (!activeFb || !activeFb.host || !activeFb.database || !activeFb.user) {
         showBanner("err", "Preencha host, database e usuário do Firebird (" + activeLabel + ").");
         return;
       }
-      if (!pg.database || !pg.user) {
-        showBanner("err", "Preencha database e usuário do PostgreSQL.");
+      const pgEnabled = document.getElementById("pg-enabled").checked;
+      if (pgEnabled) {
+        if (!pg.database || !pg.user) {
+          showBanner("err", "Preencha database e usuário do PostgreSQL (ou desmarque PostgreSQL ativo).");
+          return;
+        }
+        if (!pg.password && pgForm.password !== MASK && !pgForm.password) {
+          showBanner("err", "Informe a senha do PostgreSQL para salvar (ou desmarque PostgreSQL ativo).");
+          return;
+        }
+      }
+      if (!confirm("Salvar " + activeLabel + " no ApiConfig.ini?\n\nCliente ativo: " + client + ". Reinicie a API Horse após salvar.")) {
         return;
       }
-      if (!pg.password && pgForm.password !== MASK && !pgForm.password) {
-        showBanner("err", "Informe a senha do PostgreSQL para salvar.");
-        return;
-      }
-      if (!confirm("Salvar " + activeLabel + ", PostgreSQL e espelho BI no ApiConfig.ini?\n\nCliente ativo: " + client + ". Reinicie a API Horse após salvar.\n\nAs credenciais PostgreSQL também serão enviadas à next-api (se estiver em execução).")) {
+      const payload = buildPayload();
+      if (payload.activeClient !== client) {
+        showBanner("err", "Cliente ativo inconsistente no formulário (" + payload.activeClient + "). Atualize a página com Ctrl+F5.");
         return;
       }
       const btn = document.getElementById("btnSave");
@@ -724,17 +831,23 @@
         const res = await fetch("/api/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildPayload()),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.erro || "Falha ao salvar.");
-        fpForm.password = data.backends.fieldpec?.password || "";
+        cgForm.password = data.backends?.cgpec?.password || "";
+        if (cgForm.password === MASK) cgForm.password = cg.password;
+        fpForm.password = data.backends?.fieldpec?.password || "";
         if (fpForm.password === MASK) fpForm.password = fp.password;
-        tgForm.password = data.backends.tgc?.password || "";
+        tgForm.password = data.backends?.tgc?.password || "";
         if (tgForm.password === MASK) tgForm.password = tg.password;
-        pgForm.password = data.backends.spreadsheet_import.password || "";
+        pgForm.password = data.backends?.spreadsheet_import?.password || "";
         if (pgForm.password === MASK) pgForm.password = pg.password;
-        activeClient = data.activeClient === "tgc" ? "tgc" : "fieldpec";
+        const retClient = String(data.activeClient || "cgpec").toLowerCase();
+        activeClient = retClient === "tgc" || retClient === "outros" ? "tgc"
+          : retClient === "fieldpec" || retClient === "field" ? "fieldpec"
+          : "cgpec";
+        cgForm = { ...readCg(), password: cgForm.password !== MASK ? cgForm.password : cg.password };
         fpForm = { ...readFp(), password: fpForm.password !== MASK ? fpForm.password : fp.password };
         tgForm = { ...readTg(), password: tgForm.password !== MASK ? tgForm.password : tg.password };
         pgForm = { ...readPg(), password: pgForm.password !== MASK ? pgForm.password : pg.password };

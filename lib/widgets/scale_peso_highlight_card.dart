@@ -40,6 +40,7 @@ class ScalePesoHighlightCard extends StatelessWidget {
   final Widget? footer;
 
   static const double _valorRowHeight = 52;
+  static const double _valorRowHeightPhone = 32;
 
   static String _formatPesoKg(double kg) {
     final abs = kg.abs().toStringAsFixed(0);
@@ -54,10 +55,15 @@ class ScalePesoHighlightCard extends StatelessWidget {
     required CrossAxisAlignment align,
     Widget? inlineActions,
     Widget? bottom,
+    bool isPhone = false,
   }) {
+    final rowH = isPhone ? _valorRowHeightPhone : _valorRowHeight;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: isPhone ? 8 : 12,
+        vertical: isPhone ? 6 : 10,
+      ),
       decoration: BoxDecoration(
         color: Colors.teal.shade50,
         borderRadius: BorderRadius.circular(12),
@@ -69,14 +75,14 @@ class ScalePesoHighlightCard extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: isPhone ? 9 : 11,
               fontWeight: FontWeight.w800,
               color: Colors.teal.shade800,
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: isPhone ? 2 : 4),
           SizedBox(
-            height: _valorRowHeight,
+            height: rowH,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               mainAxisAlignment: align == CrossAxisAlignment.end
@@ -91,8 +97,8 @@ class ScalePesoHighlightCard extends StatelessWidget {
                     textAlign: align == CrossAxisAlignment.end
                         ? TextAlign.right
                         : TextAlign.left,
-                    style: const TextStyle(
-                      fontSize: 26,
+                    style: TextStyle(
+                      fontSize: isPhone ? 18 : 26,
                       fontWeight: FontWeight.w900,
                       height: 1.05,
                     ),
@@ -157,41 +163,52 @@ class ScalePesoHighlightCard extends StatelessWidget {
       return Card(
         elevation: 2,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _metricBox(
-                      label: pesoLabel,
-                      value: _formatPesoKg(pesoKg),
-                      align: CrossAxisAlignment.start,
-                      inlineActions: inline,
-                    ),
-                  ),
-                  if (hasSecondary) ...[
-                    const SizedBox(width: 8),
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                     Expanded(
                       child: _metricBox(
-                        label: secondaryLabel!,
-                        value: secondaryKg != null && secondaryKg! > 0
-                            ? "${secondaryKg!.toStringAsFixed(0)} kg"
-                            : "—",
-                        sub: secondarySubtitle,
+                        label: pesoLabel,
+                        value: _formatPesoKg(pesoKg),
                         align: CrossAxisAlignment.start,
+                        inlineActions: inline,
+                        isPhone: true,
                       ),
                     ),
+                    if (hasSecondary) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _metricBox(
+                          label: secondaryLabel!,
+                          value: secondaryKg != null && secondaryKg! > 0
+                              ? "${secondaryKg!.toStringAsFixed(0)} kg"
+                              : "—",
+                          sub: secondarySubtitle,
+                          align: CrossAxisAlignment.start,
+                          isPhone: true,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
               if (hasSlots) ...[
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: slots.map((s) => SizedBox(width: 160, child: s)).toList(),
+                const SizedBox(height: 4),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < slots.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 6),
+                        Expanded(child: slots[i]),
+                      ],
+                    ],
+                  ),
                 ),
               ],
             ],
@@ -390,8 +407,14 @@ class ScaleConnectionStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.of(context).size.width < 600 ||
+        MediaQuery.of(context).size.height < 700;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: isPhone ? 6 : 10,
+        vertical: isPhone ? 4 : 8,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
@@ -400,8 +423,8 @@ class ScaleConnectionStatusChip extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 6),
+          Icon(icon, size: isPhone ? 14 : 18, color: color),
+          SizedBox(width: isPhone ? 4 : 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,18 +432,18 @@ class ScaleConnectionStatusChip extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: isPhone ? 9 : 11,
                     fontWeight: FontWeight.w800,
                     color: color.withValues(alpha: 0.9),
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 1),
                 Text(
                   detail,
-                  maxLines: 2,
+                  maxLines: isPhone ? 1 : 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: isPhone ? 10 : 12,
                     fontWeight: FontWeight.w700,
                     color: color,
                     height: 1.2,

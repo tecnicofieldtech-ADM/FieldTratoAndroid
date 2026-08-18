@@ -1,5 +1,5 @@
 [API]
-ActiveClient=fieldpec
+ActiveClient=cgpec
 ; Porta HTTP da API Horse (EXE e servico Windows usam o mesmo ApiConfig.ini).
 Port=3001
 ; 1 = soma realizado por fabricação no POST /Post/Fornecimento (next-api). 0 = substitui (último vence).
@@ -8,19 +8,19 @@ FornecimentoAcumulativo=1
 ; Abaixo disso a API confirma sync sem atualizar o banco. Nao se aplica a /Post/Fabricacao. 0 = desliga.
 PontoCorteFornecimentoKg=50
 
+[CGPEC]
+Server=127.0.0.1
+User=SYSDBA
+Password=masterkey
+Port=3055
+DB=C:\caminho\para\CGP_4.FDB
+
 [FIELDPEC]
 Server=127.0.0.1
 User=SYSDBA
 Password=masterkey
 Port=3050
 DB=C:\caminho\para\FIELDPEC.FDB
-
-[TGC]
-Server=127.0.0.1
-User=SYSDBA
-Password=masterkey
-Port=3050
-DB=C:\caminho\para\TGC.FDB
 
 [POSTGRES]
 Host=127.0.0.1
