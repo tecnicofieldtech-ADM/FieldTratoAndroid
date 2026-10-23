@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conector FieldPec Online</title>
+  <style>
+    :root {
+      --bg: #0e1318;
+      --panel: #172029;
+      --panel2: #1e2a36;
+      --text: #e8eef6;
+      --muted: #8fa0b5;
+      --accent: #2f9e6d;
+      --accent2: #3b82c4;
+      --err: #d35454;
+      --border: #2a3848;
+      --mono: ui-monospace, Consolas, monospace;
+      --sans: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 0% 0%, #1a3328 0%, transparent 55%),
+        radial-gradient(700px 380px at 100% 0%, #1a2740 0%, transparent 50%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 0.75rem;
+      align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 5;
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      backdrop-filter: blur(8px);
+    }
+    header h1 { margin: 0; font-size: 1.2rem; font-weight: 650; }
+    header .meta { color: var(--muted); font-size: 0.85rem; }
+    .badge {
+      display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600; border: 1px solid var(--border);
+    }
+    .badge.ok { background: #1b3a2c; color: #7ddea8; }
+    .badge.err { background: #3a1b1b; color: #f0a0a0; }
+    .badge.warn { background: #3a321b; color: #e6d08a; }
+    nav { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.85rem 1.25rem 0; }
+    nav button {
+      appearance: none; border: 1px solid var(--border); background: var(--panel);
+      color: var(--text); padding: 0.45rem 0.9rem; border-radius: 8px;
+      cursor: pointer; font: inherit; font-size: 0.9rem;
+    }
+    nav button.active { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+    main { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 2.5rem; }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 1rem 1.1rem; margin-bottom: 1rem;
+    }
+    .panel h2 {
+      margin: 0 0 0.85rem; font-size: 0.78rem; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--muted); font-weight: 650;
+    }
+    .hint { color: var(--muted); font-size: 0.9rem; line-height: 1.45; margin: 0 0 1rem; }
+    label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 0.25rem; }
+    input, select {
+      width: 100%; background: #0f161e; border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 0.55rem 0.7rem;
+      font: inherit; margin-bottom: 0.75rem;
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.35rem; }
+    button.act {
+      appearance: none; border: 1px solid var(--border); background: var(--panel2);
+      color: var(--text); padding: 0.6rem 1rem; border-radius: 8px;
+      font: inherit; cursor: pointer;
+    }
+    button.act.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+    button.act.blue { background: var(--accent2); border-color: transparent; color: #fff; font-weight: 600; }
+    button.act:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin: 0.85rem 0 0; background: #0b1016; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.75rem; overflow: auto; max-height: 380px;
+      font-family: var(--mono); font-size: 0.78rem; line-height: 1.45;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .log-box {
+      margin: 0.85rem 0 0; background: #0b1016; border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem 1.1rem; overflow: auto; max-height: 480px;
+      font-size: 0.95rem; line-height: 1.55;
+    }
+    .log-box .log-title { font-size: 1.1rem; font-weight: 650; margin: 0 0 0.65rem; }
+    .log-box .log-ok { color: #7ddea8; }
+    .log-box .log-err { color: #f0a0a0; }
+    .log-box .log-muted { color: var(--muted); font-size: 0.88rem; }
+    .log-box ul { margin: 0.35rem 0 0.75rem; padding-left: 1.2rem; }
+    .log-box li { margin: 0.2rem 0; }
+    .log-box details { margin-top: 0.75rem; }
+    .log-box details summary {
+      cursor: pointer; color: var(--muted); font-size: 0.85rem; user-select: none;
+    }
+    .log-box details pre {
+      margin-top: 0.5rem; max-height: 220px; font-size: 0.72rem;
+    }
+    .hidden { display: none !important; }
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    @media (max-width: 720px) { .cards { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem;
+    }
+    .card h3 { margin: 0 0 0.4rem; font-size: 1.05rem; }
+    .card p { margin: 0 0 0.85rem; color: var(--muted); font-size: 0.88rem; line-height: 1.4; }
+    .stat-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.65rem; margin-bottom: 1rem;
+    }
+    @media (max-width: 900px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+    .stat {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.75rem 0.9rem;
+    }
+    .stat .n { font-size: 1.45rem; font-weight: 700; line-height: 1.1; }
+    .stat .l { color: var(--muted); font-size: 0.78rem; margin-top: 0.25rem; }
+    .stat.warn .n { color: #e6d08a; }
+    .stat.ok .n { color: #7ddea8; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.85rem; align-items: center; }
+    .filter-row button {
+      appearance: none; border: 1px solid var(--border); background: var(--panel);
+      color: var(--text); padding: 0.4rem 0.75rem; border-radius: 8px;
+      cursor: pointer; font: inherit; font-size: 0.85rem;
+    }
+    .filter-row button.active { background: var(--accent2); border-color: transparent; color: #fff; font-weight: 600; }
+    table.ops {
+      width: 100%; border-collapse: collapse; font-size: 0.88rem;
+    }
+    table.ops th, table.ops td {
+      text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    table.ops th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    table.ops tr:hover td { background: color-mix(in srgb, var(--panel2) 70%, transparent); }
+    table.ops details { margin: 0; }
+    table.ops details summary { cursor: pointer; color: var(--accent2); font-size: 0.82rem; }
+    table.itens { width: 100%; margin-top: 0.4rem; font-size: 0.8rem; }
+    table.itens th, table.itens td { padding: 0.25rem 0.35rem; border-bottom: 1px solid #243040; }
+    .empty-msg { color: var(--muted); font-size: 0.9rem; padding: 0.5rem 0; }
+    .pill {
+      display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 650;
+    }
+    .pill.pend { background: #3a321b; color: #e6d08a; }
+    .pill.done { background: #1b3a2c; color: #7ddea8; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Conector FieldPec Online</h1>
+      <div class="meta">Máquina do cliente → API AWS · sem Delphi</div>
+    </div>
+    <div id="hdr"><span class="badge warn">…</span></div>
+  </header>
+
+  <nav>
+    <button type="button" data-tab="ops" class="active">Subir / Baixar</button>
+    <button type="button" data-tab="acompanhar">Acompanhar</button>
+    <button type="button" data-tab="config">Configuração</button>
+    <button type="button" data-tab="status">Status</button>
+  </nav>
+
+  <main>
+    <section id="tab-ops" class="tab">
+      <div class="panel">
+        <h2>Operações</h2>
+        <p class="hint">
+          <strong>Subir</strong> = lê o Firebird FieldPec e envia cadastros/previsão para a API na AWS.<br />
+          <strong>Baixar</strong> = puxa fab/fornecimento da nuvem e, com REPLAY=1, grava direto no Firebird (sem Horse).<br />
+          Use a aba <strong>Acompanhar</strong> para ver pendentes e o que já foi baixado ao Field.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <h3>Subir dados</h3>
+            <p>Fazendas, usuários, baias, dietas, ingredientes e previsão → nuvem.</p>
+            <button type="button" class="act primary" id="btnPush">Subir agora</button>
+          </div>
+          <div class="card">
+            <h3>Baixar dados</h3>
+            <p>Fabricação e fornecimento do FieldTrato → grava no Field (.FDB) se REPLAY=1.</p>
+            <button type="button" class="act blue" id="btnPull">Baixar agora</button>
+          </div>
+        </div>
+        <div class="actions" style="margin-top:1rem">
+          <button type="button" class="act" id="btnBoth">Subir + Baixar</button>
+          <button type="button" class="act" id="btnProbe">Testar conexões</button>
+          <button type="button" class="act" id="btnStats">Stats na nuvem</button>
+        </div>
+        <div class="log-box" id="opsOut">
+          <div class="log-title">Pronto</div>
+          <p class="log-muted">Clique em Subir, Baixar ou Testar conexões. O resultado aparece aqui em linguagem simples.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-acompanhar" class="tab hidden">
+      <div class="panel">
+        <h2>Acompanhar operações</h2>
+        <p class="hint">
+          <strong>Pendente</strong> = o tablet já enviou para a nuvem e ainda não foi baixado ao Field.<br />
+          <strong>Já no Field</strong> = marcado após Baixar com REPLAY=1 (gravação no Firebird + ack na nuvem).
+        </p>
+        <div class="actions" style="margin-bottom:0.85rem">
+          <button type="button" class="act primary" id="btnOpsSend">Enviar para o Field</button>
+          <button type="button" class="act blue" id="btnOpsRefresh">Atualizar</button>
+        </div>
+        <div class="log-box hidden" id="opsSendOut" style="margin-bottom:0.85rem;max-height:220px"></div>
+        <div class="stat-grid" id="opsSummary">
+          <div class="stat warn"><div class="n" id="sFabPend">—</div><div class="l">Fab. pendentes</div></div>
+          <div class="stat ok"><div class="n" id="sFabDone">—</div><div class="l">Fab. já no Field</div></div>
+          <div class="stat warn"><div class="n" id="sFornPend">—</div><div class="l">Forn. pendentes</div></div>
+          <div class="stat ok"><div class="n" id="sFornDone">—</div><div class="l">Forn. já no Field</div></div>
+        </div>
+        <div class="filter-row">
+          <span class="meta" style="color:var(--muted);font-size:0.85rem;margin-right:0.35rem">Filtrar:</span>
+          <button type="button" data-ops-filter="all" class="active">Todos</button>
+          <button type="button" data-ops-filter="pending">Pendentes</button>
+          <button type="button" data-ops-filter="done">Já no Field</button>
+        </div>
+        <div id="opsError" class="empty-msg hidden"></div>
+        <h2 style="margin-top:0.5rem">Fabricação</h2>
+        <div id="opsFab" class="empty-msg">Clique em Atualizar.</div>
+        <h2 style="margin-top:1.25rem">Fornecimento</h2>
+        <div id="opsForn" class="empty-msg">Clique em Atualizar.</div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab hidden">
+      <div class="panel">
+        <h2>API na AWS</h2>
+        <div class="grid2">
+          <div>
+            <label>CLOUD_API_URL</label>
+            <input id="CLOUD_API_URL" placeholder="http://x.x.x.x:3111" />
+          </div>
+          <div>
+            <label>CLIENT_CODE (código único do cliente)</label>
+            <input id="CLIENT_CODE" placeholder="DEMO" />
+          </div>
+          <div>
+            <label>ADMIN_TOKEN (open = sem token)</label>
+            <input id="ADMIN_TOKEN" value="open" />
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Banco FieldPec (Firebird) — máquina do cliente</h2>
+        <p class="hint">Caminho do arquivo .FDB e usuário Firebird. Não usa Delphi.</p>
+        <div class="grid2">
+          <div>
+            <label>SOURCE_MODE</label>
+            <select id="SOURCE_MODE">
+              <option value="firebird">firebird (recomendado)</option>
+              <option value="horse">horse (API Delphi local)</option>
+            </select>
+          </div>
+          <div>
+            <label>ID_FAZENDA</label>
+            <input id="ID_FAZENDA" placeholder="1" />
+          </div>
+          <div>
+            <label>FB_HOST</label>
+            <input id="FB_HOST" value="127.0.0.1" />
+          </div>
+          <div>
+            <label>FB_PORT</label>
+            <input id="FB_PORT" type="number" value="3050" />
+          </div>
+          <div style="grid-column: 1 / -1">
+            <label>FB_DATABASE (caminho do .FDB)</label>
+            <input id="FB_DATABASE" placeholder="C:\RSistemas\dbs\FIELDPEC.FDB" />
+          </div>
+          <div>
+            <label>FB_USER</label>
+            <input id="FB_USER" value="SYSDBA" />
+          </div>
+          <div>
+            <label>FB_PASSWORD</label>
+            <input id="FB_PASSWORD" type="password" />
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Opções</h2>
+        <div class="grid2">
+          <div>
+            <label>SYNC_INTERVAL_SEC (0 = só manual)</label>
+            <input id="SYNC_INTERVAL_SEC" type="number" value="0" />
+          </div>
+          <div>
+            <label>LOCAL_HORSE_URL (só se mode=horse)</label>
+            <input id="LOCAL_HORSE_URL" value="http://127.0.0.1:3001" />
+          </div>
+          <div>
+            <label>REPLAY_TO_LOCAL (gravar no Field ao Baixar)</label>
+            <select id="REPLAY_TO_LOCAL">
+              <option value="0">0 — só consultar nuvem</option>
+              <option value="1">1 — gravar no Firebird (ou Horse se mode=horse)</option>
+            </select>
+          </div>
+          <div>
+            <label>CONNECTOR_PORT (exige reiniciar)</label>
+            <input id="CONNECTOR_PORT" type="number" value="3080" />
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="act primary" id="btnSave">Salvar configuração</button>
+          <button type="button" class="act" id="btnReload">Recarregar</button>
+        </div>
+        <pre id="cfgOut"></pre>
+      </div>
+    </section>
+
+    <section id="tab-status" class="tab hidden">
+      <div class="panel">
+        <h2>Status</h2>
+        <div class="log-box" id="statusOut">…</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fields = [
+      "CLOUD_API_URL","CLIENT_CODE","ADMIN_TOKEN","SOURCE_MODE","ID_FAZENDA",
+      "FB_HOST","FB_PORT","FB_DATABASE","FB_USER","FB_PASSWORD",
+      "SYNC_INTERVAL_SEC","LOCAL_HORSE_URL","REPLAY_TO_LOCAL","CONNECTOR_PORT"
+    ];
+
+    const LABEL = {
+      fazendas: "Fazendas",
+      usuarios: "Usuários",
+      vagoes: "Vagões",
+      baias: "Baias",
+      dietas: "Dietas",
+      dietas_detalhes: "Ingredientes das dietas",
+      previsao_trato: "Previsão de trato",
+    };
+
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function fmtWhen(iso) {
+      if (!iso) return "—";
+      try {
+        return new Date(iso).toLocaleString("pt-BR");
+      } catch {
+        return iso;
+      }
+    }
+
+    function countsList(counts) {
+      if (!counts || typeof counts !== "object") return "<li>(sem contagem)</li>";
+      return Object.keys(LABEL)
+        .map((k) => {
+          const n = counts[k];
+          if (n == null) return "";
+          return `<li><strong>${LABEL[k]}:</strong> ${n}</li>`;
+        })
+        .filter(Boolean)
+        .join("");
+    }
+
+    function techBlock(data) {
+      return `<details><summary>Ver detalhes técnicos (JSON)</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
+    }
+
+    function showLog(html) {
+      $("opsOut").innerHTML = html;
+    }
+
+    function showWaiting(msg) {
+      showLog(`<div class="log-title">${esc(msg)}</div><p class="log-muted">Aguarde…</p>`);
+    }
+
+    function formatPush(data) {
+      const ok = data && (data.ok !== false) && data.cloud && data.cloud.success !== false && !data.error;
+      const title = ok ? "Subida concluída com sucesso" : "Falha ao subir dados";
+      const cls = ok ? "log-ok" : "log-err";
+      const counts = (data && data.local_counts) || (data && data.cloud && data.cloud.counts) || {};
+      let body = "";
+      if (ok) {
+        body += `<p>Os cadastros do FieldPec foram enviados para a nuvem.</p>`;
+        body += `<p><strong>Quantidade enviada:</strong></p><ul>${countsList(counts)}</ul>`;
+      } else {
+        body += `<p class="log-err">${esc((data && (data.error || (data.cloud && data.cloud.error))) || "Erro desconhecido")}</p>`;
+      }
+      body += `<p class="log-muted">Horário: ${esc(fmtWhen(data && (data.finished || data.started)))}</p>`;
+      return { title, cls, body, raw: data };
+    }
+
+    function formatPull(data) {
+      const ok = data && data.ok !== false && !data.error;
+      const fab = (data && data.pending_fab) || 0;
+      const forn = (data && data.pending_forn) || 0;
+      const ackedFab = (data && data.acked_fab) || 0;
+      const ackedForn = (data && data.acked_forn) || 0;
+      const title = ok ? "Download da nuvem concluído" : "Falha ao baixar da nuvem";
+      const cls = ok ? "log-ok" : "log-err";
+      let body = "";
+      if (!ok) {
+        body += `<p class="log-err">${esc(data && data.error)}</p>`;
+      } else if (fab === 0 && forn === 0) {
+        body += `<p>Não havia fabricação nem fornecimento pendente na nuvem.</p>`;
+        body += `<p class="log-muted">Isso é normal se o tablet ainda não enviou operações novas.</p>`;
+      } else {
+        body += `<p>Pendentes na nuvem: <strong>${fab}</strong> fab / <strong>${forn}</strong> forn</p>`;
+        body += `<p>Gravados no Field: <strong>${ackedFab}</strong> fab / <strong>${ackedForn}</strong> forn` +
+          (data.mode ? ` <span class="log-muted">(${esc(data.mode)})</span>` : "") +
+          `</p>`;
+      }
+      if (data && data.logs && data.logs.length) {
+        body += `<ul>`;
+        for (const line of data.logs) {
+          const fail = /FAIL/i.test(line);
+          body += `<li class="${fail ? "log-err" : ""}">${esc(line)}</li>`;
+        }
+        body += `</ul>`;
+      }
+      if (data && data.note) {
+        body += `<p class="log-muted">${esc(data.note)}</p>`;
+      }
+      body += `<p class="log-muted">Horário: ${esc(fmtWhen(data && (data.finished || data.started)))}</p>`;
+      return { title, cls, body, raw: data };
+    }
+
+    function formatFullSync(data) {
+      const errs = (data && data.errors) || [];
+      const ok = errs.length === 0 && data && !data.error;
+      const title = ok ? "Sincronização concluída" : "Sincronização com problemas";
+      const cls = ok ? "log-ok" : "log-err";
+      let body = "";
+
+      if (data && data.push) {
+        const p = formatPush(data.push);
+        body += `<p><strong>1) Subir cadastros</strong> — <span class="${p.cls}">${esc(p.title)}</span></p>`;
+        body += `<ul>${countsList(data.push.local_counts || (data.push.cloud && data.push.cloud.counts))}</ul>`;
+      }
+      if (data && data.pull) {
+        const pl = formatPull(data.pull);
+        body += `<p><strong>2) Baixar operações</strong> — <span class="${pl.cls}">${esc(pl.title)}</span></p>`;
+        const fab = data.pull.pending_fab || 0;
+        const forn = data.pull.pending_forn || 0;
+        if (fab === 0 && forn === 0) {
+          body += `<p class="log-muted">Nenhuma fabricação/fornecimento pendente na nuvem.</p>`;
+        } else {
+          body += `<ul><li>Fabricações: ${fab}</li><li>Fornecimentos: ${forn}</li></ul>`;
+        }
+        if (data.pull.note) body += `<p class="log-muted">${esc(data.pull.note)}</p>`;
+      }
+      if (errs.length) {
+        body += `<p class="log-err"><strong>Erros:</strong></p><ul>`;
+        errs.forEach((e) => { body += `<li class="log-err">${esc(typeof e === "string" ? e : JSON.stringify(e))}</li>`; });
+        body += `</ul>`;
+      }
+      body += `<p class="log-muted">Início: ${esc(fmtWhen(data && data.started))} · Fim: ${esc(fmtWhen(data && data.finished))}</p>`;
+      return { title, cls, body, raw: data };
+    }
+
+    function formatProbe(data) {
+      const localOk = data && data.local && data.local.ok;
+      const cloudOk = data && data.cloud && !data.cloud.error && (data.cloud["OK "] || data.cloud.OK || data.cloud.ok);
+      const allOk = localOk && cloudOk;
+      const title = allOk ? "Conexões OK" : "Problema nas conexões";
+      const cls = allOk ? "log-ok" : "log-err";
+      let body = `<ul>`;
+      body += `<li><strong>FieldPec (Firebird):</strong> ${localOk ? '<span class="log-ok">conectado</span>' : '<span class="log-err">falhou</span>'}`;
+      if (data && data.local && data.local.database) {
+        body += `<br /><span class="log-muted">${esc(data.local.database)}</span>`;
+      }
+      if (data && data.local && data.local.error) {
+        body += `<br /><span class="log-err">${esc(data.local.error)}</span>`;
+      }
+      body += `</li>`;
+      body += `<li><strong>API na nuvem:</strong> ${cloudOk ? '<span class="log-ok">online</span>' : '<span class="log-err">falhou</span>'}`;
+      if (data && data.cloud_api_url) {
+        body += `<br /><span class="log-muted">${esc(data.cloud_api_url)}</span>`;
+      }
+      if (data && data.cloud && data.cloud.error) {
+        body += `<br /><span class="log-err">${esc(data.cloud.error)}</span>`;
+        if (data.cloud.tip) body += `<br /><span class="log-muted">${esc(data.cloud.tip)}</span>`;
+      }
+      body += `</li></ul>`;
+      return { title, cls, body, raw: data };
+    }
+
+    function formatStats(data) {
+      if (data && data.error) {
+        return {
+          title: "Não foi possível ler a nuvem",
+          cls: "log-err",
+          body: `<p class="log-err">${esc(data.error)}</p>`,
+          raw: data,
+        };
+      }
+      const c = data && (data.counts || data.table_counts || data);
+      let body = `<p>Registros atualmente na nuvem:</p><ul>${countsList(c)}</ul>`;
+      if (data && (data.fabricacoes != null || data.fornecimentos != null)) {
+        body += `<ul>`;
+        if (data.fabricacoes != null) body += `<li><strong>Fabricações:</strong> ${data.fabricacoes}</li>`;
+        if (data.fornecimentos != null) body += `<li><strong>Fornecimentos:</strong> ${data.fornecimentos}</li>`;
+        body += `</ul>`;
+      }
+      return { title: "Situação na nuvem", cls: "log-ok", body, raw: data };
+    }
+
+    function renderReport(parsed) {
+      showLog(
+        `<div class="log-title ${parsed.cls}">${esc(parsed.title)}</div>` +
+          parsed.body +
+          techBlock(parsed.raw),
+      );
+    }
+
+    async function api(path, opts = {}) {
+      const r = await fetch(path, {
+        ...opts,
+        headers: {
+          Accept: "application/json",
+          ...(opts.body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: opts.body != null ? JSON.stringify(opts.body) : undefined,
+      });
+      const text = await r.text();
+      let data; try { data = JSON.parse(text); } catch { data = text; }
+      if (!r.ok) throw new Error(typeof data === "string" ? data : (data.error || r.statusText));
+      return data;
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".tab").forEach((el) => el.classList.add("hidden"));
+      document.getElementById("tab-" + name).classList.remove("hidden");
+      document.querySelectorAll("nav button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === name);
+      });
+      if (name === "status") refreshStatus();
+      if (name === "acompanhar") loadOps();
+    }
+    document.querySelectorAll("nav button").forEach((b) => {
+      b.onclick = () => showTab(b.dataset.tab);
+    });
+
+    function fillForm(cfg) {
+      fields.forEach((k) => {
+        if ($(k) && cfg[k] != null) $(k).value = cfg[k];
+      });
+    }
+
+    async function loadConfig() {
+      const cfg = await api("/api/config");
+      fillForm(cfg);
+      $("cfgOut").textContent = JSON.stringify(cfg, null, 2);
+      return cfg;
+    }
+
+    async function refreshStatus() {
+      const s = await api("/api/status");
+      let html = "";
+      if (s.lastSync) {
+        const r = formatFullSync(s.lastSync);
+        html += `<div class="log-title ${r.cls}">Última sincronização</div>${r.body}`;
+      } else {
+        html += `<p class="log-muted">Ainda não houve sincronização nesta sessão.</p>`;
+      }
+      html += techBlock(s);
+      $("statusOut").innerHTML = html;
+      const db = s.config && s.config.FB_DATABASE;
+      const cloud = s.config && s.config.CLOUD_API_URL;
+      $("hdr").innerHTML = db
+        ? `<span class="badge ok">${s.config.SOURCE_MODE} → ${cloud || "?"}</span>`
+        : `<span class="badge warn">configure o Firebird</span>`;
+    }
+
+    $("btnReload").onclick = () => loadConfig().then(refreshStatus).catch((e) => alert(e.message));
+    $("btnSave").onclick = async () => {
+      const body = {};
+      fields.forEach((k) => { body[k] = $(k).value; });
+      body.PUSH_MASTER = "1";
+      body.PULL_OPS = "1";
+      try {
+        await api("/api/config", { method: "POST", body });
+        $("cfgOut").textContent = "Configuração salva.";
+        await refreshStatus();
+        alert("Configuração salva.");
+      } catch (e) { alert(e.message); }
+    };
+
+    function busy(on) {
+      ["btnPush","btnPull","btnBoth","btnProbe","btnStats"].forEach((id) => {
+        $(id).disabled = on;
+      });
+    }
+
+    $("btnPush").onclick = async () => {
+      busy(true); showWaiting("Subindo dados do FieldPec…");
+      try {
+        renderReport(formatPush(await api("/api/sync/push", { method: "POST" })));
+        await refreshStatus();
+      } catch (e) {
+        showLog(`<div class="log-title log-err">Falha ao subir</div><p class="log-err">${esc(e.message)}</p>`);
+      }
+      finally { busy(false); }
+    };
+
+    $("btnPull").onclick = async () => {
+      busy(true); showWaiting("Baixando da nuvem…");
+      try {
+        renderReport(formatPull(await api("/api/sync/pull", { method: "POST" })));
+        await refreshStatus();
+      } catch (e) {
+        showLog(`<div class="log-title log-err">Falha ao baixar</div><p class="log-err">${esc(e.message)}</p>`);
+      }
+      finally { busy(false); }
+    };
+
+    $("btnBoth").onclick = async () => {
+      busy(true); showWaiting("Sincronizando (subir + baixar)…");
+      try {
+        renderReport(formatFullSync(await api("/api/sync", { method: "POST" })));
+        await refreshStatus();
+      } catch (e) {
+        showLog(`<div class="log-title log-err">Falha na sincronização</div><p class="log-err">${esc(e.message)}</p>`);
+      }
+      finally { busy(false); }
+    };
+
+    $("btnProbe").onclick = async () => {
+      showWaiting("Testando conexões…");
+      try { renderReport(formatProbe(await api("/api/probe"))); }
+      catch (e) {
+        showLog(`<div class="log-title log-err">Falha no teste</div><p class="log-err">${esc(e.message)}</p>`);
+      }
+    };
+
+    $("btnStats").onclick = async () => {
+      showWaiting("Consultando nuvem…");
+      try { renderReport(formatStats(await api("/api/stats"))); }
+      catch (e) {
+        showLog(`<div class="log-title log-err">Falha</div><p class="log-err">${esc(e.message)}</p>`);
+      }
+    };
+
+    let opsFilter = "all";
+
+    function fmtNum(v) {
+      if (v == null || v === "") return "—";
+      const n = Number(v);
+      if (Number.isNaN(n)) return esc(v);
+      return n.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+    }
+
+    function fmtDate(v) {
+      if (!v) return "—";
+      const s = String(v);
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const [y, m, d] = s.slice(0, 10).split("-");
+        return `${d}/${m}/${y}`;
+      }
+      return fmtWhen(s);
+    }
+
+    function statusPill(pulled) {
+      return pulled
+        ? `<span class="pill done">Já no Field</span>`
+        : `<span class="pill pend">Pendente</span>`;
+    }
+
+    function renderItens(itens) {
+      if (!itens || !itens.length) {
+        return `<p class="empty-msg" style="margin:0.35rem 0 0">Sem insumos nesta fabricação.</p>`;
+      }
+      const rows = itens.map((it) => {
+        const idIns =
+          it.id_insumo || it.ID_INSUMO || it.idInsumo || it.idingrediente || "—";
+        const nome =
+          it.nome ||
+          it.NOME ||
+          it.ingrediente ||
+          it.INSUMO ||
+          it.nome_insumo ||
+          "";
+        const prev = it.qtde_prevista ?? it.QTDE_PREVISTA;
+        const real =
+          it.qtde_realizada ?? it.qtd_realizada ?? it.QTDE_REALIZADA;
+        return `<tr>
+          <td>${esc(idIns)}${nome ? `<div class="log-muted">${esc(nome)}</div>` : ""}</td>
+          <td>${fmtNum(prev)}</td>
+          <td>${fmtNum(real)}</td>
+        </tr>`;
+      }).join("");
+      return `<table class="itens">
+        <thead><tr><th>Insumo</th><th>Previsto</th><th>Realizado</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+
+    function renderFabTable(list) {
+      if (!list.length) {
+        return `<p class="empty-msg">Nenhuma fabricação neste filtro.</p>`;
+      }
+      const rows = list.map((f) => {
+        const itens = f.itens || (f.payload && f.payload.itens) || [];
+        return `<tr>
+          <td>${fmtDate(f.data_fab || f.created_at)}<div class="log-muted">#${esc(f.id)}</div></td>
+          <td>${esc(f.id_dieta || "—")}<div class="log-muted">${esc(f.lote_fabricacao || f.id_local || "")}</div></td>
+          <td>${fmtNum(f.qtde_realizada)}<div class="log-muted">prev ${fmtNum(f.qtde_prevista)}</div></td>
+          <td>${statusPill(f.pulled_to_fieldpec)}
+            ${f.pulled_at ? `<div class="log-muted">${esc(fmtWhen(f.pulled_at))}</div>` : ""}
+          </td>
+          <td>
+            <details>
+              <summary>${itens.length} insumo(s)</summary>
+              ${renderItens(itens)}
+            </details>
+          </td>
+        </tr>`;
+      }).join("");
+      return `<table class="ops">
+        <thead><tr><th>Data</th><th>Dieta / lote</th><th>Qtde</th><th>Status</th><th>Insumos</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+
+    function renderFornTable(list) {
+      if (!list.length) {
+        return `<p class="empty-msg">Nenhum fornecimento neste filtro.</p>`;
+      }
+      const rows = list.map((f) => {
+        const p = f.payload && typeof f.payload === "object" ? f.payload : {};
+        const baia = f.id_baia || p.id_baia || p.ID_BAIA || "—";
+        const trato = f.trato != null ? f.trato : (p.trato || p.TRATO || "—");
+        const real = f.realizado != null ? f.realizado : (p.realizado || p.REALIZADO);
+        return `<tr>
+          <td>${fmtDate(f.data_forn || f.created_at)}<div class="log-muted">#${esc(f.id)}</div></td>
+          <td>${esc(baia)}</td>
+          <td>${esc(trato)}</td>
+          <td>${fmtNum(real)}</td>
+          <td>${statusPill(f.pulled_to_fieldpec)}
+            ${f.pulled_at ? `<div class="log-muted">${esc(fmtWhen(f.pulled_at))}</div>` : ""}
+          </td>
+        </tr>`;
+      }).join("");
+      return `<table class="ops">
+        <thead><tr><th>Data</th><th>Baia</th><th>Trato</th><th>Realizado</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+
+    async function loadOps() {
+      const errEl = $("opsError");
+      errEl.classList.add("hidden");
+      errEl.textContent = "";
+      $("opsFab").innerHTML = `<p class="empty-msg">Carregando…</p>`;
+      $("opsForn").innerHTML = `<p class="empty-msg">Carregando…</p>`;
+      try {
+        const data = await api(`/api/ops?status=${encodeURIComponent(opsFilter)}&limit=100`);
+        if (data.error || data.success === false) {
+          throw new Error(data.error || "Falha ao listar operações");
+        }
+        const s = data.summary || {};
+        $("sFabPend").textContent = s.fabricacoes_pendentes ?? "—";
+        $("sFabDone").textContent = s.fabricacoes_no_field ?? "—";
+        $("sFornPend").textContent = s.fornecimentos_pendentes ?? "—";
+        $("sFornDone").textContent = s.fornecimentos_no_field ?? "—";
+        $("opsFab").innerHTML = renderFabTable(data.fabricacoes || []);
+        $("opsForn").innerHTML = renderFornTable(data.fornecimentos || []);
+      } catch (e) {
+        errEl.textContent = e.message || String(e);
+        errEl.classList.remove("hidden");
+        $("opsFab").innerHTML = "";
+        $("opsForn").innerHTML = "";
+      }
+    }
+
+    $("btnOpsRefresh").onclick = () => loadOps();
+
+    $("btnOpsSend").onclick = async () => {
+      const out = $("opsSendOut");
+      const btn = $("btnOpsSend");
+      btn.disabled = true;
+      $("btnOpsRefresh").disabled = true;
+      out.classList.remove("hidden");
+      out.innerHTML = `<div class="log-title">Enviando para o Field…</div><p class="log-muted">Gravando fab/forn no Firebird e confirmando na nuvem.</p>`;
+      try {
+        const cfg = await api("/api/config");
+        if (String(cfg.REPLAY_TO_LOCAL || "0") !== "1") {
+          out.innerHTML =
+            `<div class="log-title log-err">REPLAY desligado</div>` +
+            `<p>Em <strong>Configuração</strong>, defina <strong>REPLAY_TO_LOCAL = 1</strong> (gravar no Firebird), salve e tente de novo.</p>`;
+          return;
+        }
+        const data = await api("/api/sync/pull", { method: "POST" });
+        const r = formatPull(data);
+        out.innerHTML = `<div class="log-title ${r.cls}">${esc(r.title)}</div>${r.body}`;
+        await loadOps();
+      } catch (e) {
+        out.innerHTML =
+          `<div class="log-title log-err">Falha ao enviar</div>` +
+          `<p class="log-err">${esc(e.message)}</p>`;
+      } finally {
+        btn.disabled = false;
+        $("btnOpsRefresh").disabled = false;
+      }
+    };
+
+    document.querySelectorAll("[data-ops-filter]").forEach((b) => {
+      b.onclick = () => {
+        opsFilter = b.dataset.opsFilter;
+        document.querySelectorAll("[data-ops-filter]").forEach((x) => {
+          x.classList.toggle("active", x.dataset.opsFilter === opsFilter);
+        });
+        loadOps();
+      };
+    });
+
+    loadConfig().then(refreshStatus).catch((e) => {
+      $("hdr").innerHTML = `<span class="badge err">${e.message}</span>`;
+    });
+  </script>
+</body>
+</html>

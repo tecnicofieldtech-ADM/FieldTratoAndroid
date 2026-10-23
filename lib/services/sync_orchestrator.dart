@@ -6,6 +6,17 @@ import "api_service.dart";
 import "bootstrap_sync.dart";
 import "outbox_sync.dart";
 
+enum SyncMode {
+  /// Só GET: usuarios, baias, dietas, detalhes, previsao.
+  downloadOnly,
+
+  /// Só POST: TAG, fabricacao, fornecimento.
+  uploadOnly,
+
+  /// Baixa cadastros, envia pendencias e baixa previsao.
+  full,
+}
+
 class SyncStep {
   final String title;
   final Future<void> Function() run;
@@ -23,6 +34,7 @@ class SyncOrchestrator {
 
   Future<List<SyncStep>> buildSteps({
     required void Function(String) log,
+    SyncMode mode = SyncMode.full,
   }) async {
     final cfg = await cfgRepo.getConfig();
     if (cfg == null) {
@@ -51,18 +63,29 @@ class SyncOrchestrator {
 
     final today = _todayYmd();
     final pendingDates = await _pendingFornecimentoDates(today);
+    final wantDownload =
+        mode == SyncMode.downloadOnly || mode == SyncMode.full;
+    final wantUpload = mode == SyncMode.uploadOnly || mode == SyncMode.full;
 
-    return [
+    final steps = <SyncStep>[
       SyncStep(
         title: "Testando servidor...",
         run: () async {
-          final ok = await api.getTeste();
-          if (!ok) throw Exception("Servidor indisponivel.");
+          final meta = await api.getTesteMeta();
+          if (meta["ok"] != true) throw Exception("Servidor indisponivel.");
           log("Servidor online");
           final backendName =
               ConfigOptions.backends[backend] ?? "Backend $backend";
           log("Backend app: $backendName");
-          if (!ConfigOptions.isTgcBackend(backend)) {
+          final importacaoId =
+              (meta["importacao_id"] ?? "").toString().trim();
+          if (ConfigOptions.isPlanilhaBackend(backend) &&
+              importacaoId.isNotEmpty) {
+            await cfgRepo.setImportacaoId(importacaoId);
+            log("Importacao ativa: $importacaoId");
+          }
+          if (!ConfigOptions.isTgcBackend(backend) &&
+              !ConfigOptions.isPlanilhaBackend(backend)) {
             log(
               "AVISO: cliente TGC deve usar Config > Backend = "
               "'Outros (TGC)'. Com FieldPec a ordem da sync e o "
@@ -71,97 +94,105 @@ class SyncOrchestrator {
           }
         },
       ),
-      SyncStep(title: "Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
-      if (ConfigOptions.isFieldPecBackend(backend)) ...[
-        SyncStep(
-          title: "Sincronizando Fornecimento",
-          run: () => outbox.syncFornecimento(log),
-        ),
-        SyncStep(
-          title: "Sincronizando Fabrica Racao",
-          run: () => outbox.syncFabricacao(
-            log,
-            idVagao,
-            idFazendaCfg: idFazenda,
-            flowMode: flowMode,
-            tipoTrabalho: tipoTrabalho,
-          ),
-        ),
-      ] else if (ConfigOptions.isTgcBackend(backend)) ...[
-        SyncStep(
-          title: "Sincronizando Fabrica Racao",
-          run: () => outbox.syncFabricacao(
-            log,
-            idVagao,
-            idFazendaCfg: idFazenda,
-            flowMode: flowMode,
-            tipoTrabalho: tipoTrabalho,
-          ),
-        ),
-        SyncStep(
-          title: "Sincronizando Fornecimento",
-          run: () => outbox.syncFornecimento(log),
-        ),
-      ] else ...[
-        SyncStep(
-          title: "Sincronizando Fabrica Racao",
-          run: () => outbox.syncFabricacao(
-            log,
-            idVagao,
-            idFazendaCfg: idFazenda,
-            flowMode: flowMode,
-            tipoTrabalho: tipoTrabalho,
-          ),
-        ),
-        SyncStep(
-          title: "Sincronizando Fornecimento",
-          run: () => outbox.syncFornecimento(log),
-        ),
-      ],
-      SyncStep(
-        title: "Baixando Usuarios",
-        run: () => bootstrap.baixarUsuarios(cfg, idFazenda),
-      ),
-      SyncStep(
-        title: "Baixando Baias",
-        run: () => bootstrap.baixarBaias(cfg, idFazenda),
-      ),
-      SyncStep(
-        title: "Baixando Dietas",
-        run: () => bootstrap.baixarDietas(cfg, idFazenda),
-      ),
-      SyncStep(
-        title: "Baixando Dietas Detalhes",
-        run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda),
-      ),
-      SyncStep(
-        title: "Baixando Previsao de Trato (pendentes)",
-        run: () async {
-          if (pendingDates.isEmpty) {
-            log("Nenhuma data pendente de fornecimento para baixar previsao.");
-            return;
-          }
-          for (final d in pendingDates) {
-            log("Baixando previsao do dia $d (fornecimento pendente)...");
-            await bootstrap.baixarPrevisaoTrato(
-              cfg,
-              idFazenda,
-              d,
-              log: log,
-            );
-          }
-        },
-      ),
-      SyncStep(
-        title: "Baixando Previsao de Trato (hoje)",
-        run: () => bootstrap.baixarPrevisaoTrato(
-          cfg,
-          idFazenda,
-          today,
-          log: log,
-        ),
-      ),
     ];
+
+    // Dietas ANTES do outbox no modo full: fornecimento/fab exigem DIETA.MS.
+    if (wantDownload) {
+      steps.addAll([
+        SyncStep(
+          title: "Baixando Usuarios",
+          run: () => bootstrap.baixarUsuarios(cfg, idFazenda),
+        ),
+        SyncStep(
+          title: "Baixando Baias",
+          run: () => bootstrap.baixarBaias(cfg, idFazenda),
+        ),
+        SyncStep(
+          title: "Baixando Dietas",
+          run: () => bootstrap.baixarDietas(cfg, idFazenda),
+        ),
+        SyncStep(
+          title: "Baixando Dietas Detalhes",
+          run: () => bootstrap.baixarDietasDetalhes(cfg, idFazenda),
+        ),
+      ]);
+    }
+
+    if (wantUpload) {
+      steps.add(
+        SyncStep(title: "Sincronizando TAGs", run: () => outbox.syncGravaTag(log)),
+      );
+      if (ConfigOptions.usesFieldPecSyncOrder(backend)) {
+        steps.addAll([
+          SyncStep(
+            title: "Sincronizando Fornecimento",
+            run: () => outbox.syncFornecimento(log),
+          ),
+          SyncStep(
+            title: "Sincronizando Fabrica Racao",
+            run: () => outbox.syncFabricacao(
+              log,
+              idVagao,
+              idFazendaCfg: idFazenda,
+              flowMode: flowMode,
+              tipoTrabalho: tipoTrabalho,
+            ),
+          ),
+        ]);
+      } else {
+        // TGC e demais: fab antes de fornecimento.
+        steps.addAll([
+          SyncStep(
+            title: "Sincronizando Fabrica Racao",
+            run: () => outbox.syncFabricacao(
+              log,
+              idVagao,
+              idFazendaCfg: idFazenda,
+              flowMode: flowMode,
+              tipoTrabalho: tipoTrabalho,
+            ),
+          ),
+          SyncStep(
+            title: "Sincronizando Fornecimento",
+            run: () => outbox.syncFornecimento(log),
+          ),
+        ]);
+      }
+    }
+
+    if (wantDownload) {
+      steps.addAll([
+        SyncStep(
+          title: "Baixando Previsao de Trato (pendentes)",
+          run: () async {
+            if (pendingDates.isEmpty) {
+              log("Nenhuma data pendente de fornecimento para baixar previsao.");
+              return;
+            }
+            for (final d in pendingDates) {
+              log("Baixando previsao do dia $d (fornecimento pendente)...");
+              await bootstrap.baixarPrevisaoTrato(
+                cfg,
+                idFazenda,
+                d,
+                log: log,
+              );
+            }
+          },
+        ),
+        SyncStep(
+          title: "Baixando Previsao de Trato (hoje)",
+          run: () => bootstrap.baixarPrevisaoTrato(
+            cfg,
+            idFazenda,
+            today,
+            log: log,
+          ),
+        ),
+      ]);
+    }
+
+    return steps;
   }
 
   /// Datas com fornecimento local ainda nao sincronizado (exceto hoje).

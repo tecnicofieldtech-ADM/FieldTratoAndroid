@@ -1,4 +1,4 @@
-unit Controllers.Post.Field;
+﻿unit Controllers.Post.Field;
 
 interface
 
@@ -37,6 +37,7 @@ uses
 
 function ParseHoraRef(const S: string): TDateTime; forward;
 procedure SetParamHoraOpcional(Q: TFDQuery; const Nome: string; H: TDateTime); forward;
+procedure SetParamDateOpcional(Q: TFDQuery; const Nome: string; D: TDateTime); forward;
 
 function ExtractStrCI(const Obj: TJSONObject; const Keys: array of string): string; forward;
 
@@ -49,6 +50,7 @@ end;
 function JSONValueToStr(const V: TJSONValue): string;
 var
   N: TJSONNumber;
+  FS: TFormatSettings;
 begin
   Result := '';
   if not Assigned(V) or (V is TJSONNull) then
@@ -57,10 +59,13 @@ begin
   if V is TJSONNumber then
   begin
     N := TJSONNumber(V);
+    FS := TFormatSettings.Create;
+    FS.DecimalSeparator := '.';
+    FS.ThousandSeparator := #0;
     if Frac(N.AsDouble) = 0 then
       Result := IntToStr(Round(N.AsDouble))
     else
-      Result := FloatToStr(N.AsDouble);
+      Result := FloatToStr(N.AsDouble, FS);
     Exit;
   end;
 
@@ -1055,43 +1060,9 @@ begin
       MediaPeso := 0;
       LoteFabricacao := JSONStrFirst(Body, ['lote_fabricacao', 'LOTE_FABRICACAO'], '');
 
-      if Trim(vIdFallback) <> '' then
-      begin
-        IdFornecConf := StrToIntDef(Trim(vIdFallback), 0);
-        if IdFornecConf > 0 then
-        begin
-          with dmGlobal.qryAux do
-          begin
-            Close;
-            SQL.Text :=
-              'SELECT ID, ID_LOCAL, ID_LOTE, TRATO, DATA_FORN, REALIZADO_MN_KG, MEDIA_PESO, MS_RACAO, LOTE_FABRICACAO ' +
-              'FROM FORNECIMENTO_CONF ' +
-              'WHERE ID = :ID AND STATUS = 1';
-            ParamByName('ID').AsInteger := IdFornecConf;
-            Open;
-            if not IsEmpty then
-            begin
-              vEncontrou := True;
-              vRealizadoAtual := FieldByName('REALIZADO_MN_KG').AsFloat;
-              vId := FieldByName('ID').AsString;
-              IdLote := FieldByName('ID_LOTE').AsInteger;
-              if IdLocal <= 0 then
-                IdLocal := FieldByName('ID_LOCAL').AsInteger;
-              if vTrato <= 0 then
-                vTrato := FieldByName('TRATO').AsInteger;
-              if vData = 0 then
-                vData := FieldByName('DATA_FORN').AsDateTime;
-              if not FieldByName('MEDIA_PESO').IsNull then
-                MediaPeso := FieldByName('MEDIA_PESO').AsFloat;
-              if (LoteFabricacao = '') and (not FieldByName('LOTE_FABRICACAO').IsNull) then
-                LoteFabricacao := Trim(FieldByName('LOTE_FABRICACAO').AsString);
-            end;
-            Close;
-          end;
-        end;
-      end;
-
-      if (not vEncontrou) and (IdLocal > 0) and (IdRacao > 0)
+      // Chave natural primeiro. O tablet replica o previsto do dia anterior
+      // copiando o ID de ontem; lookup por ID gravaria o realizado no dia errado.
+      if (IdLocal > 0) and (IdRacao > 0)
          and (vTrato > 0) and (vData <> 0) then
       begin
         with dmGlobal.qryAux do
@@ -1120,6 +1091,50 @@ begin
               LoteFabricacao := Trim(FieldByName('LOTE_FABRICACAO').AsString);
           end;
           Close;
+        end;
+      end;
+
+      if (not vEncontrou) and (Trim(vIdFallback) <> '') then
+      begin
+        IdFornecConf := StrToIntDef(Trim(vIdFallback), 0);
+        if IdFornecConf > 0 then
+        begin
+          with dmGlobal.qryAux do
+          begin
+            Close;
+            SQL.Text :=
+              'SELECT ID, ID_LOCAL, ID_LOTE, TRATO, DATA_FORN, REALIZADO_MN_KG, MEDIA_PESO, MS_RACAO, LOTE_FABRICACAO ' +
+              'FROM FORNECIMENTO_CONF ' +
+              'WHERE ID = :ID AND STATUS = 1';
+            ParamByName('ID').AsInteger := IdFornecConf;
+            Open;
+            if not IsEmpty then
+            begin
+              if (vData <> 0) and (not FieldByName('DATA_FORN').IsNull)
+                 and (Trunc(FieldByName('DATA_FORN').AsDateTime) <> Trunc(vData)) then
+              begin
+                // ID de outro dia (previsto replicado). Nao usa.
+              end
+              else
+              begin
+                vEncontrou := True;
+                vRealizadoAtual := FieldByName('REALIZADO_MN_KG').AsFloat;
+                vId := FieldByName('ID').AsString;
+                IdLote := FieldByName('ID_LOTE').AsInteger;
+                if IdLocal <= 0 then
+                  IdLocal := FieldByName('ID_LOCAL').AsInteger;
+                if vTrato <= 0 then
+                  vTrato := FieldByName('TRATO').AsInteger;
+                if vData = 0 then
+                  vData := FieldByName('DATA_FORN').AsDateTime;
+                if not FieldByName('MEDIA_PESO').IsNull then
+                  MediaPeso := FieldByName('MEDIA_PESO').AsFloat;
+                if (LoteFabricacao = '') and (not FieldByName('LOTE_FABRICACAO').IsNull) then
+                  LoteFabricacao := Trim(FieldByName('LOTE_FABRICACAO').AsString);
+              end;
+            end;
+            Close;
+          end;
         end;
       end;
 
@@ -1213,6 +1228,7 @@ begin
               '  QTD_CAB = :QTD_CAB, ' +
               '  REALIZADO_MN_KG = :REALIZADO, ' +
               '  MS_RACAO = :MS, ' +
+              '  DATA_FORN = COALESCE(DATA_FORN, :DATA_FORN), ' +
               '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
               '  ID_USUARIO_ALTERACAO = :ID_USUARIO, ' +
               '  MEDIA_PESO = :MEDIA_PESO, ' +
@@ -1227,6 +1243,7 @@ begin
               '  QTD_CAB = :QTD_CAB, ' +
               '  REALIZADO_MN_KG = :REALIZADO, ' +
               '  MS_RACAO = :MS, ' +
+              '  DATA_FORN = COALESCE(DATA_FORN, :DATA_FORN), ' +
               '  DATA_ALTERACAO = CURRENT_TIMESTAMP, ' +
               '  ID_USUARIO_ALTERACAO = :ID_USUARIO, ' +
               '  MEDIA_PESO = :MEDIA_PESO, ' +
@@ -1241,6 +1258,7 @@ begin
           Q.ParamByName('MS').AsFloat := vMsFornec;
           Q.ParamByName('ID_USUARIO').AsInteger := IdMotorista;
           Q.ParamByName('MEDIA_PESO').AsFloat := MediaPeso;
+          SetParamDateOpcional(Q, 'DATA_FORN', vData);
 
           if ValorFabricadoD > 0 then
           begin
@@ -1282,6 +1300,10 @@ begin
 
         if vRealizadoNum > 0 then
         begin
+          if Trunc(vData) <= 0 then
+            raise Exception.Create(
+              'DATA_FORNECIMENTO nula: FORNECIMENTO_CONF.DATA_FORN vazio e o POST nao enviou data/DATA_FORN.');
+
           Q := TFDQuery.Create(nil);
           try
             Q.Connection := dmGlobal.FBCon;
@@ -1303,7 +1325,7 @@ begin
               'SELECT ' +
               '  B.ID, ' +
               '  A.ID, ' +
-              '  A.DATA_FORN, ' +
+              '  COALESCE(A.DATA_FORN, :DATA_FORN), ' +
               '  A.TRATO, ' +
               '  A.ID_LOTE, ' +
               '  A.ID_LOCAL, ' +
@@ -1318,6 +1340,7 @@ begin
               'WHERE B.STATUS = 1 ' +
               '  AND A.ID = :ID_FORNECIMENTO';
             Q.ParamByName('ID_FORNECIMENTO').AsInteger := IdFornecConf;
+            SetParamDateOpcional(Q, 'DATA_FORN', vData);
             Q.ExecSQL;
           finally
             Q.Free;
@@ -1398,6 +1421,21 @@ begin
   P.DataType := ftTime;
   if Frac(H) > 0 then
     P.AsTime := Frac(H)
+  else
+  begin
+    P.Clear;
+    P.Bound := True;
+  end;
+end;
+
+procedure SetParamDateOpcional(Q: TFDQuery; const Nome: string; D: TDateTime);
+var
+  P: TFDParam;
+begin
+  P := Q.ParamByName(Nome);
+  P.DataType := ftDate;
+  if Trunc(D) > 0 then
+    P.AsDate := Trunc(D)
   else
   begin
     P.Clear;
@@ -2171,7 +2209,7 @@ begin
                 'SELECT ' +
                 '  B.ID, ' +
                 '  A.ID, ' +
-                '  A.DATA_FORN, ' +
+                '  COALESCE(A.DATA_FORN, :DATA_FORN), ' +
                 '  A.TRATO, ' +
                 '  A.ID_LOTE, ' +
                 '  A.ID_LOCAL, ' +
@@ -2186,6 +2224,7 @@ begin
                 'WHERE B.STATUS = 1 ' +
                 '  AND A.ID = :ID_FORNECIMENTO';
               Q.ParamByName('ID_FORNECIMENTO').AsInteger := IdFornecimento;
+              SetParamDateOpcional(Q, 'DATA_FORN', DataForn);
               Q.ExecSQL;
             finally
               FreeAndNil(Q);

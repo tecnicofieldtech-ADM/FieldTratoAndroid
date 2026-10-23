@@ -1,4 +1,5 @@
 import "package:sqflite/sqflite.dart";
+import "package:uuid/uuid.dart";
 import "../constants/config_options.dart";
 import "../db/app_db.dart";
 import "../domain/sync_pendencia_registro.dart";
@@ -73,6 +74,14 @@ class ConfigRepo {
       );
       await addIfMissing("prefixo_rfid", "PREFIXO_RFID TEXT DEFAULT 'H'");
       await addIfMissing("cliente_codigo", "CLIENTE_CODIGO TEXT DEFAULT ''");
+      await addIfMissing(
+        "balanca_simulador",
+        "BALANCA_SIMULADOR INTEGER DEFAULT 0",
+      );
+      await addIfMissing("importacao_id", "IMPORTACAO_ID TEXT");
+      await addIfMissing("station_id", "STATION_ID TEXT");
+      await addIfMissing("station_name", "STATION_NAME TEXT");
+      await addIfMissing("truck_device_id", "TRUCK_DEVICE_ID TEXT");
     } catch (_) {
       // se der erro (tabela não existe, etc.), ignora aqui.
       // seu AppDb.onCreate garante a criação.
@@ -105,6 +114,16 @@ class ConfigRepo {
     await _ensureColumns(db);
 
     await db.transaction((txn) async {
+      if (!data.containsKey("IMPORTACAO_ID")) {
+        final prev = await txn.query(
+          "CONFIG",
+          columns: const ["IMPORTACAO_ID"],
+          limit: 1,
+        );
+        if (prev.isNotEmpty) {
+          data["IMPORTACAO_ID"] = prev.first["IMPORTACAO_ID"];
+        }
+      }
       await txn.delete("CONFIG");
       await txn.insert("CONFIG", data);
     });
@@ -171,6 +190,9 @@ class ConfigRepo {
   Future<int> getModeloBalanca() async =>
       _toInt(await _getField("MODELO_BALANCA"));
 
+  Future<bool> getBalancaSimulador() async =>
+      _toInt(await _getField("BALANCA_SIMULADOR")) == 1;
+
   Future<int> getIncrementoPeso() async {
     final v = _toInt(await _getField("INCREMENTO_PESO"), def: 1);
     if (v < 1) return 1;
@@ -227,6 +249,16 @@ class ConfigRepo {
     return _toStr(_getFieldFromCfg(cfg, "CLIENTE_CODIGO"), def: "")
         .trim()
         .toUpperCase();
+  }
+
+  Future<String> getImportacaoId() async {
+    return _toStr(await _getField("IMPORTACAO_ID"), def: "").trim();
+  }
+
+  Future<void> setImportacaoId(String id) async {
+    final db = await _db;
+    await _ensureColumns(db);
+    await db.update("CONFIG", {"IMPORTACAO_ID": id.trim()});
   }
 
   /// ✅ ID do vagão é TEXT (UUID)
@@ -376,8 +408,10 @@ class ConfigRepo {
           g.ID AS id,
           COALESCE(g.TAG, '') AS tag,
           COALESCE(g.ID_PASTO_CURRAL, '') AS id_curral,
-          COALESCE(b.NOME_LOCAL, g.ID_PASTO_CURRAL, '') AS nome_curral
+          COALESCE(c.NOME, b.NOME_LOCAL, g.ID_PASTO_CURRAL, '') AS nome_curral
         FROM GRAVA_TAG g
+        LEFT JOIN CADASTRO_CURRAL c
+          ON TRIM(CAST(c.ID AS TEXT)) = TRIM(CAST(g.ID_PASTO_CURRAL AS TEXT))
         LEFT JOIN DETALHES_BAIAS b
           ON TRIM(CAST(b.ID AS TEXT)) = TRIM(CAST(g.ID_PASTO_CURRAL AS TEXT))
         WHERE IFNULL(g.SYNC, 0) = 0
@@ -604,17 +638,73 @@ class ConfigRepo {
     return normalizeStationBridgeUrl(raw);
   }
 
+  Future<String> getStationId() async =>
+      _toStr(await _getField("STATION_ID"), def: "").trim();
+
+  Future<String> getStationName() async =>
+      _toStr(await _getField("STATION_NAME"), def: "").trim();
+
+  Future<String> getTruckDeviceId() async =>
+      _toStr(await _getField("TRUCK_DEVICE_ID"), def: "").trim();
+
+  /// Nome amigável da estação (STATION_NAME → NOME_VAGAO → fallback).
+  Future<String> getStationDisplayName() async {
+    final named = await getStationName();
+    if (named.isNotEmpty) return named;
+    final vagao = await getNomeVagao();
+    if (vagao.isNotEmpty) return vagao;
+    return "Estacionária";
+  }
+
+  /// Gera e persiste STATION_ID uma vez (nunca regenera se já existir).
+  /// Só auto-gera quando TIPO_TRABALHO=1 (estacionária).
+  Future<String> ensureStationId() async {
+    final existing = await getStationId();
+    if (existing.isNotEmpty) return existing;
+    final tipo = await getTipoTrabalho();
+    if (tipo != 1) return "";
+    final id = const Uuid().v4();
+    final cfg = await getConfig() ?? <String, Object?>{};
+    cfg["STATION_ID"] = id;
+    await saveConfig(cfg);
+    return id;
+  }
+
+  /// Gera e persiste TRUCK_DEVICE_ID uma vez.
+  /// Só auto-gera quando TIPO_TRABALHO=2 (vagão/caminhão).
+  Future<String> ensureTruckDeviceId() async {
+    final existing = await getTruckDeviceId();
+    if (existing.isNotEmpty) return existing;
+    final tipo = await getTipoTrabalho();
+    if (tipo != 2) return "";
+    final id = const Uuid().v4();
+    final cfg = await getConfig() ?? <String, Object?>{};
+    cfg["TRUCK_DEVICE_ID"] = id;
+    await saveConfig(cfg);
+    return id;
+  }
+
+  Future<void> setStationName(String name) async {
+    final cfg = await getConfig() ?? <String, Object?>{};
+    cfg["STATION_NAME"] = name.trim();
+    await saveConfig(cfg);
+  }
+
   Future<void> setOperacaoEstacionarioConfig({
     required FabricacaoFlowMode flowMode,
     required String stationWifiSsid,
     required String stationWifiPassword,
     required String stationBaseUrl,
+    String? stationName,
   }) async {
     final cfg = await getConfig() ?? <String, Object?>{};
     cfg["FLOW_MODE"] = fabricacaoFlowModeToDb(flowMode);
     cfg["STATION_WIFI_SSID"] = stationWifiSsid.trim();
     cfg["STATION_WIFI_PASSWORD"] = stationWifiPassword;
     cfg["STATION_BASE_URL"] = stationBaseUrl.trim();
+    if (stationName != null) {
+      cfg["STATION_NAME"] = stationName.trim();
+    }
     await saveConfig(cfg);
   }
 

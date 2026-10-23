@@ -28,7 +28,8 @@ uses
   DataSet.Serialize,
   UdmFieldPec,
   Controllers.Mirror,
-  System.Math;
+  System.Math,
+  System.IOUtils;
 
 function MirrorReqIdFazenda(Req: THorseRequest): string;
 var
@@ -377,19 +378,129 @@ begin
 end;
 
 
+procedure LogPrevisaoTratoSql(const AUrl, ADataRaw, ADb, ASql: string;
+  ADini, ADfim: TDateTime; ACount: Integer);
+var
+  Dir, F, Line, SqlExec: string;
+begin
+  SqlExec := ASql;
+  SqlExec := StringReplace(SqlExec, ':DINI',
+    'TIMESTAMP ''' + FormatDateTime('yyyy-mm-dd hh:nn:ss', ADini) + '''',
+    [rfReplaceAll, rfIgnoreCase]);
+  SqlExec := StringReplace(SqlExec, ':DFIM',
+    'TIMESTAMP ''' + FormatDateTime('yyyy-mm-dd hh:nn:ss', ADfim) + '''',
+    [rfReplaceAll, rfIgnoreCase]);
+
+  Line :=
+    FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + sLineBreak +
+    'URL=' + AUrl + sLineBreak +
+    'dataPrev_raw=' + ADataRaw + sLineBreak +
+    'DINI=' + FormatDateTime('yyyy-mm-dd hh:nn:ss', ADini) + sLineBreak +
+    'DFIM=' + FormatDateTime('yyyy-mm-dd hh:nn:ss', ADfim) + sLineBreak +
+    'DB=' + ADb + sLineBreak +
+    'RecordCount=' + IntToStr(ACount) + sLineBreak +
+    'SQL_COM_DATAS=' + sLineBreak +
+    SqlExec + sLineBreak +
+    StringOfChar('-', 80) + sLineBreak;
+
+  try
+    Dir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'logs');
+    ForceDirectories(Dir);
+    F := TPath.Combine(Dir, 'previsao_trato.log');
+    TFile.AppendAllText(F, Line, TEncoding.UTF8);
+  except
+  end;
+end;
+
 procedure GetPrevisaoTrato(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
   dmGlobal: TdmFieldPec;
   LArr: TJSONArray;
+  dataP, LUrl, LDb: string;
+  dataPrev, LDini, LDfim: TDateTime;
+  LCount: Integer;
 begin
+  LUrl := '';
+  LDb := '';
+  dataP := '';
+  LCount := -1;
+  LDini := 0;
+  LDfim := 0;
   try
     dmGlobal := TdmFieldPec.Create(nil);
     try
       dmGlobal.ConectaDBField;
       dmGlobal.PREVISAO.Connection := dmGlobal.FBCon;
+      LDb := dmGlobal.FBCon.Params.Values['Database'];
+      LUrl := Trim(Req.PathInfo);
+      if Trim(Req.RawWebRequest.Query) <> '' then
+        LUrl := LUrl + '?' + Trim(Req.RawWebRequest.Query);
+
+      dataP := Trim(Req.Params.Items['dataPrev']);
+      if dataP = '' then
+        dataP := QueryParam(Req, 'dataPrev', '');
+      if not TryParseIsoDate(dataP, dataPrev) then
+        dataPrev := Date;
+
+      LDini := Trunc(dataPrev);
+      LDfim := Trunc(dataPrev) + 1;
+
       dmGlobal.PREVISAO.Close;
+      dmGlobal.PREVISAO.SQL.Text :=
+        'SELECT ' +
+        ' forn.ID ID_FORNECIMENTO, ' +
+        ' forn.DATA, ' +
+        ' forn.IDCURRAL ID, ' +
+        ' forn.TRATO, ' +
+        ' forn.IDRACAO ID_DIETA, ' +
+        ' forn.KGPREVISTO AS PREVISTO_CADASTRO, ' +
+        ' CASE ' +
+        '  WHEN forn.TRATO = forn.UltimoTrato THEN forn.TotalPrev - forn.TotalReal + forn.Realizado ' +
+        '  ELSE forn.KGPREVISTO ' +
+        ' END PREVISTO_ORIGINAL, ' +
+        ' CASE ' +
+        '  WHEN forn.TRATO = forn.UltimoTrato THEN forn.TotalPrev - forn.TotalReal ' +
+        '  ELSE forn.KGPREVISTO ' +
+        ' END PREVISTO_RECALCULADO, ' +
+        ' CASE ' +
+        '  WHEN forn.TRATO = forn.UltimoTrato THEN forn.TotalPrev - forn.TotalReal ' +
+        '  ELSE forn.KGPREVISTO ' +
+        ' END PREVISTO, ' +
+        ' forn.Realizado REALIZADO, ' +
+        ' IIF(forn.TRATO = forn.UltimoTrato, 1, 0) ULTIMO_TRATO ' +
+        'FROM ( ' +
+        ' SELECT ' +
+        '  A.ID, ' +
+        '  DATA_FORN DATA, ' +
+        '  ID_LOCAL IDCURRAL, ' +
+        '  ID_RACAO IDRACAO, ' +
+        '  STATUS, ' +
+        '  TRATO, ' +
+        '  1 TIPO, ' +
+        '  PREVISTO_MN_KG KGPREVISTO, ' +
+        '  (SELECT COALESCE(SUM(REALIZADO_MN_KG), 0) FROM FORNECIMENTO_CONF ' +
+        '    WHERE STATUS = 1 AND ID_LOCAL = A.ID_LOCAL AND ID_LOTE = A.ID_LOTE ' +
+        '      AND DATA_FORN = A.DATA_FORN AND TRATO = A.TRATO) Realizado, ' +
+        '  (SELECT COALESCE(SUM(REALIZADO_MN_KG), 0) FROM FORNECIMENTO_CONF ' +
+        '    WHERE STATUS = 1 AND ID_LOCAL = A.ID_LOCAL AND ID_LOTE = A.ID_LOTE ' +
+        '      AND DATA_FORN = A.DATA_FORN) TotalReal, ' +
+        '  (SELECT SUM(PREVISTO_MN_KG) FROM FORNECIMENTO_CONF ' +
+        '    WHERE STATUS = 1 AND ID_LOCAL = A.ID_LOCAL AND ID_LOTE = A.ID_LOTE ' +
+        '      AND DATA_FORN = A.DATA_FORN) TotalPrev, ' +
+        '  (SELECT MAX(TRATO) FROM FORNECIMENTO_CONF ' +
+        '    WHERE STATUS = 1 AND ID_LOCAL = A.ID_LOCAL AND ID_LOTE = A.ID_LOTE ' +
+        '      AND DATA_FORN = A.DATA_FORN) UltimoTrato ' +
+        ' FROM FORNECIMENTO_CONF A ' +
+        ' WHERE STATUS = 1 ' +
+        '   AND A.DATA_FORN >= :DINI ' +
+        '   AND A.DATA_FORN < :DFIM ' +
+        ') Forn';
+      dmGlobal.PREVISAO.ParamByName('DINI').AsDateTime := LDini;
+      dmGlobal.PREVISAO.ParamByName('DFIM').AsDateTime := LDfim;
       dmGlobal.PREVISAO.Open;
-      dmGlobal.PREVISAO.RecordCount;
+      LCount := dmGlobal.PREVISAO.RecordCount;
+      LogPrevisaoTratoSql(LUrl, dataP, LDb, dmGlobal.PREVISAO.SQL.Text,
+        LDini, LDfim, LCount);
 
       LArr := dmGlobal.PREVISAO.ToJSONArray;
       Res.Send<TJSONArray>(LArr).Status(200);
@@ -398,6 +509,12 @@ begin
     except
       on ex: Exception do
       begin
+        try
+          if Assigned(dmGlobal) and Assigned(dmGlobal.PREVISAO) then
+            LogPrevisaoTratoSql(LUrl, dataP, LDb, dmGlobal.PREVISAO.SQL.Text,
+              LDini, LDfim, LCount);
+        except
+        end;
         Res.Send(
           TJSONObject.Create.AddPair(
             'Erro ' + StringReplace(GetCurrentDir, '\\', '\', [rfReplaceAll]),

@@ -3,7 +3,10 @@ import "dart:async";
 import "dart:convert";
 import "dart:io";
 
-enum ScaleModel { topcom, dg500, alfa, hook, raw }
+import "scale_frame.dart";
+import "scale_sim_bus.dart";
+
+enum ScaleModel { topcom, dg500, alfa, hook, ptm, raw }
 
 enum ScaleStatus { disconnected, connecting, connected, error }
 
@@ -127,6 +130,10 @@ bool lineHasAlfaWeightField(String raw) {
 
 /// Interpreta uma linha bruta da balança (todos os modelos, aceita negativo).
 double? parseScaleWeightKg(String line, {ScaleModel model = ScaleModel.raw}) {
+  if (model == ScaleModel.ptm) {
+    // Sem fallback genérico: o LCD manda "<8PESO" e "R001", que virariam 8 kg / 1 kg.
+    return parsePtmWeightKg(line);
+  }
   final pesoStr = extractScaleWeightString(line);
   return _parseWeightStringStatic(pesoStr);
 }
@@ -264,11 +271,15 @@ class ScaleComm {
   StreamSubscription<List<int>>? _sub;
 
   Timer? _reconnectTimer;
+  Timer? _simTimer;
+  bool _simulated = false;
+  bool get isSimulating => _simulated;
 
   bool _connecting = false;
   bool _shuttingDown = false;
 
   String _buf = "";
+  List<int> _ptmRaw = [];
   static const int _maxBuf = 8192;
 
   double _lastPosted = -1.0e12;
@@ -278,6 +289,9 @@ class ScaleComm {
   double? _lastWeight;
   DateTime? _lastReadAt;
   bool _hasNew = false;
+  int _conexaoId = 0;
+
+  /// Sobe a cada socket aceito. Amostra antiga fica com o id anterior.
 
   final _statusCtrl = StreamController<ScaleEvent>.broadcast();
   final _weightCtrl = StreamController<ScaleWeightEvent>.broadcast();
@@ -290,10 +304,12 @@ class ScaleComm {
 
   double? get lastWeight => _lastWeight;
   DateTime? get lastReadAt => _lastReadAt;
+  int get conexaoId => _conexaoId;
 
   void stopNow() {
     _shuttingDown = true;
     _reconnectEnabled = false;
+    _stopSimulatorTimer();
 
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -343,10 +359,42 @@ class ScaleComm {
     if (reconnectDelay != null) _reconnectDelay = reconnectDelay;
   }
 
+  /// Emula a balança no próprio tablet (mesmo parser dos frames reais).
+  Future<void> startLocalSimulator() async {
+    _reconnectEnabled = false;
+    _cancelReconnectTimer();
+    await _stopReader();
+    await _safeCloseSocket();
+
+    _shuttingDown = false;
+    _simulated = true;
+    ScaleSimBus.instance.setEnabled(true);
+
+    _emitStatus(ScaleStatus.connecting);
+    _conexaoId++;
+    _simTimer?.cancel();
+    _ptmRaw = [];
+    _simTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+      if (_shuttingDown || !_simulated) return;
+      final frame = encodeScaleFrame(ScaleSimBus.instance.weightKg, _model);
+      // Pacote AV40 é binário (STX/ETX); trim() não deve alterar o frame PTM.
+      _emitWeightLine(_model == ScaleModel.ptm ? frame : frame.trim());
+    });
+    _emitStatus(ScaleStatus.connected);
+  }
+
+  void _stopSimulatorTimer() {
+    _simulated = false;
+    _simTimer?.cancel();
+    _simTimer = null;
+  }
+
   // =========================================================
   // ✅ START
   // =========================================================
   Future<void> connect() async {
+    _stopSimulatorTimer();
+
     // ✅ RECONEXÃO MANUAL: destrava stopNow()
     // Se o usuário apertou "Reconectar", a intenção é religar.
     _shuttingDown = false;
@@ -375,6 +423,7 @@ class ScaleComm {
       _socket = sock;
 
       _buf = "";
+      _ptmRaw = [];
       _lastPosted = -1.0e12;
       _lastPostAtMs = 0;
 
@@ -382,6 +431,7 @@ class ScaleComm {
       _sw.reset();
       _sw.start();
 
+      _conexaoId++;
       _sub = sock.listen(
         _onData,
         onError: (e, st) => _onSocketError(e),
@@ -408,6 +458,7 @@ class ScaleComm {
   // =========================================================
   Future<void> stop() async {
     _shuttingDown = true;
+    _stopSimulatorTimer();
 
     _reconnectEnabled = false;
     _cancelReconnectTimer();
@@ -439,6 +490,11 @@ class ScaleComm {
 
   void _onData(List<int> bytes) {
     if (_shuttingDown) return;
+
+    if (_model == ScaleModel.ptm) {
+      _onPtmBytes(bytes);
+      return;
+    }
 
     final chunk = _normalizeControls(utf8.decode(bytes, allowMalformed: true));
     if (chunk.isEmpty) return;
@@ -482,6 +538,47 @@ class ScaleComm {
 
     for (var i = 0; i < parts.length - 1; i++) {
       _emitWeightLine(parts[i].trim());
+    }
+  }
+
+  /// AV40/AV50: 48 bytes binários. Não converter STX/ETX (< 32) em quebra de linha.
+  void _onPtmBytes(List<int> bytes) {
+    _ptmRaw.addAll(bytes);
+    const cap = ptmAv40PacketLen * 8;
+    if (_ptmRaw.length > cap) {
+      _ptmRaw = _ptmRaw.sublist(_ptmRaw.length - cap);
+    }
+
+    var foundPacket = false;
+    while (_ptmRaw.length >= ptmAv40PacketLen) {
+      final start = _ptmRaw.indexOf(0x02);
+      if (start < 0) break;
+      if (start > 0) {
+        _ptmRaw = _ptmRaw.sublist(start);
+      }
+      if (_ptmRaw.length < ptmAv40PacketLen) break;
+      if (_ptmRaw[47] != 0x03) {
+        _ptmRaw = _ptmRaw.sublist(1);
+        continue;
+      }
+      final pkt = _ptmRaw.sublist(0, ptmAv40PacketLen);
+      _ptmRaw = _ptmRaw.sublist(ptmAv40PacketLen);
+      foundPacket = true;
+      final kg = parsePtmAv40Packet(pkt);
+      if (kg == null) continue;
+      // Linha visível = 5 dígitos + contexto (ex.: "10T"), sem bytes 0x80 do DOT/VID.
+      final visible = String.fromCharCodes(pkt.sublist(36, 43)).trim();
+      _emitWeightLine(visible.isEmpty ? "${kg.round()}" : visible);
+    }
+
+    if (foundPacket || _ptmRaw.isEmpty) return;
+
+    final text = String.fromCharCodes(_ptmRaw);
+    if (parsePtmWeightKg(text) != null) {
+      _emitWeightLine(text);
+      if (_ptmRaw.length > 256) {
+        _ptmRaw = _ptmRaw.sublist(_ptmRaw.length - 128);
+      }
     }
   }
 
@@ -595,5 +692,5 @@ class ScaleComm {
   }
 
   double? _parseWeightFromLine(String line) =>
-      _parseWeightStringStatic(extractScaleWeightString(line));
+      parseScaleWeightKg(line, model: _model);
 }

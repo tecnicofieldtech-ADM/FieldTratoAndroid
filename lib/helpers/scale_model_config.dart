@@ -12,6 +12,8 @@ ScaleModel scaleModelFromConfigInt(int v) {
       return ScaleModel.alfa;
     case 3:
       return ScaleModel.hook;
+    case 4:
+      return ScaleModel.ptm;
     default:
       return ScaleModel.raw;
   }
@@ -26,6 +28,8 @@ ModeloBalanca modeloBalancaFromConfigInt(int v) {
       return ModeloBalanca.alfa;
     case 3:
       return ModeloBalanca.hook;
+    case 4:
+      return ModeloBalanca.ptm;
     case 0:
       return ModeloBalanca.topcon;
     default:
@@ -41,6 +45,8 @@ ModeloBalanca modeloBalancaFromScaleModel(ScaleModel model) {
       return ModeloBalanca.alfa;
     case ScaleModel.hook:
       return ModeloBalanca.hook;
+    case ScaleModel.ptm:
+      return ModeloBalanca.ptm;
     case ScaleModel.topcom:
       return ModeloBalanca.topcon;
     case ScaleModel.raw:

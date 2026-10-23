@@ -2,7 +2,6 @@
 import "dart:async";
 
 import "package:flutter/material.dart";
-import "package:package_info_plus/package_info_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "../controller/pa_client_controller.dart";
 import "../data/mirror_targets_repo.dart";
@@ -24,15 +23,12 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   Timer? _ticker;
   bool _wasStale = false;
-  String _versionLabel = "--";
   String _styleMode = _styleRfeed;
 
   @override
   void initState() {
     super.initState();
     widget.client.addListener(_on);
-    // ignore: discarded_futures
-    _loadVersion();
     // ignore: discarded_futures
     _loadStyleMode();
 
@@ -49,17 +45,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
         setState(() {});
       }
     });
-  }
-
-  Future<void> _loadVersion() async {
-    try {
-      final p = await PackageInfo.fromPlatform();
-      if (!mounted) return;
-      setState(() => _versionLabel = "${p.version}+${p.buildNumber}");
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _versionLabel = "--");
-    }
   }
 
   Future<void> _loadStyleMode() async {
@@ -272,10 +257,6 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
       }
     }
 
-    final topStatus = widget.client.connected
-        ? "Conectado a ${widget.client.activeTarget?.host ?? ''}:${widget.client.activeTarget?.porta ?? 9000}"
-        : widget.client.status;
-
     final lastAt = widget.client.lastMsgAt;
     final ageSec = lastAt == null
         ? null
@@ -302,6 +283,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
     final dieta = (st?["dieta"] ?? "").toString();
     final trato = (st?["trato"] as num?)?.toInt();
+    final prevTotalFab = (st?["qtdPrevista"] as num?)?.toInt();
     final isFinalizacaoEvent =
       (st?["t"] ?? "").toString() == "event" &&
       (st?["type"] ?? "").toString() == "finalizada";
@@ -383,15 +365,10 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               padding: EdgeInsets.fromLTRB(hPad, 12, hPad, 0),
               child: _cardServerTopCompact(
                 activeLabel: activeLabel,
-                localIp: widget.client.lastFromIp.isEmpty ? "--" : widget.client.lastFromIp,
-                versionLabel: _versionLabel,
-                topStatus: topStatus,
                 serverIcon: serverIcon,
                 serverColor: serverColor,
                 serverText: serverText,
                 lastAt: lastAt,
-                badgeColor: serverColor,
-                badgeText: topStatus,
               ),
             ),
           // Ingrediente atual
@@ -423,6 +400,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                   : _cardDiferencaResponsive(
                       prev: prev,
                       real: real,
+                      prevTotalFab: prevTotalFab,
                       difText: difText,
                       status: status,
                       pctLabel: pctLabel,
@@ -446,59 +424,40 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
 
   Widget _cardServerTopCompact({
     required String activeLabel,
-    required String localIp,
-    required String versionLabel,
-    required String topStatus,
     required IconData serverIcon,
     required Color serverColor,
     required String serverText,
     required DateTime? lastAt,
-    required Color badgeColor,
-    required String badgeText,
   }) {
     final lastAtTxt = _fmtTime(lastAt);
+    final statusLabel = lastAt == null ? serverText : "$serverText · $lastAtTxt";
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Column(
+        child: Row(
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.topLeft,
-                    child: Text(
-                      activeLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 18,
-                      ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    activeLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
                     ),
                   ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _restartClientOnly,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text("Reconectar"),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Row(
+                  const SizedBox(height: 4),
+                  Row(
                     children: [
-                      Icon(serverIcon, color: serverColor, size: 18),
+                      Icon(serverIcon, color: serverColor, size: 16),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          "Server: $serverText - $lastAtTxt",
+                          statusLabel,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -509,71 +468,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.cast_connected,
-                        size: 18,
-                        color: badgeColor,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          badgeText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: badgeColor,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                "Vagao: $localIp",
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade700,
-                ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                "Versao: v$versionLabel",
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                topStatus,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey.shade700,
-                ),
-              ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _restartClientOnly,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text("Reconectar"),
             ),
           ],
         ),
@@ -717,6 +619,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
   Widget _cardDiferencaResponsive({
     required int prev,
     required int real,
+    required int? prevTotalFab,
     required String difText,
     required String status,
     required String pctLabel,
@@ -822,7 +725,7 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
             ],
           ),
           SizedBox(height: isPhone ? 6 : 10),
-          // Previsto / Realizado
+          // Previsto / Realizado do insumo
           Row(
             children: [
               Expanded(child: _midKvCenteredCompact("Previsto", "$prev kg", isPhone: isPhone)),
@@ -830,6 +733,14 @@ class _PaDashboardPageState extends State<PaDashboardPage> {
               Expanded(child: _midKvCenteredCompact("Realizado", "$real kg", isPhone: isPhone)),
             ],
           ),
+          if (prevTotalFab != null && prevTotalFab > 0) ...[
+            SizedBox(height: isPhone ? 4 : 6),
+            _midKvCenteredCompact(
+              "Previsto total",
+              "$prevTotalFab kg",
+              isPhone: isPhone,
+            ),
+          ],
           SizedBox(height: isPhone ? 4 : 8),
           // Status
           Container(

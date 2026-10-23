@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:io";
 
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:package_info_plus/package_info_plus.dart";
 import "package:permission_handler/permission_handler.dart";
 
@@ -10,12 +11,19 @@ import "../../../services/session_service.dart";
 import "../../../services/wifi_guard.dart";
 import "../data/carregamento_estacionario_api.dart";
 import "../data/importador_fabricacao_estacionario.dart";
+import "../data/rede_estacionario_repo.dart";
 import "../domain/carregamento_payload.dart";
+import "../domain/station_claim.dart";
+import "../domain/station_discovery.dart";
+import "../domain/station_handoff_mode.dart";
+import "../services/station_discovery_service.dart";
 import "../../fabricacao/data/fabricacao_repo.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
 import "../../fabricacao/ui/fabricacao_carregamento_vagao_page.dart";
 import "../../fabricacao/ui/fabricacao_recebimento_peso_caminhao_page.dart";
 import "carregamento_sem_vinculo_page.dart";
+
+enum _BeatBoxView { stations, loads }
 
 class CarregamentoEstacionarioPage extends StatefulWidget {
   const CarregamentoEstacionarioPage({super.key});
@@ -29,18 +37,23 @@ class _CarregamentoEstacionarioPageState
     extends State<CarregamentoEstacionarioPage> with WidgetsBindingObserver {
   final _cfgRepo = ConfigRepo();
   final _importador = ImportadorFabricacaoEstacionario();
+  final _discovery = StationDiscoveryService();
+  final _redeRepo = RedeEstacionarioRepo();
 
   List<CarregamentoResumoDto> _itens = const [];
+  List<DiscoveredStation> _stations = const [];
+  List<DiscoveredStation> _recentes = const [];
+  DiscoveredStation? _selected;
 
   bool _loading = false;
+  bool _discovering = false;
   bool _modoDistribuidor = false;
   bool _modoBeatBox = false;
   bool _healthOk = false;
-  bool _buscarAoRetornarDoWifi = false;
+  _BeatBoxView _beatView = _BeatBoxView.stations;
 
   String _stationSsid = "";
-  String _stationBaseUrl = "";
-  String _alvoBridge = "";
+  String _truckDeviceId = "";
 
   @override
   void initState() {
@@ -53,13 +66,6 @@ class _CarregamentoEstacionarioPageState
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    if (!_buscarAoRetornarDoWifi || _loading) return;
-    unawaited(_tentarBuscarSeNaRedeBeatBox());
   }
 
   void _msg(String text) {
@@ -137,7 +143,6 @@ class _CarregamentoEstacionarioPageState
     return ssid;
   }
 
-  /// Ração pronta / vagão: exige rede FieldTrato* (balança e RFID).
   Future<bool> _ensureOnFieldTratoNetwork({bool abrirWifi = true}) async {
     if (!Platform.isAndroid) return true;
 
@@ -175,38 +180,12 @@ class _CarregamentoEstacionarioPageState
     return false;
   }
 
-  /// Passo 1: Wi‑Fi BeatBox / estacionário.
-  Future<bool> _ensureOnStationNetwork({bool abrirWifi = true}) async {
-    final expected = _stationSsid.trim();
-    if (expected.isEmpty) {
-      _msg("Configure o SSID da rede BeatBox/estacionário em Configuração.");
-      return false;
-    }
-    if (!Platform.isAndroid) return true;
-
-    final ssid = await _readSsidWithGate();
-    if (ssid == null) return false;
-    if (WifiGuard.ssidMatchesExpected(ssid, expected)) return true;
-    if (!mounted) return false;
-
-    if (abrirWifi) {
-      await WifiGuard.openWifiSelector();
-      _msg("Conecte na rede $expected (BeatBox) e aguarde.");
-    }
-    return false;
-  }
-
-  /// Passo 4: obriga sair da rede BeatBox/estacionário (SSID diferente do config).
   Future<bool> _ensureRedeVagaoAposRecebimento() async {
     if (!Platform.isAndroid) return true;
 
     final station = _stationSsid.trim();
     if (station.isEmpty) {
-      _msg(
-        "Configure o SSID da rede estacionária em Configuração para o app "
-        "validar a troca de rede após o recebimento.",
-      );
-      return false;
+      return _ensureOnFieldTratoNetwork();
     }
 
     for (;;) {
@@ -276,94 +255,127 @@ class _CarregamentoEstacionarioPageState
     }
 
     final ssid = await _cfgRepo.getStationWifiSsid();
-    final base = await _cfgRepo.getStationBaseUrl();
-    final alvo = CarregamentoEstacionarioApi.tryParseHostPort(base);
+    final truckId = await _cfgRepo.ensureTruckDeviceId();
+    final recentes = await _loadRecentes();
 
     if (!mounted) return;
     setState(() {
       _modoDistribuidor = true;
       _stationSsid = ssid.trim();
-      _stationBaseUrl = base.trim();
-      _alvoBridge =
-          alvo == null ? "-" : "http://${alvo.host}:${alvo.port} (bridge)";
+      _truckDeviceId = truckId;
+      _recentes = recentes;
     });
   }
 
-  /// Passos 1–2: abrir Wi‑Fi BeatBox e listar carregamentos.
-  Future<void> _iniciarFluxoEntrada() async {
-    if (_stationSsid.isEmpty) {
-      _msg("Configure o SSID da rede BeatBox em Configuração.");
-      return;
-    }
-
-    final jaNaRede = await _ensureOnStationNetwork(abrirWifi: false);
-    if (jaNaRede) {
-      await _buscarCarregamentos(silencioso: true);
-      return;
-    }
-
-    _buscarAoRetornarDoWifi = true;
-    await WifiGuard.openWifiSelector();
-    _msg("Selecione a rede $_stationSsid (BeatBox). A lista carregará ao voltar.");
+  Future<List<DiscoveredStation>> _loadRecentes() async {
+    final rows = await _redeRepo.listRecentes();
+    return rows
+        .where((r) => r.hostEstacionario.trim().isNotEmpty)
+        .map(
+          (r) => DiscoveredStation(
+            stationId: r.stationId.trim().isEmpty
+                ? "legacy:${r.hostEstacionario}:${r.portaEstacionario}"
+                : r.stationId.trim(),
+            name: r.nomeExibicao,
+            host: r.hostEstacionario.trim(),
+            port: r.portaEstacionario <= 0 ? 8080 : r.portaEstacionario,
+            fromDiscovery: false,
+            online: false,
+          ),
+        )
+        .toList();
   }
 
-  Future<void> _tentarBuscarSeNaRedeBeatBox() async {
-    if (!await _ensureOnStationNetwork(abrirWifi: false)) return;
-    _buscarAoRetornarDoWifi = false;
-    await _buscarCarregamentos(silencioso: true);
+  CarregamentoEstacionarioApi? _apiFor(DiscoveredStation s) {
+    return CarregamentoEstacionarioApi(host: s.host, port: s.port);
   }
 
-  CarregamentoEstacionarioApi? _apiFromConfig() {
-    return CarregamentoEstacionarioApi.tryFromBaseUrl(_stationBaseUrl);
-  }
-
-  Future<void> _testarConexao() async {
-    final api = _apiFromConfig();
-    if (api == null) {
-      _msg("Base URL do estacionário inválida. Ajuste em Configuração.");
-      return;
-    }
-
-    setState(() => _loading = true);
+  Future<void> _buscarEstacoes() async {
+    setState(() {
+      _discovering = true;
+      _beatView = _BeatBoxView.stations;
+      _selected = null;
+      _itens = const [];
+      _healthOk = false;
+    });
+    debugPrint("[DISCOVERY_START] UI");
     try {
-      final r = await api.tryHealth();
-      if (mounted) setState(() => _healthOk = r.ok);
-      _msg(r.ok ? r.message : "Falha: ${r.message}");
-    } catch (e) {
-      _msg("Erro no teste: $e");
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _buscarCarregamentos({bool silencioso = false}) async {
-    if (!await _ensureOnStationNetwork()) {
-      _buscarAoRetornarDoWifi = true;
-      return;
-    }
-
-    final api = _apiFromConfig();
-    if (api == null) {
-      _msg("Base URL do estacionário inválida. Ajuste em Configuração.");
-      return;
-    }
-
-    setState(() => _loading = true);
-    try {
-      final itens = await api.listCarregamentos();
+      final found = await _discovery.discover();
+      final recentes = await _loadRecentes();
       if (!mounted) return;
       setState(() {
-        _itens = itens;
-        _healthOk = true;
+        _stations = found;
+        _recentes = recentes;
       });
-      if (!silencioso) {
-        _msg(itens.isEmpty
-            ? "Nenhum carregamento pendente no estacionário."
-            : "${itens.length} carregamento(s) disponível(is).");
+      if (found.isEmpty) {
+        _msg(
+          "Nenhuma estacionária encontrada nesta rede.",
+        );
       }
     } catch (e) {
+      _msg("Falha na busca: $e");
+    } finally {
+      if (mounted) setState(() => _discovering = false);
+    }
+  }
+
+  Future<void> _selecionarEstacao(DiscoveredStation s) async {
+    debugPrint(
+      "[STATION_SELECTED] id=${s.stationId} host=${s.host}:${s.port}",
+    );
+    setState(() => _loading = true);
+    try {
+      final api = _apiFor(s);
+      if (api == null) {
+        _msg("Endereço inválido.");
+        return;
+      }
+      final health = await api.tryHealth();
+      if (!health.ok) {
+        _msg("Estação indisponível: ${health.message}");
+        return;
+      }
+
+      final resolved = s.copyWith(
+        name: (health.name ?? s.name).trim().isEmpty
+            ? s.name
+            : (health.name ?? s.name),
+        online: true,
+      );
+
+      // Bridge antigo sem stationId: identidade temporária só na sessão.
+      final withId = (health.stationId == null || health.stationId!.isEmpty)
+          ? resolved.copyWith()
+          : DiscoveredStation(
+              stationId: health.stationId!,
+              name: resolved.name,
+              host: resolved.host,
+              port: resolved.port,
+              fromDiscovery: resolved.fromDiscovery,
+              online: true,
+              lastSeen: DateTime.now(),
+            );
+
+      await _redeRepo.touchRecent(withId);
+
+      final itens = await api.listCarregamentos(
+        truckDeviceId: _truckDeviceId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _selected = withId;
+        _itens = itens;
+        _healthOk = true;
+        _beatView = _BeatBoxView.loads;
+      });
       _msg(
-        "Erro ao buscar carregamentos ($_alvoBridge): "
+        itens.isEmpty
+            ? "Nenhum carregamento pendente nesta estação."
+            : "${itens.length} carregamento(s) em ${withId.displayName}.",
+      );
+    } catch (e) {
+      _msg(
+        "Erro ao consultar estação: "
         "${CarregamentoEstacionarioApi.mensagemErroDio(e)}",
       );
     } finally {
@@ -371,13 +383,100 @@ class _CarregamentoEstacionarioPageState
     }
   }
 
+  Future<void> _ipManual() async {
+    final hostCtrl = TextEditingController();
+    final portCtrl = TextEditingController(text: "8080");
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Informar IP manualmente"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: hostCtrl,
+                  decoration: const InputDecoration(
+                    labelText: "Host / IP",
+                    hintText: "192.168.1.20",
+                  ),
+                  keyboardType: TextInputType.url,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: portCtrl,
+                  decoration: const InputDecoration(labelText: "Porta"),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancelar"),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Conectar"),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok) return;
+
+    final host = hostCtrl.text.trim();
+    final port = int.tryParse(portCtrl.text.trim()) ?? 8080;
+    if (host.isEmpty || port <= 0 || port > 65535) {
+      _msg("Host/porta inválidos.");
+      return;
+    }
+
+    debugPrint("[STATION_MANUAL] host=$host port=$port");
+    final temp = DiscoveredStation(
+      stationId: "manual:$host:$port",
+      name: host,
+      host: host,
+      port: port,
+      fromDiscovery: false,
+      online: true,
+    );
+    await _selecionarEstacao(temp);
+  }
+
+  Future<void> _voltarEstacoes() async {
+    setState(() {
+      _beatView = _BeatBoxView.stations;
+      _selected = null;
+      _itens = const [];
+      _healthOk = false;
+    });
+  }
+
+  Future<void> _atualizarListaSelecionada() async {
+    final s = _selected;
+    if (s == null) return;
+    await _selecionarEstacao(s);
+  }
+
   Future<void> _receber(CarregamentoResumoDto item) async {
+    final s = _selected;
+    if (s == null) {
+      _msg("Selecione uma estacionária.");
+      return;
+    }
+
+    if (item.isClaimedByOther) {
+      _msg("Em uso por outro vagão.");
+      return;
+    }
+
     final ok = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text("Receber carregamento"),
             content: Text(
-              "Receber o carregamento '${item.nomeRacao}' no caminhão?",
+              "Receber '${item.nomeRacao}' de ${s.displayName}?",
             ),
             actions: [
               TextButton(
@@ -386,7 +485,7 @@ class _CarregamentoEstacionarioPageState
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text("Receber"),
+                child: const Text("Carregar"),
               ),
             ],
           ),
@@ -394,16 +493,48 @@ class _CarregamentoEstacionarioPageState
         false;
 
     if (!ok) return;
-    if (!await _ensureOnStationNetwork()) return;
 
-    final api = _apiFromConfig();
+    final api = _apiFor(s);
     if (api == null) {
-      _msg("Base URL do estacionário inválida.");
+      _msg("Estação inválida.");
+      return;
+    }
+
+    var truckId = _truckDeviceId.trim();
+    if (truckId.isEmpty) {
+      truckId = await _cfgRepo.ensureTruckDeviceId();
+      if (mounted) setState(() => _truckDeviceId = truckId);
+    }
+    if (!StationClaim.isValidTruckDeviceId(truckId)) {
+      _msg("Identidade do vagão indisponível. Reinicie o app.");
       return;
     }
 
     setState(() => _loading = true);
+    var claimed = false;
+    var legacyBridge = false;
     try {
+      // 1) CLAIM (ou legado sem /claim)
+      final claimR = await api.claim(id: item.idLocal, truckDeviceId: truckId);
+      if (claimR.isLegacyUnsupported) {
+        legacyBridge = true;
+        debugPrint("[${StationClaim.codeClaimUnsupported}] fluxo import→ack");
+      } else if (claimR.isConflict) {
+        _msg("Em uso por outro vagão.");
+        await _atualizarListaSelecionada();
+        return;
+      } else if (!claimR.ok) {
+        _msg(
+          claimR.statusCode == 404
+              ? "Carregamento não encontrado na estação."
+              : "Não foi possível reservar a carga (${claimR.code.isEmpty ? claimR.statusCode : claimR.code}).",
+        );
+        return;
+      } else {
+        claimed = true;
+      }
+
+      // 2) Detalhe + import local
       final detalhe = await api.getDetalhe(item.idLocal);
 
       final idUsuario = (SessionService.instance.userId ?? "").trim();
@@ -415,20 +546,38 @@ class _CarregamentoEstacionarioPageState
         );
       }
 
-      final imp = await _importador.importar(
-        payload: detalhe,
-        idUsuario: idUsuario,
-        idFazenda: idFazenda,
-      );
+      late final ({String idFabricacaoLocal, bool inserido}) imp;
+      try {
+        imp = await _importador.importar(
+          payload: detalhe,
+          idUsuario: idUsuario,
+          idFazenda: idFazenda,
+        );
+      } catch (e) {
+        // Falha local: release (sem ACK). Lease expira sozinho se rede cair.
+        if (claimed && !legacyBridge) {
+          try {
+            await api.release(id: item.idLocal, truckDeviceId: truckId);
+          } catch (_) {}
+        }
+        rethrow;
+      }
       final novoIdFab = imp.idFabricacaoLocal;
 
+      // 3) ACK só após persistência local
       final info = await PackageInfo.fromPlatform();
       var ackOk = false;
       for (var attempt = 0; attempt < 3; attempt++) {
+        // Renova lease se ainda suportado (mesmo /claim).
+        if (claimed && !legacyBridge && attempt > 0) {
+          await api.claim(id: item.idLocal, truckDeviceId: truckId);
+        }
         ackOk = await api.ack(
           id: item.idLocal,
-          device: "CAMINHAO",
+          // Bridge legado: sem truckDeviceId → ACK sem exigir claim.
+          truckDeviceId: legacyBridge ? "" : truckId,
           appVersion: info.version,
+          deviceLegacy: legacyBridge ? "CAMINHAO" : null,
         );
         if (ackOk) break;
         await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
@@ -437,7 +586,7 @@ class _CarregamentoEstacionarioPageState
       if (!ackOk) {
         _msg(
           imp.inserido
-              ? "Lote gravado, mas o estacionário não confirmou. Verifique Wi‑Fi/bridge e toque Receber de novo."
+              ? "Lote gravado, mas o estacionário não confirmou. Verifique Wi‑Fi/bridge e toque Carregar de novo."
               : "Não foi possível confirmar no estacionário. Verifique Wi‑Fi/bridge.",
         );
         return;
@@ -452,14 +601,20 @@ class _CarregamentoEstacionarioPageState
           ? "Carregamento recebido. Conecte na rede do vagão."
           : "Carregamento já existia — estacionário atualizado.");
 
-      // Passo 4: Wi‑Fi vagão (SSID ≠ estacionário)
       if (!await _ensureRedeVagaoAposRecebimento()) return;
       if (!mounted) return;
 
       final fabRepo = FabricacaoRepo();
+      final mode = detalhe.fabricacao.handoffMode ??
+          resolveStationHandoffMode(
+            fabStatus: fabricacaoStatusToDb(detalhe.fabricacao.status),
+            finalizada: detalhe.fabricacao.finalizada ? 1 : 0,
+          );
 
-      // Passos 5–11: balança TCP + tela de carregamento da ração
-      if (detalhe.fabricacao.status == FabricacaoStatus.pendenteCaminhao) {
+      // CONTINUE_FABRICATION → pesagem + completar ingredientes.
+      // FABRICATION_COMPLETE → só transferência física (peso no vagão).
+      if (mode == StationHandoffMode.continueFabrication ||
+          detalhe.fabricacao.status == FabricacaoStatus.pendenteCaminhao) {
         await Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -487,6 +642,186 @@ class _CarregamentoEstacionarioPageState
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Widget _stationTile(DiscoveredStation s, {required bool recente}) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: ListTile(
+        leading: Icon(
+          recente && !s.online ? Icons.history : Icons.factory_outlined,
+          color: s.online ? Colors.teal : Colors.grey,
+        ),
+        title: Text(s.displayName),
+        subtitle: Text(
+          "${s.host}:${s.port}"
+          "${recente && !s.online ? " · recente (offline)" : ""}",
+        ),
+        trailing: FilledButton(
+          onPressed: _loading || _discovering
+              ? null
+              : () => _selecionarEstacao(s),
+          child: const Text("Selecionar"),
+        ),
+      ),
+    );
+  }
+
+  Widget _beatBoxStationsBody() {
+    final onlineIds = _stations.map((e) => e.stationId).toSet();
+    final recentesOnly = _recentes
+        .where((r) => !onlineIds.contains(r.stationId))
+        .toList();
+
+    if (_discovering) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text("Buscando estacionárias..."),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Text(
+            "Estacionárias disponíveis",
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        if (_stations.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              "Nenhuma estacionária encontrada nesta rede.\n"
+              "Use Buscar novamente ou Informe o IP manualmente.",
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          ..._stations.map((s) => _stationTile(s, recente: false)),
+        if (recentesOnly.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 16, 12, 4),
+            child: Text(
+              "Recentes",
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+          ...recentesOnly.map((s) => _stationTile(s, recente: true)),
+        ],
+        const SizedBox(height: 80),
+      ],
+    );
+  }
+
+  Widget _beatBoxLoadsBody() {
+    final s = _selected;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                s?.displayName ?? "Estação",
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              SelectableText(
+                s == null ? "-" : "${s.host}:${s.port}",
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    label: Text(
+                      _healthOk ? "Conectado" : "Desconectado",
+                    ),
+                    avatar: Icon(
+                      _healthOk ? Icons.check_circle : Icons.wifi_off,
+                      size: 18,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _loading ? null : _voltarEstacoes,
+                    icon: const Icon(Icons.arrow_back),
+                    label: const Text("Estações"),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _loading ? null : _atualizarListaSelecionada,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text("Atualizar lista"),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _itens.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          "Nenhum carregamento pendente disponível.",
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: _itens.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        final it = _itens[i];
+                        final blocked = it.isClaimedByOther;
+                        final mode = it.handoffMode;
+                        final modeLabel = mode?.uiLabel ??
+                            (it.isFabricationComplete
+                                ? "Fabricação concluída"
+                                : "Continuar no vagão");
+                        final kg =
+                            "${it.totalFabricadoKg.toStringAsFixed(0)} kg";
+                        final subtitle = blocked
+                            ? "$kg  ·  Em uso por outro vagão"
+                            : it.isClaimedByMe
+                                ? "$kg  ·  Reservada para este vagão\n$modeLabel"
+                                : "$kg\n$modeLabel";
+                        final btnLabel = blocked
+                            ? "Em uso"
+                            : it.isClaimedByMe
+                                ? "Continuar"
+                                : (mode ==
+                                        StationHandoffMode.fabricationComplete
+                                    ? "Carregar"
+                                    : "Continuar");
+                        return ListTile(
+                          title: Text(it.nomeRacao),
+                          subtitle: Text(subtitle),
+                          isThreeLine: true,
+                          trailing: FilledButton(
+                            onPressed: (_loading || blocked)
+                                ? null
+                                : () => _receber(it),
+                            child: Text(btnLabel),
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -520,7 +855,7 @@ class _CarregamentoEstacionarioPageState
               onSelectionChanged: (s) {
                 setState(() => _modoBeatBox = s.first);
                 if (_modoBeatBox) {
-                  unawaited(_iniciarFluxoEntrada());
+                  unawaited(_buscarEstacoes());
                 }
               },
             ),
@@ -556,85 +891,32 @@ class _CarregamentoEstacionarioPageState
               ),
             )
           else ...[
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "Rede BeatBox: ${_stationSsid.isEmpty ? "-" : _stationSsid}",
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                SelectableText("Bridge: $_alvoBridge"),
-                const SizedBox(height: 8),
-                Wrap(
+            if (_beatView == _BeatBoxView.stations)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    Chip(
-                      label: Text(
-                        _healthOk ? "Conectado ao estacionário" : "Aguardando rede",
-                      ),
-                      avatar: Icon(
-                        _healthOk ? Icons.check_circle : Icons.wifi_find,
-                        size: 18,
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : () => _ensureOnStationNetwork(),
-                      icon: const Icon(Icons.wifi),
-                      label: const Text("Wi‑Fi BeatBox"),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : _testarConexao,
-                      icon: const Icon(Icons.health_and_safety_outlined),
-                      label: const Text("Testar"),
-                    ),
                     FilledButton.icon(
-                      onPressed: _loading ? null : () => _buscarCarregamentos(),
-                      icon: const Icon(Icons.refresh),
-                      label: const Text("Atualizar lista"),
+                      onPressed:
+                          _discovering || _loading ? null : _buscarEstacoes,
+                      icon: const Icon(Icons.wifi_find),
+                      label: const Text("Buscar novamente"),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _discovering || _loading ? null : _ipManual,
+                      icon: const Icon(Icons.dns_outlined),
+                      label: const Text("Informar IP manualmente"),
                     ),
                   ],
                 ),
-              ],
+              ),
+            Expanded(
+              child: _beatView == _BeatBoxView.stations
+                  ? _beatBoxStationsBody()
+                  : _beatBoxLoadsBody(),
             ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _itens.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            _buscarAoRetornarDoWifi
-                                ? "Conecte na rede BeatBox ($_stationSsid) para listar os carregamentos."
-                                : "Nenhum carregamento pendente disponível.",
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: _itens.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final it = _itens[i];
-                          return ListTile(
-                            title: Text(it.nomeRacao),
-                            subtitle: Text(
-                              "${it.data} ${it.hora}  |  "
-                              "${it.totalFabricadoKg.toStringAsFixed(0)} kg",
-                            ),
-                            trailing: FilledButton(
-                              onPressed: _loading ? null : () => _receber(it),
-                              child: const Text("Receber"),
-                            ),
-                          );
-                        },
-                      ),
-          ),
           ],
         ],
       ),

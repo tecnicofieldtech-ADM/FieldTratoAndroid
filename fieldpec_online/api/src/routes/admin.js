@@ -443,4 +443,4 @@ function registerAdminRoutes(app) {
   });
 }
 
-module.exports = { registerAdminRoutes, assertAdmin };
+module.exports = { registerAdminRoutes, assertAdmin, resolveAdminClient };

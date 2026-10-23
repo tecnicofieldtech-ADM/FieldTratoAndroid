@@ -1,0 +1,41 @@
+/* FieldTrato -> TGC
+   Vinculo de idempotencia da fabricacao.
+   Firebird 2.5+. Nao altera CAD_BATIDA, generator nem CBT_CODIGO.
+
+   ID_EVENTO_SYNC = UUID local (CADASTRO_FABRICA_RACAO.ID / id_local).
+   HANDOFF_ID     = UUID compartilhado entre estacionaria e vagao.
+   ID_FABRICACAO_TGC = CBT_CODIGO inteiro gerado pelo generator nativo.
+
+   Firebird 2.5 rejeita o segundo NULL num indice UNIQUE e nao indexa
+   coluna COMPUTED BY. HANDOFF_CHAVE e gravada pelo trigger:
+   sem handoff a chave e o ID_EVENTO_SYNC. Com handoff, a chave e o UUID.
+   A API aplica o mesmo DDL ao conectar no TGC.
+   Este script permanece para execucao manual no isql.
+*/
+
+CREATE TABLE RFEED_FABRICACAO_SYNC (
+  ORIGEM_SISTEMA     VARCHAR(30) NOT NULL,
+  ID_EVENTO_SYNC     VARCHAR(64) NOT NULL,
+  HANDOFF_ID         VARCHAR(64),
+  ID_FABRICACAO_TGC  INTEGER,
+  DATA_SINCRONIZACAO TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  HASH_PAYLOAD       VARCHAR(128) NOT NULL,
+  HANDOFF_CHAVE      VARCHAR(80) NOT NULL,
+  CONSTRAINT PK_RFEED_FAB_SYNC PRIMARY KEY (ORIGEM_SISTEMA, ID_EVENTO_SYNC),
+  CONSTRAINT UX_RFEED_FAB_SYNC_HANDOFF UNIQUE (ORIGEM_SISTEMA, HANDOFF_CHAVE)
+);
+
+SET TERM ^ ;
+CREATE TRIGGER BI_RFEED_FAB_SYNC FOR RFEED_FABRICACAO_SYNC
+ACTIVE BEFORE INSERT OR UPDATE POSITION 0
+AS
+BEGIN
+  IF (NEW.HANDOFF_ID IS NULL OR NEW.HANDOFF_ID = '') THEN
+    NEW.HANDOFF_CHAVE = 'L:' || NEW.ID_EVENTO_SYNC;
+  ELSE
+    NEW.HANDOFF_CHAVE = 'H:' || NEW.HANDOFF_ID;
+END^
+SET TERM ; ^
+
+COMMENT ON TABLE RFEED_FABRICACAO_SYNC IS
+  'Idempotencia FieldTrato. ID_FABRICACAO_TGC = CAD_BATIDA.CBT_CODIGO.';

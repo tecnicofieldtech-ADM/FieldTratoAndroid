@@ -34,6 +34,8 @@ class BalancaParser {
         return ScaleModel.alfa;
       case ModeloBalanca.hook:
         return ScaleModel.hook;
+      case ModeloBalanca.ptm:
+        return ScaleModel.ptm;
       case ModeloBalanca.topcon:
         return ScaleModel.topcom;
       case ModeloBalanca.generale:

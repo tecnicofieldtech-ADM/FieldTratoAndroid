@@ -4,6 +4,7 @@ import "package:flutter/foundation.dart";
 import "package:sqflite/sqflite.dart";
 
 import "../../../db/app_db.dart";
+import "../../../services/planilha_importacao.dart";
 import "../../../services/rfid_tag_resolver.dart";
 import "fornecimento_tables.dart";
 import "../domain/fornecimento_models.dart";
@@ -324,10 +325,23 @@ class FornecimentoDao {
     required String idFornecimento,
     required String dataYmd,
     required int trato,
+    String? idBaia,
   }) async {
     final db = await _db;
     final idF = idFornecimento.trim();
     if (idF.isEmpty) return null;
+
+    final where = <String>[
+      "TRIM(a.${FornTables.pvIdFornecimento}) = TRIM(?)",
+      "substr(a.${FornTables.pvData},1,10) = ?",
+      "a.${FornTables.pvTrato} = ?",
+    ];
+    final args = <Object?>[idF, dataYmd, trato];
+    final baia = (idBaia ?? "").trim();
+    if (baia.isNotEmpty) {
+      where.add("TRIM(CAST(a.${FornTables.pvIdBaia} AS TEXT)) = TRIM(?)");
+      args.add(baia);
+    }
 
     final rows = await db.rawQuery("""
     SELECT
@@ -337,12 +351,9 @@ class FornecimentoDao {
       ${FornTables.sqlRealizadoKgLocal("a")} AS realizado,
       a.${FornTables.pvIdRacao}        AS id_racao
     FROM ${FornTables.previsao} a
-    WHERE
-      TRIM(a.${FornTables.pvIdFornecimento}) = TRIM(?)
-      AND substr(a.${FornTables.pvData},1,10) = ?
-      AND a.${FornTables.pvTrato} = ?
+    WHERE ${where.join(" AND ")}
     LIMIT 1
-  """, [idF, dataYmd, trato]);
+  """, args);
 
     if (rows.isEmpty) return null;
     final m = rows.first;
@@ -438,6 +449,7 @@ class FornecimentoDao {
     final db = await _db;
     final d = toSqlDate(data);
     final hora = nowTime();
+    final importacaoId = await PlanilhaImportacao.freezeFromDb();
 
     await db.insert(
       FornTables.cadastroFornecimento,
@@ -457,6 +469,7 @@ class FornecimentoDao {
         FornTables.cfTrato: trato,
         FornTables.cfIdUsuario: idUsuario,
         FornTables.cfIdDieta: idDieta,
+        if (importacaoId != null) FornTables.cfImportacaoId: importacaoId,
       },
       // ✅ evita “sumir” por PK abort (e te ajuda a testar rápido)
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -947,7 +960,7 @@ class FornecimentoDao {
     );
   }
 
-  /// Reabilita TODOS os cadastros do dia com realizado > 0 (todos os tratos).
+  /// Reabilita cadastros do dia com realizado > 0 (uso interno / manutencao).
   Future<int> marcarSyncPendenteDoDia({required DateTime data}) async {
     final db = await _db;
     final dataSql = toSqlDate(data);
@@ -960,6 +973,38 @@ class FornecimentoDao {
       """,
       whereArgs: [dataSql],
     );
+  }
+
+  Future<int> marcarSyncPendentePorIds(List<String> ids) async {
+    final db = await _db;
+    var total = 0;
+    for (final id in ids) {
+      final k = id.trim();
+      if (k.isEmpty) continue;
+      total += await db.update(
+        FornTables.cadastroFornecimento,
+        {FornTables.cfFlagSync: 0},
+        where: "${FornTables.cfId} = ?",
+        whereArgs: [k],
+      );
+    }
+    return total;
+  }
+
+  Future<int> marcarSyncOkPorIds(List<String> ids) async {
+    final db = await _db;
+    var total = 0;
+    for (final id in ids) {
+      final k = id.trim();
+      if (k.isEmpty) continue;
+      total += await db.update(
+        FornTables.cadastroFornecimento,
+        {FornTables.cfFlagSync: 1},
+        where: "${FornTables.cfId} = ?",
+        whereArgs: [k],
+      );
+    }
+    return total;
   }
 
   Future<int> marcarSyncOkPorChave({
@@ -1048,6 +1093,9 @@ class FornecimentoDao {
     return (rows.first["c"] as int?) ?? 0;
   }
 
+  /// Copia o previsto de um dia para outro sem o ID do Field.
+  /// Reusar ID_FORNECIMENTO do dia anterior faz o POST atualizar o
+  /// FORNECIMENTO_CONF de ontem em vez do trato de hoje.
   Future<int> replicarPrevisaoEntreDatas({
     required String dataOrigemYmd,
     required String dataDestinoYmd,
@@ -1067,7 +1115,7 @@ class FornecimentoDao {
         ${FornTables.pvIdRacao}
       )
       SELECT
-        p.${FornTables.pvIdFornecimento},
+        '0',
         ?,
         p.${FornTables.pvIdBaia},
         p.${FornTables.pvTrato},

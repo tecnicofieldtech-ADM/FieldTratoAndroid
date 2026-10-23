@@ -7,6 +7,7 @@ class RedeEstacionario {
     required this.hostEstacionario,
     required this.portaEstacionario,
     required this.ativo,
+    this.stationId = "",
   });
 
   final String id;
@@ -16,8 +17,15 @@ class RedeEstacionario {
   final String hostEstacionario;
   final int portaEstacionario;
   final int ativo;
+  final String stationId;
 
-  String get nomeExibicao => nome.trim().isEmpty ? ssid : nome;
+  String get nomeExibicao {
+    final n = nome.trim();
+    if (n.isNotEmpty) return n;
+    final s = ssid.trim();
+    if (s.isNotEmpty) return s;
+    return hostEstacionario;
+  }
 
   factory RedeEstacionario.fromMap(Map<String, Object?> m) {
     int toInt(Object? v, [int def = 0]) {
@@ -35,6 +43,7 @@ class RedeEstacionario {
       hostEstacionario: (m["HOST_ESTACIONARIO"] ?? "").toString(),
       portaEstacionario: toInt(m["PORTA_ESTACIONARIO"], 8080),
       ativo: toInt(m["ATIVO"], 1),
+      stationId: (m["STATION_ID"] ?? "").toString(),
     );
   }
 
@@ -45,6 +54,7 @@ class RedeEstacionario {
         "SENHA": senha,
         "HOST_ESTACIONARIO": hostEstacionario,
         "PORTA_ESTACIONARIO": portaEstacionario,
+        "STATION_ID": stationId,
         "ATIVO": ativo,
       };
 }

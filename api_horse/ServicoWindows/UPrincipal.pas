@@ -1,4 +1,4 @@
-unit UPrincipal;
+﻿unit UPrincipal;
 
 interface
 
@@ -10,7 +10,7 @@ uses
   Horse.Provider.IOHandleSSL;
 
 type
-  TApiRFeed = class(TService)
+  TApiFiedlTrato = class(TService)
   procedure ServiceStart(Sender: TService; var Started: Boolean);
     procedure ServiceStop(Sender: TService; var Stopped: Boolean);
   private
@@ -21,7 +21,7 @@ type
   end;
 
 var
-  ApiRFeed: TApiRFeed;
+  ApiFiedlTrato: TApiFiedlTrato;
 
 implementation
 
@@ -33,10 +33,10 @@ uses Udm, Controllers.Get, Controllers.Post, Controllers.Get.Field, Controllers.
 
 procedure ServiceController(CtrlCode: DWord); stdcall;
 begin
-  ApiRFeed.Controller(CtrlCode);
+  ApiFiedlTrato.Controller(CtrlCode);
 end;
 
-function TApiRFeed.GetServiceController: TServiceController;
+function TApiFiedlTrato.GetServiceController: TServiceController;
 begin
   Result := ServiceController;
 end;
@@ -54,7 +54,7 @@ begin
 end;
 
 
-procedure TApiRFeed.ServiceStart(Sender: TService; var Started: Boolean);
+procedure TApiFiedlTrato.ServiceStart(Sender: TService; var Started: Boolean);
 begin
   try
     StartLogger;
@@ -100,7 +100,7 @@ begin
   end;
 end;
 
-procedure TApiRFeed.ServiceStop(Sender: TService; var Stopped: Boolean);
+procedure TApiFiedlTrato.ServiceStop(Sender: TService; var Stopped: Boolean);
 begin
  try
     GlobalLogger.Info('Servi�o finalizado', '');

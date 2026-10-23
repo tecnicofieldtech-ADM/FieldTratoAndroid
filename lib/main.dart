@@ -35,7 +35,7 @@ import "services/session_service.dart";
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // âœ… carrega sessÃ£o do SharedPreferences (se tiver)
+  // Sempre limpa sessão ativa no boot — login obrigatório a cada abertura
   await SessionService.instance.restore();
 
   runApp(const RFeedApp());

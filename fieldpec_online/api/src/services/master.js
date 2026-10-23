@@ -377,4 +377,11 @@ module.exports = {
   listDietas,
   listDietasDetalhes,
   listPrevisao,
+  upsertFazendas,
+  upsertUsuarios,
+  upsertVagoes,
+  upsertBaias,
+  upsertDietas,
+  upsertDietasDetalhes,
+  upsertPrevisao,
 };

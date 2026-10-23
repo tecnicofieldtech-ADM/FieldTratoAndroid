@@ -33,18 +33,12 @@ class _SplashPageState extends State<SplashPage> {
     // 2) carrega config
     await _cfgRepo.getConfig();
 
-    // 3) restaura sessão (SharedPreferences ou backup em disco)
+    // 3) encerra qualquer sessão anterior — sempre exige login ao abrir
     await SessionService.instance.restore();
 
     if (!mounted) return;
 
-    // ✅ se já tem sessão, vai direto pro menu
-    if (SessionService.instance.isLogged) {
-      Navigator.pushReplacementNamed(context, "/menu");
-      return;
-    }
-
-    // 3) checa usuários no SQLite (pra decidir config vs login)
+    // 4) checa usuários no SQLite (pra decidir config vs login)
     final hasUser = await _userRepo.hasAnyUser();
 
     if (!mounted) return;

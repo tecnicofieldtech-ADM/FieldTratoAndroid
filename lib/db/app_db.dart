@@ -20,7 +20,7 @@ class AppDb {
 
     return openDatabase(
       path,
-      version: 13, // PREVISAO: previsto de cadastro (sem ajuste do último trato)
+      version: 19, // Cadastro de todos os currais ativos (gravação de tag)
       onConfigure: (db) async {
         await db.execute("PRAGMA foreign_keys = ON;");
       },
@@ -79,13 +79,18 @@ class AppDb {
       STATION_WIFI_PASSWORD TEXT,
       STATION_BASE_URL TEXT,
       STATION_BASE_URL_LEGACY TEXT,
+      STATION_ID TEXT,
+      STATION_NAME TEXT,
+      TRUCK_DEVICE_ID TEXT,
 
       -- ✅ NOVO: tolerância em KG (ConfigRepo já garante, mas aqui nasce certo)
       TOLERANCIA_CARREGAMENTO_KG NUMERIC DEFAULT 0,
 
       -- Mínimo (kg) para gravar fornecimento no tablet (0 = aceita qualquer > 0)
       PONTO_CORTE_FORNECIMENTO_KG NUMERIC DEFAULT 50,
-      CLIENTE_CODIGO TEXT DEFAULT ''
+      CLIENTE_CODIGO TEXT DEFAULT '',
+      BALANCA_SIMULADOR INTEGER DEFAULT 0,
+      IMPORTACAO_ID TEXT
     );
     """);
 
@@ -120,6 +125,7 @@ class AppDb {
       SENHA TEXT,
       HOST_ESTACIONARIO TEXT NOT NULL,
       PORTA_ESTACIONARIO INTEGER NOT NULL DEFAULT 8080,
+      STATION_ID TEXT,
       ATIVO INTEGER NOT NULL DEFAULT 1,
       CREATED_AT TEXT DEFAULT (datetime('now', 'localtime')),
       UPDATED_AT TEXT
@@ -185,7 +191,11 @@ class AppDb {
       EXPORTADO_EM TEXT,
       ORIGIN_DEVICE TEXT,
       MS_PREVISTA NUMERIC DEFAULT 0,
-      MS_REALIZADA NUMERIC DEFAULT 0
+      MS_REALIZADA NUMERIC DEFAULT 0,
+      IMPORTACAO_ID TEXT,
+      CLAIM_DEVICE_ID TEXT,
+      CLAIM_AT TEXT,
+      CLAIM_EXPIRES_AT TEXT
     );
     """);
 
@@ -232,7 +242,8 @@ class AppDb {
       TRATO INTEGER NOT NULL,
       ID_USUARIO TEXT NOT NULL,
       ID_DIETA TEXT,
-      MAPA INTEGER DEFAULT 0
+      MAPA INTEGER DEFAULT 0,
+      IMPORTACAO_ID TEXT
     );
     """);
 
@@ -305,6 +316,8 @@ class AppDb {
     CREATE INDEX IF NOT EXISTS IDX_BAIAS_RFID
     ON DETALHES_BAIAS (RFID);
     """);
+
+    await _createCadastroCurral(db);
 
     await db.execute("""
     CREATE TABLE IF NOT EXISTS DETALHES_DIETAS (
@@ -452,6 +465,8 @@ class AppDb {
         "STATION_WIFI_PASSWORD": null,
         "STATION_BASE_URL": null,
         "CLIENTE_CODIGO": "",
+        "BALANCA_SIMULADOR": 0,
+        "IMPORTACAO_ID": null,
       });
     }
   }
@@ -718,5 +733,54 @@ class AppDb {
         "PREVISTO_CADASTRO_KG NUMERIC",
       );
     }
+
+    if (oldV < 14) {
+      await _addColumnIgnore(
+        db,
+        "CONFIG",
+        "BALANCA_SIMULADOR INTEGER DEFAULT 0",
+      );
+    }
+
+    if (oldV < 15) {
+      await _addColumnIgnore(db, "CONFIG", "IMPORTACAO_ID TEXT");
+    }
+
+    if (oldV < 16) {
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "IMPORTACAO_ID TEXT");
+      await _addColumnIgnore(db, "CADASTRO_FORNECIMENTO", "IMPORTACAO_ID TEXT");
+    }
+
+    if (oldV < 17) {
+      await _addColumnIgnore(db, "CONFIG", "STATION_ID TEXT");
+      await _addColumnIgnore(db, "CONFIG", "STATION_NAME TEXT");
+      await _addColumnIgnore(db, "CONFIG", "TRUCK_DEVICE_ID TEXT");
+      await _addColumnIgnore(db, "ESTACIONARIO_REDE", "STATION_ID TEXT");
+    }
+
+    if (oldV < 18) {
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "CLAIM_DEVICE_ID TEXT");
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "CLAIM_AT TEXT");
+      await _addColumnIgnore(db, "CADASTRO_FABRICA_RACAO", "CLAIM_EXPIRES_AT TEXT");
+    }
+
+    if (oldV < 19) {
+      await _createCadastroCurral(db);
+    }
+  }
+
+  Future<void> _createCadastroCurral(Database db) async {
+    await db.execute("""
+    CREATE TABLE IF NOT EXISTS CADASTRO_CURRAL (
+      ID TEXT PRIMARY KEY NOT NULL,
+      NOME TEXT NOT NULL,
+      TAG TEXT
+    );
+    """);
+
+    await db.execute("""
+    CREATE INDEX IF NOT EXISTS IDX_CADASTRO_CURRAL_TAG
+    ON CADASTRO_CURRAL (TAG);
+    """);
   }
 }

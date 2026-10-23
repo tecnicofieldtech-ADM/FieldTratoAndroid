@@ -7,10 +7,13 @@ import "package:flutter/services.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
 import "../../../helpers/scale_comm.dart";
-import "../../../helpers/scale_model_config.dart";
+import "../../../helpers/scale_connect.dart";
 import "../../../helpers/rfid_comm.dart";
 
 import "../controller/fornecimento_dashboard_controller.dart";
+import "../domain/ancora_troca.dart";
+import "../domain/troca_curral_relogio.dart";
+import "widgets/linha_multi_select.dart";
 import "../data/fornecimento_repo.dart";
 import "../../../services/session_service.dart";
 import "../../../repo/config_repo.dart";
@@ -73,7 +76,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
   late final _BeepAlerter _beeper;
   bool _showRfidControls = false;
   bool _mapaHorizontalFixo = false;
-  String? _linhaFiltroSaved;
+  Set<String> _linhasFiltroSaved = <String>{};
   String? _curralSelSaved;
   final ScrollController _mapaHScrollCtrl = ScrollController();
   double _mapaHScrollOffset = 0;
@@ -142,8 +145,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     final sp = await SharedPreferences.getInstance();
     _mapaHorizontalFixo = sp.getBool(_kMapaHorizontal) ?? false;
 
-    final linha = (sp.getString(_kLinhaFiltro) ?? "").trim();
-    _linhaFiltroSaved = linha.isEmpty ? null : linha;
+    _linhasFiltroSaved = _parseLinhasSalvas(sp.getString(_kLinhaFiltro) ?? "");
 
     final curral = (sp.getString(_kCurralSelecionado) ?? "").trim();
     _curralSelSaved = curral.isEmpty ? null : curral;
@@ -154,9 +156,19 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     await sp.setBool(_kMapaHorizontal, value);
   }
 
-  Future<void> _saveLinhaFiltroPref(String? linha) async {
+  Set<String> _parseLinhasSalvas(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return <String>{};
+    return t
+        .split("|")
+        .map((e) => e.trim().toUpperCase())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+  }
+
+  Future<void> _saveLinhaFiltroPref(Set<String> linhas) async {
     final sp = await SharedPreferences.getInstance();
-    final v = (linha ?? "").trim();
+    final v = (linhas.toList()..sort()).join("|");
     if (v.isEmpty) {
       await sp.remove(_kLinhaFiltro);
     } else {
@@ -193,8 +205,6 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, "/login", (r) => false);
   }
-
-  ScaleModel _mapModeloBalancaInt(int v) => scaleModelFromConfigInt(v);
 
   String _ymd(DateTime d) {
     final y = d.year.toString().padLeft(4, "0");
@@ -305,20 +315,10 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
 
   Future<void> _connectDevicesFromConfig() async {
     try {
-      final hostB = (await _cfgRepo.getHostBalanca()).trim();
-      final portB = await _cfgRepo.getPortaBalanca();
-      final modeloB = await _cfgRepo.getModeloBalanca();
+      final link = await loadScaleLink(_cfgRepo);
 
-      if (hostB.isEmpty || portB <= 0) {
-        // deixa status aparecer via stream como "OFF"
-      } else {
-        widget.scale.configure(
-          host: hostB,
-          port: portB,
-          model: _mapModeloBalancaInt(modeloB),
-          allowNegative: true,
-        );
-        unawaited(widget.scale.connect());
+      if (link.canConnect) {
+        unawaited(connectScaleFromLink(widget.scale, link));
       }
 
       final hostR = (await _cfgRepo.getHostRfid()).trim();
@@ -434,15 +434,15 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     }
 
     if (widget.startCleared) {
-      await _saveLinhaFiltroPref(null);
-      _linhaFiltroSaved = null;
-      _ctrl.setLinhaFiltro(null);
+      await _saveLinhaFiltroPref(<String>{});
+      _linhasFiltroSaved = <String>{};
+      _ctrl.setLinhasFiltro(<String>{});
       await _saveCurralSelecionadoPref(null);
       _curralSelSaved = null;
       _ctrl.restaurarSelecaoPorIdFornecimento("");
     } else {
-      if ((_linhaFiltroSaved ?? "").trim().isNotEmpty) {
-        _ctrl.setLinhaFiltro(_linhaFiltroSaved);
+      if (_linhasFiltroSaved.isNotEmpty) {
+        _ctrl.setLinhasFiltro(_linhasFiltroSaved);
       }
       if ((_curralSelSaved ?? "").trim().isNotEmpty) {
         await _ctrl.recuperarSelecaoAposBoot(_curralSelSaved!);
@@ -480,11 +480,6 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
     return 2;
   }
 
-  double _progress(double realizado, double previsto) {
-    if (previsto <= 0) return 0;
-    return (realizado / previsto).clamp(0.0, 1.0);
-  }
-
   Future<void> _onSalvarSeguro() async {
     _captureMapaHorizontalScroll();
     try {
@@ -514,37 +509,30 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                 final width = MediaQuery.of(ctx).size.width;
                 final cols = _gridCols(width);
                 final list = _ctrl.curraisFiltrados;
-                const cardHeight = 118.0;
+                const cardHeight = 71.0;
 
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    _resumoDietaTratoBar(),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         const Text("Linha:",
                             style: TextStyle(fontWeight: FontWeight.w900)),
                         const SizedBox(width: 10),
-                        DropdownButton<String?>(
-                          value: _ctrl.linhaFiltro,
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text("Todas"),
-                            ),
-                            ...linhas.map(
-                              (l) => DropdownMenuItem<String?>(
-                                value: l,
-                                child: Text(l),
-                              ),
-                            ),
-                          ],
-                          onChanged: (v) {
-                            _ctrl.setLinhaFiltro(v);
-                            // ignore: unawaited_futures
-                            _saveLinhaFiltroPref(_ctrl.linhaFiltro);
-                          },
+                        Expanded(
+                          child: LinhaMultiSelect(
+                            opcoes: linhas,
+                            selecionadas: _ctrl.linhasFiltro,
+                            onChanged: (v) {
+                              _ctrl.setLinhasFiltro(v);
+                              // ignore: unawaited_futures
+                              _saveLinhaFiltroPref(v);
+                            },
+                          ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 10),
                         Text("${list.length} currais"),
                       ],
                     ),
@@ -561,19 +549,20 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                         ),
                         itemBuilder: (_, i) {
                           final c = list[i];
-                          final isSel = _ctrl.selected?.idFornecimento ==
-                              c.idFornecimento;
+                          final isSel = _ctrl.selected?.chaveMapa == c.chaveMapa;
 
                           return _CurralCardSmall(
                             c: c,
                             isSelected: isSel,
-                            onTap: () {
-                              // ignore: unawaited_futures
-                              _ctrl.selecionarCurralPorClique(c);
-                              // ignore: unawaited_futures
-                              _saveCurralSelecionadoPref(c.idFornecimento);
-                              Navigator.pop(ctx);
-                            },
+                            onTap: _ctrl.startingSessao
+                                ? null
+                                : () {
+                                    // ignore: unawaited_futures
+                                    _ctrl.selecionarCurralPorClique(c);
+                                    // ignore: unawaited_futures
+                                    _saveCurralSelecionadoPref(c.chaveMapa);
+                                    Navigator.pop(ctx);
+                                  },
                           );
                         },
                       ),
@@ -612,13 +601,11 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
         final realizadoEst = _ctrl.realizadoEstimadoKg;
         final aFornecerEst = _ctrl.aFornecerEstimadoKg;
         final previstoPainel = _ctrl.previstoPainelKg;
-        final isFieldpecUltimo = _ctrl.isFieldpecUltimoTratoSelecionado;
-
-        final progress = sel == null
-            ? 0.0
-            : _progress(realizadoEst, previstoPainel);
 
         final level = _computeLevel(sel, realizadoEst, aFornecerEst);
+        final progresso = previstoPainel <= 0
+            ? 0.0
+            : (realizadoEst / previstoPainel).clamp(0.0, 1.0);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _beeper.maybeBeep(level);
         });
@@ -657,10 +644,8 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
               ),
               SizedBox(height: (MediaQuery.of(context).size.width < 600) ? 4 : 8),
               Expanded(
-                child: _ctrl.loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : !_ctrl.tratoSelecionado
-                        ? Center(
+                child: !_ctrl.tratoSelecionado
+                    ? Center(
                             child: Padding(
                               padding: const EdgeInsets.all(24),
                               child: Column(
@@ -697,26 +682,29 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                             child: _RightPanel(
                               selected: sel,
                               pesoAtual: _ctrl.pesoAtual,
-                              lastScaleRaw: _ctrl.lastScaleRaw,
                               scaleStatus: _ctrl.scaleStatus,
                               scaleMsg: _ctrl.scaleMsg,
                               rfidStatus: _ctrl.rfidStatus,
                               rfidMsg: _ctrl.rfidMsg,
                               rfidPausado: _ctrl.rfidPausado,
                               sessaoAtiva: _ctrl.sessaoAtiva,
-                              fornecidoSessaoKg: _ctrl.fornecidoSessaoKg,
-                              realizadoEstimadoKg: realizadoEst,
+                              startingSessao: _ctrl.startingSessao,
+                              fase: _ctrl.faseTroca,
                               aFornecerEstimadoKg: aFornecerEst,
                               previstoPainelKg: previstoPainel,
-                              isFieldpecUltimoTrato: isFieldpecUltimo,
+                              progresso: progresso,
                               ultimo: _ctrl.ultimo,
                               fmt: _fmtNum,
-                              progress: progress,
                               level: level,
                             ),
                           ),
               ),
               if (_mapaHorizontalFixo) _mapaHorizontalBar(),
+              if (_ctrl.tratoSelecionado && !_mapaHorizontalFixo)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: _resumoDietaTratoBar(),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: _BottomActions(
@@ -727,6 +715,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                   sessaoAtiva: _ctrl.sessaoAtiva,
                   showMapaButton: !_mapaHorizontalFixo,
                   showRfidButton: _showRfidControls,
+                  startingSessao: _ctrl.startingSessao,
                   disabled: _ctrl.loading ||
                       _ctrl.error != null ||
                       !_ctrl.tratoSelecionado,
@@ -795,7 +784,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
 
   Widget _resumoDietaTratoBar() {
     final h = _ctrl.header;
-    final t = _ctrl.totais;
+    final t = _ctrl.totaisVisiveis;
     final dieta = (h?.racaoNome ?? "").trim().isEmpty
         ? "Dieta"
         : h!.racaoNome!.trim();
@@ -875,30 +864,13 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: DropdownButtonFormField<String?>(
-                      isExpanded: true,
-                      initialValue: _ctrl.linhaFiltro,
-                      decoration: const InputDecoration(
-                        labelText: "Linha",
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      items: [
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text("Todas"),
-                        ),
-                        ...linhas.map(
-                          (l) => DropdownMenuItem<String?>(
-                            value: l,
-                            child: Text(l),
-                          ),
-                        ),
-                      ],
+                    child: LinhaMultiSelect(
+                      opcoes: linhas,
+                      selecionadas: _ctrl.linhasFiltro,
                       onChanged: (v) {
-                        _ctrl.setLinhaFiltro(v);
+                        _ctrl.setLinhasFiltro(v);
                         // ignore: unawaited_futures
-                        _saveLinhaFiltroPref(_ctrl.linhaFiltro);
+                        _saveLinhaFiltroPref(v);
                       },
                     ),
                   ),
@@ -910,7 +882,7 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
               _resumoDietaTratoBar(),
               const SizedBox(height: 8),
               SizedBox(
-                height: 125,
+                height: 76,
                 child: list.isEmpty
                     ? const Center(
                         child: Text("Sem currais para o filtro selecionado."))
@@ -921,20 +893,21 @@ class _FornecimentoDashboardPageState extends State<FornecimentoDashboardPage> {
                         separatorBuilder: (_, __) => const SizedBox(width: 8),
                         itemBuilder: (_, i) {
                           final c = list[i];
-                          final isSel = _ctrl.selected?.idFornecimento ==
-                              c.idFornecimento;
+                          final isSel = _ctrl.selected?.chaveMapa == c.chaveMapa;
                           return SizedBox(
-                            width: 250,
-                            height: 118,
+                            width: 200,
+                            height: 71,
                             child: _CurralCardSmall(
                               c: c,
                               isSelected: isSel,
                               // Duplo clique: evita abrir curral ao arrastar o mapa.
-                              onDoubleTap: () async {
-                                await _ctrl.selecionarCurralPorClique(c);
-                                // ignore: unawaited_futures
-                                _saveCurralSelecionadoPref(c.idFornecimento);
-                              },
+                              onDoubleTap: _ctrl.startingSessao
+                                  ? null
+                                  : () async {
+                                      await _ctrl.selecionarCurralPorClique(c);
+                                      // ignore: unawaited_futures
+                                      _saveCurralSelecionadoPref(c.chaveMapa);
+                                    },
                             ),
                           );
                         },
@@ -999,7 +972,7 @@ class _HeaderBar extends StatelessWidget {
       return Container(
         padding: EdgeInsets.symmetric(
           horizontal: isPhone ? 10 : 14,
-          vertical: isPhone ? 8 : 12,
+          vertical: isPhone ? 5 : 7,
         ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
@@ -1025,10 +998,10 @@ class _HeaderBar extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     value,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: isPhone ? 15 : 22,
+                      fontSize: isPhone ? 13 : 16,
                       fontWeight: FontWeight.w900,
                       height: 1.1,
                     ),
@@ -1043,7 +1016,7 @@ class _HeaderBar extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        isPhone ? 8 : 12, isPhone ? 8 : 12, isPhone ? 8 : 12, 0,
+        isPhone ? 8 : 12, isPhone ? 4 : 6, isPhone ? 8 : 12, 0,
       ),
       child: IntrinsicHeight(
         child: Row(
@@ -1089,6 +1062,7 @@ class _BottomActions extends StatelessWidget {
     required this.showMapaButton,
     required this.showRfidButton,
     required this.disabled,
+    this.startingSessao = false,
   });
 
   final VoidCallback onMapa;
@@ -1099,6 +1073,7 @@ class _BottomActions extends StatelessWidget {
   final bool showMapaButton;
   final bool showRfidButton;
   final bool disabled;
+  final bool startingSessao;
 
   @override
   Widget build(BuildContext context) {
@@ -1109,7 +1084,7 @@ class _BottomActions extends StatelessWidget {
           if (showMapaButton) ...[
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: disabled ? null : onMapa,
+                onPressed: (disabled || startingSessao) ? null : onMapa,
                 icon: const Icon(Icons.grid_view),
                 label: const Text("Mapa"),
               ),
@@ -1187,8 +1162,9 @@ class _CurralCardSmall extends StatelessWidget {
         onTap: onTap,
         onDoubleTap: onDoubleTap,
         child: Padding(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
@@ -1201,8 +1177,8 @@ class _CurralCardSmall extends StatelessWidget {
                       style: TextStyle(
                         color: fg,
                         fontWeight: FontWeight.w900,
-                        fontSize: 13,
-                        height: 1.1,
+                        fontSize: 12,
+                        height: 1.05,
                       ),
                     ),
                   ),
@@ -1210,8 +1186,8 @@ class _CurralCardSmall extends StatelessWidget {
                     const SizedBox(width: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                        horizontal: 5,
+                        vertical: 1,
                       ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
@@ -1222,27 +1198,25 @@ class _CurralCardSmall extends StatelessWidget {
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
-                          fontSize: 10,
+                          fontSize: 9,
                         ),
                       ),
                     ),
                   ],
                 ],
               ),
-              const SizedBox(height: 2),
               Text(
                 "Linha: $linhaTxt",
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: fg.withValues(alpha: 0.75),
-                  fontSize: 11,
-                  height: 1.1,
+                  fontSize: 10,
+                  height: 1.05,
                 ),
               ),
-              const Spacer(),
               SizedBox(
-                height: 28,
+                height: 26,
                 child: Row(
                   children: [
                     Expanded(child: _mini(fg, "P", n0(c.previstoExibicaoKg))),
@@ -1262,18 +1236,18 @@ class _CurralCardSmall extends StatelessWidget {
 
   Widget _mini(Color fg, String t, String v) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: fg.withValues(alpha: 0.18)),
       ),
       child: Row(
         children: [
           Text(
             t,
-            style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 11),
+            style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 9),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(
               v,
@@ -1283,7 +1257,7 @@ class _CurralCardSmall extends StatelessWidget {
               style: TextStyle(
                 color: fg,
                 fontWeight: FontWeight.w900,
-                fontSize: 12,
+                fontSize: 10,
               ),
             ),
           ),
@@ -1297,44 +1271,40 @@ class _RightPanel extends StatelessWidget {
   const _RightPanel({
     required this.selected,
     required this.pesoAtual,
-    required this.lastScaleRaw,
     required this.scaleStatus,
     required this.scaleMsg,
     required this.rfidStatus,
     required this.rfidMsg,
     required this.rfidPausado,
     required this.sessaoAtiva,
-    required this.fornecidoSessaoKg,
-    required this.realizadoEstimadoKg,
+    required this.startingSessao,
+    required this.fase,
     required this.aFornecerEstimadoKg,
     required this.previstoPainelKg,
-    required this.isFieldpecUltimoTrato,
+    required this.progresso,
     required this.ultimo,
     required this.fmt,
-    required this.progress,
     required this.level,
   });
 
   final CurralCardVM? selected;
   final double pesoAtual;
-  final String lastScaleRaw;
   final ScaleStatus scaleStatus;
   final String? scaleMsg;
   final RfidStatus rfidStatus;
   final String? rfidMsg;
   final bool rfidPausado;
   final bool sessaoAtiva;
-  final double fornecidoSessaoKg;
+  final bool startingSessao;
+  final FaseTrocaCurral fase;
 
-  final double realizadoEstimadoKg;
   final double aFornecerEstimadoKg;
   final double previstoPainelKg;
-  final bool isFieldpecUltimoTrato;
+  final double progresso;
 
   final UltimoFornecimentoVM? ultimo;
 
   final String Function(num, {int dec}) fmt;
-  final double progress;
 
   final _BeepLevel level;
 
@@ -1352,6 +1322,14 @@ class _RightPanel extends StatelessWidget {
       case _BeepLevel.ok:
         return Colors.black;
     }
+  }
+
+  String? _avisoTroca() {
+    if (startingSessao) return "Abrindo pesagem...";
+    final aviso = avisoFaseTroca(fase);
+    if (aviso == null) return null;
+    if (selected == null && fase != FaseTrocaCurral.transicao) return null;
+    return aviso;
   }
 
   String _levelTxt() {
@@ -1374,24 +1352,19 @@ class _RightPanel extends StatelessWidget {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
     final isPhone = screenW < 600 || screenH < 700;
-    final cardH = isPhone
-        ? (screenH * 0.26).clamp(140.0, 180.0)
-        : (screenH * 0.28).clamp(180.0, 240.0);
 
     String linhaTxt(String? l) {
       final t = (l ?? "").trim();
       return t.isEmpty ? "-" : t;
     }
 
-    final previsto = hasSel ? previstoPainelKg : 0.0;
-    final realizado = hasSel
-        ? (sessaoAtiva ? realizadoEstimadoKg : s.realizadoKg)
-        : 0.0;
-    final dif = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
-    final difEst = hasSel ? (realizadoEstimadoKg - previsto) : 0.0;
     final curralNome = hasSel ? s.curralNome : "ESPERANDO CURRAL";
     final linha = hasSel ? linhaTxt(s.linha) : "-";
-    final progressValue = hasSel ? progress : 0.0;
+    final pesoLiberado = painelAFornecerLiberado(
+      temCurral: hasSel,
+      sessaoAtiva: sessaoAtiva,
+      iniciando: startingSessao,
+    );
     String signed(num v) {
       final t = fmt(v, dec: 0);
       return v > 0 ? "+$t" : t;
@@ -1405,26 +1378,18 @@ class _RightPanel extends StatelessWidget {
     }
 
     final scaleUi = scaleConnectionUi(scaleStatus, message: scaleMsg);
-    final scaleDetail = () {
-      var d = scaleUi.detail;
-      final raw = lastScaleRaw.trim();
-      if (raw.isNotEmpty) {
-        final snippet = raw.length > 40 ? "${raw.substring(0, 40)}…" : raw;
-        d = "$d · RX: $snippet";
-      }
-      return d;
-    }();
+    final scaleDetail = scaleUi.detail;
     final rfidUi = rfidConnectionUi(
       rfidStatus,
       message: rfidMsg,
       pausado: rfidPausado,
     );
 
-    final previstoSel = hasSel ? previsto : 0.0;
+    final previstoSel = hasSel ? previstoPainelKg : 0.0;
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
           ScalePesoHighlightCard(
             pesoKg: pesoAtual,
             pesoLabel: "Peso balança",
@@ -1445,9 +1410,10 @@ class _RightPanel extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: isPhone ? 4 : 10),
-          Container(
-            padding: EdgeInsets.all(isPhone ? 8 : 12),
+          SizedBox(height: isPhone ? 4 : 6),
+          Expanded(
+            child: Container(
+            padding: EdgeInsets.all(isPhone ? 6 : 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(isPhone ? 14 : 18),
               border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
@@ -1460,31 +1426,31 @@ class _RightPanel extends StatelessWidget {
                   "Modo Pesagem",
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: isPhone ? 13 : 16,
+                    fontSize: isPhone ? 11 : 13,
                   ),
                 ),
-                SizedBox(height: isPhone ? 4 : 8),
+                SizedBox(height: isPhone ? 2 : 4),
                 Text(
                   curralNome,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: isPhone ? 24 : 46,
+                    fontSize: isPhone ? 18 : 24,
                     height: 0.98,
                     letterSpacing: 0.2,
                   ),
                 ),
-                SizedBox(height: isPhone ? 4 : 6),
+                SizedBox(height: isPhone ? 2 : 4),
                 Row(
                   children: [
                     Icon(Icons.alt_route,
-                        size: 18, color: Colors.black.withValues(alpha: 0.65)),
+                        size: 16, color: Colors.black.withValues(alpha: 0.65)),
                     const SizedBox(width: 6),
                     Text(
                       "Linha: $linha",
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: 13,
                         fontWeight: FontWeight.w900,
                         color: Colors.black.withValues(alpha: 0.75),
                       ),
@@ -1504,57 +1470,44 @@ class _RightPanel extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                if (hasSel && !sessaoAtiva)
+                const SizedBox(height: 6),
+                if (_avisoTroca() != null) ...[
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
-                      vertical: 10,
+                      vertical: 6,
                     ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
-                      color: Colors.orange.shade50,
-                      border: Border.all(color: Colors.orange.shade300),
+                      color: fase == FaseTrocaCurral.erroPeso
+                          ? Colors.red.shade50
+                          : (fase == FaseTrocaCurral.aguardandoPeso &&
+                                  !startingSessao)
+                              ? Colors.orange.shade50
+                              : Colors.teal.shade50,
+                      border: Border.all(
+                        color: fase == FaseTrocaCurral.erroPeso
+                            ? Colors.red.shade300
+                            : (fase == FaseTrocaCurral.aguardandoPeso &&
+                                    !startingSessao)
+                                ? Colors.orange.shade300
+                                : Colors.teal.shade200,
+                      ),
                     ),
-                    child: const Text(
-                      "Sessão não iniciada — leia a tag RFID ou toque no curral para começar a pesar.",
-                      style: TextStyle(
+                    child: Text(
+                      _avisoTroca()!,
+                      style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 13,
                       ),
                     ),
                   ),
-                if (hasSel && !sessaoAtiva) const SizedBox(height: 10),
-                Row(
-                  children: [
-                    _infoBig(
-                      "Previsto",
-                      fmt(previsto, dec: 0),
-                      icon: Icons.flag,
-                      inactive: !hasSel,
-                    ),
-                    const SizedBox(width: 10),
-                    _infoBig(
-                      "Realizado",
-                      fmt(realizado, dec: 0),
-                      icon: Icons.check_circle_outline,
-                      inactive: !hasSel,
-                    ),
-                    const SizedBox(width: 10),
-                    _infoBig(
-                      "Dif",
-                      signed(dif),
-                      icon: Icons.swap_vert,
-                      inactive: !hasSel,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: cardH,
+                  const SizedBox(height: 6),
+                ],
+                Expanded(
                   child: Container(
-                    padding: EdgeInsets.all(isPhone ? 12 : 18),
+                    padding: EdgeInsets.all(isPhone ? 8 : 10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(isPhone ? 18 : 26),
                       color: _scoreBg(),
@@ -1572,14 +1525,14 @@ class _RightPanel extends StatelessWidget {
                         Row(
                           children: [
                             Icon(Icons.scale,
-                                color: Colors.white, size: isPhone ? 18 : 28),
-                            SizedBox(width: isPhone ? 6 : 10),
+                                color: Colors.white, size: isPhone ? 16 : 20),
+                            SizedBox(width: isPhone ? 6 : 8),
                             Text(
                               "A FORNECER (kg)",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
-                                fontSize: isPhone ? 14 : 22,
+                                fontSize: isPhone ? 12 : 14,
                               ),
                             ),
                             const Spacer(),
@@ -1602,54 +1555,47 @@ class _RightPanel extends StatelessWidget {
                               ),
                           ],
                         ),
-                        SizedBox(height: isPhone ? 6 : 14),
+                        SizedBox(height: isPhone ? 2 : 4),
 
                         Expanded(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                              aFornecerSigned(),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: isPhone ? 100 : 160,
-                                fontWeight: FontWeight.w900,
-                                height: 0.90,
-                                letterSpacing: 1.5,
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.contain,
+                              child: Text(
+                                pesoLiberado ? aFornecerSigned() : "—",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: isPhone ? 100 : 160,
+                                  fontWeight: FontWeight.w900,
+                                  height: 0.90,
+                                  letterSpacing: 1.5,
+                                ),
                               ),
                             ),
                           ),
                         ),
-
-                        SizedBox(height: isPhone ? 4 : 8),
-
-                        Text(
-                          isPhone
-                              ? "Real: ${fmt(realizadoEstimadoKg, dec: 0)}  •  Dif: ${signed(difEst)}"
-                              : "Real (est.): ${fmt(realizadoEstimadoKg, dec: 0)}  •  A fornecer: ${aFornecerSigned()}  •  Dif (est.): ${signed(difEst)}",
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.92),
-                            fontWeight: FontWeight.w800,
-                            fontSize: isPhone ? 11 : 14,
+                        if (hasSel && previstoPainelKg > 0) ...[
+                          SizedBox(height: isPhone ? 4 : 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              value: progresso.clamp(0.0, 1.0),
+                              minHeight: isPhone ? 6 : 8,
+                              backgroundColor: Colors.white24,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: SizedBox(
-                    height: 10,
-                    child: LinearProgressIndicator(value: progressValue),
-                  ),
-                ),
-                const SizedBox(height: 14),
               ],
             ),
           ),
-          const SizedBox(height: 10),
+          ),
+          const SizedBox(height: 8),
           if (ultimo != null)
             Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -1686,42 +1632,6 @@ class _RightPanel extends StatelessWidget {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _infoBig(String t, String v, {IconData? icon, bool inactive = false}) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-          color: inactive ? const Color(0xFFEFF2F6) : Colors.white,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (icon != null) ...[
-                  Icon(icon,
-                      size: 16, color: Colors.black.withValues(alpha: 0.65)),
-                  const SizedBox(width: 6),
-                ],
-                Text(t,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w900)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              v,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 22),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

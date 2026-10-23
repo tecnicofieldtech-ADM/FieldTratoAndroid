@@ -6,7 +6,7 @@ import "package:flutter/foundation.dart";
 import "../../../db/app_db.dart";
 import "../../../repo/config_repo.dart";
 import "../../../helpers/scale_comm.dart";
-import "../../../helpers/scale_model_config.dart";
+import "../../../helpers/scale_connect.dart";
 import "../../../helpers/mirror_service.dart";
 import "../../../helpers/led_service.dart";
 
@@ -28,6 +28,8 @@ class FabricacaoController extends ChangeNotifier {
 
   // 0 = espelhamento da pá | 1 = LED
   int _modoSaidaFab = 0;
+  int? _ledSession;
+  bool _ledEncerrado = false;
 
   void _safeNotify() {
     if (_isDisposed || _isDisposing) return;
@@ -178,14 +180,22 @@ class FabricacaoController extends ChangeNotifier {
       await MirrorService.instance.stop();
       final address = (await _cfgRepo.getLedBtAddress()).trim();
       final name = (await _cfgRepo.getLedBtName()).trim();
-      await LedService.instance.configure(address: address, name: name);
+      // Síncrono: a sessão nova já vale antes do await, então o stop
+      // da fabricação anterior não derruba este Bluetooth.
+      _ledEncerrado = false;
+      _ledSession = LedService.instance.openSession();
+      await LedService.instance.configure(
+        address: address,
+        name: name,
+        session: _ledSession,
+      );
       _startLedTicker();
       _announceIngredienteNoLed();
       notifyListeners();
       return;
     }
 
-    await LedService.instance.stop();
+    await _stopLedSession();
     _stopLedTicker();
 
     await MirrorService.instance.configure(
@@ -347,9 +357,16 @@ class FabricacaoController extends ChangeNotifier {
     _sendMirrorState(force: true);
   }
 
+  Future<void> _stopLedSession() async {
+    final sid = _ledSession;
+    _ledSession = null;
+    if (sid == null) return;
+    await LedService.instance.stop(session: sid);
+  }
+
   Future<void> stopMirror() async {
     _stopLedTicker();
-    await LedService.instance.stop();
+    await _stopLedSession();
     await MirrorService.instance.stop();
     notifyListeners();
   }
@@ -427,6 +444,7 @@ class FabricacaoController extends ChangeNotifier {
       "fabId": h.id,
       "trato": h.trato,
       "dieta": h.dietaNome,
+      "qtdPrevista": h.qtdPrevista.round(),
       "finalizada": h.finalizada,
       "auto": {
         "enabled": autoOn ? 1 : 0,
@@ -531,21 +549,18 @@ class FabricacaoController extends ChangeNotifier {
 
   Timer? _ledTimer;
   String _ledDetId = "";
-  DateTime? _ledIngredienteAt;
   String _lastLedMsg = "";
   DateTime _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _ledNomeAte;
 
-  /// Mantém só o nome no LED até carregar mais de 10 kg do insumo.
-  static const _ledInicioCarregamentoKg = 10;
-
-  /// Após o scroll 2× do nome (~8 s), reenvia o nome estático enquanto aguarda.
-  static const _ledNomeScrollMs = 8000;
+  /// O nome do insumo passa no LED por este tempo; depois entra o peso.
+  static const _ledNomeDuracao = Duration(seconds: 10);
 
   /// Cadência do peso no LED (igual ritmo do espelhamento para o pazeiro).
   static const _ledPesoIntervalMs = 500;
 
   void _startLedTicker() {
-    if (_modoSaidaFab != 1) return;
+    if (_modoSaidaFab != 1 || _ledEncerrado) return;
     _ledTimer?.cancel();
     _ledTimer = Timer.periodic(
       const Duration(milliseconds: _ledPesoIntervalMs),
@@ -557,9 +572,9 @@ class FabricacaoController extends ChangeNotifier {
     _ledTimer?.cancel();
     _ledTimer = null;
     _ledDetId = "";
-    _ledIngredienteAt = null;
     _lastLedMsg = "";
     _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _ledNomeAte = null;
   }
 
   void _enqueueLed(
@@ -580,6 +595,8 @@ class FabricacaoController extends ChangeNotifier {
       }
     }
 
+    if (_ledEncerrado) return;
+
     _lastLedMsg = m;
     _lastLedMsgAt = now;
     LedService.instance.enqueueText(
@@ -592,19 +609,25 @@ class FabricacaoController extends ChangeNotifier {
   }
 
   void _announceIngredienteNoLed() {
-    if (_modoSaidaFab != 1) return;
+    if (_modoSaidaFab != 1 || _ledEncerrado) return;
     final ing = atual;
     if (ing == null) return;
 
     _ledDetId = ing.idDet;
-    _ledIngredienteAt = DateTime.now();
-    _lastLedMsg = "";
-    _lastLedMsgAt = DateTime.fromMillisecondsSinceEpoch(0);
-    LedService.instance.preemptIngredienteNome(ing.insumoNome);
+    _ledNomeAte = DateTime.now().add(_ledNomeDuracao);
+    _enviarNomeNoLed(ing.insumoNome);
+  }
+
+  void _enviarNomeNoLed(String nome) {
+    final limpo = nome.trim();
+    if (limpo.isEmpty) return;
+    _lastLedMsg = limpo;
+    _lastLedMsgAt = DateTime.now();
+    LedService.instance.preemptIngredienteNome(limpo);
   }
 
   void _tickLed() {
-    if (_modoSaidaFab != 1) return;
+    if (_modoSaidaFab != 1 || _ledEncerrado) return;
     if (_closed) return;
     final ing = atual;
     if (ing == null) return;
@@ -619,19 +642,11 @@ class FabricacaoController extends ChangeNotifier {
       return;
     }
 
-    final t0 = _ledIngredienteAt;
-    if (t0 == null) {
-      _announceIngredienteNoLed();
-      return;
-    }
-
-    // Somente o nome até o carregamento passar de 10 kg.
-    if (ing.realizadoKg <= _ledInicioCarregamentoKg) {
-      if (DateTime.now().difference(t0).inMilliseconds >= _ledNomeScrollMs) {
-        final nome = ing.insumoNome.trim();
-        if (nome.isNotEmpty) {
-          _enqueueLed(nome, pesoAoVivo: true);
-        }
+    final nomeAte = _ledNomeAte;
+    if (nomeAte != null && DateTime.now().isBefore(nomeAte)) {
+      final nome = ing.insumoNome.trim();
+      if (nome.isNotEmpty && _lastLedMsg != nome) {
+        _enviarNomeNoLed(nome);
       }
       return;
     }
@@ -753,20 +768,15 @@ class FabricacaoController extends ChangeNotifier {
   // BALANÇA
   // =========================================================
   Future<void> startScaleFromConfig() async {
-    final host = (await _cfgRepo.getHostBalanca()).trim();
-    final port = await _cfgRepo.getPortaBalanca();
-    final modelInt = await _cfgRepo.getModeloBalanca();
-
+    final link = await loadScaleLink(_cfgRepo);
     final inc = await _cfgRepo.getIncrementoPeso();
     _incPeso = inc.clamp(1, 10);
 
-    if (host.isEmpty || port <= 0) {
+    if (!link.canConnect) {
       _setScaleDisconnected(notify: true);
       _sendMirrorState();
       return;
     }
-
-    final model = scaleModelFromConfigInt(modelInt);
 
     await _stopScale();
 
@@ -777,9 +787,9 @@ class FabricacaoController extends ChangeNotifier {
 
     try {
       _scale = ScaleComm(
-        host: host,
-        port: port,
-        model: model,
+        host: link.host.isEmpty ? "127.0.0.1" : link.host,
+        port: link.port <= 0 ? 1 : link.port,
+        model: link.model,
         allowNegative: true,
         autoReconnect: true,
         connectTimeout: const Duration(seconds: 3),
@@ -832,7 +842,7 @@ class FabricacaoController extends ChangeNotifier {
         notifyListeners();
       });
 
-      await _scale!.connect();
+      await connectScaleFromLink(_scale!, link);
 
       await _primeScaleWeightFromComm();
 
@@ -927,8 +937,6 @@ class FabricacaoController extends ChangeNotifier {
     lastPacketAt = null;
     if (notify) notifyListeners();
   }
-
-  ScaleModel _scaleModelFromInt(int v) => scaleModelFromConfigInt(v);
 
   // =========================================================
   // REALIZADO
@@ -1481,7 +1489,7 @@ class FabricacaoController extends ChangeNotifier {
 
     notifyListeners();
 
-    _enqueueLed("FIM");
+    await _enviarFimLed();
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
 
@@ -1643,9 +1651,17 @@ class FabricacaoController extends ChangeNotifier {
       ],
     );
 
-    _enqueueLed("FIM");
+    await _enviarFimLed();
     _sendMirrorEvent("finalizada", {"msg": "Fabricação finalizada ✅"});
     _sendMirrorState(force: true);
+  }
+
+  /// Para o peso ao vivo. FIM passa 10 s; depois "Field Trato" fica em scroll.
+  Future<void> _enviarFimLed() async {
+    if (_modoSaidaFab != 1 || _ledEncerrado) return;
+    _ledEncerrado = true;
+    _stopLedTicker();
+    await LedService.instance.mostrarFimDepoisMarca();
   }
 
   Future<void> tentarDestravarNavegacao() async {
@@ -1718,7 +1734,11 @@ class FabricacaoController extends ChangeNotifier {
 
     try {
       _stopLedTicker();
-      LedService.instance.stop();
+      final sid = _ledSession;
+      _ledSession = null;
+      if (sid != null) {
+        unawaited(LedService.instance.stop(session: sid));
+      }
     } catch (_) {}
 
     super.dispose();

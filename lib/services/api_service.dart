@@ -5,15 +5,34 @@ import "package:dio/dio.dart";
 
 import "../constants/config_options.dart";
 
+/// HTTP 409 no TGC e conflito de conteudo: a fabricacao continua pendente.
+/// Nos demais backends, 409 segue o contrato antigo (conta como sync).
+bool fabricacaoPostContaComoSincronizado({
+  required int? statusCode,
+  required bool isTgc,
+}) {
+  if (statusCode == null) return false;
+  if (isTgc && statusCode == 409) return false;
+  if (statusCode >= 200 && statusCode < 300) return true;
+  if (!isTgc && statusCode == 409) return true;
+  return false;
+}
+
 class ApiService {
   final Dio _dio;
   final int _backend;
 
   bool get isFieldpec => ConfigOptions.isFieldPecBackend(_backend);
   bool get isTgc => ConfigOptions.isTgcBackend(_backend);
+  bool get isPlanilha => ConfigOptions.isPlanilhaBackend(_backend);
+  int get backend => _backend;
   bool get _usesOpenApiLists => ConfigOptions.usesOpenApiLists(_backend);
   bool get ignoresFazendaId => ConfigOptions.ignoresFazendaId(_backend);
+  bool get requiresNumericFazendaId =>
+      ConfigOptions.requiresNumericFazendaId(_backend);
   bool get usesFabricacaoPacote => ConfigOptions.usesFabricacaoPacote(_backend);
+  bool get usesIndependentFornecimentoSync =>
+      ConfigOptions.usesIndependentFornecimentoSync(_backend);
 
   bool _isHttpSuccess(int? statusCode) {
     if (statusCode == null) return false;
@@ -48,9 +67,10 @@ class ApiService {
         _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
-            connectTimeout: const Duration(milliseconds: 2500),
-            receiveTimeout: const Duration(milliseconds: 8000),
-            sendTimeout: const Duration(milliseconds: 8000),
+            // Tablet em LAN/TGC: 2.5s falhava cedo demais e parecia que "nao saiu".
+            connectTimeout: const Duration(milliseconds: 8000),
+            receiveTimeout: const Duration(seconds: 30),
+            sendTimeout: const Duration(seconds: 30),
             headers: {
               "Accept": "application/json",
               "Content-Type": "application/json",
@@ -71,11 +91,34 @@ class ApiService {
   }
 
   Future<bool> getTeste() async {
+    final meta = await getTesteMeta();
+    return meta["ok"] == true;
+  }
+
+  /// GET /GetTeste com o body (importacao_id no modo Planilha).
+  Future<Map<String, dynamic>> getTesteMeta() async {
     try {
       final r = await _dio.get("/GetTeste");
-      return r.statusCode == 200;
+      if (r.statusCode != 200) return {"ok": false};
+      final out = <String, dynamic>{"ok": true};
+      if (r.data is Map) {
+        final m = Map<String, dynamic>.from(r.data as Map);
+        out.addAll(m);
+        for (final key in const [
+          "importacao_id",
+          "IMPORTACAO_ID",
+          "importacaoId",
+        ]) {
+          final v = (m[key] ?? "").toString().trim();
+          if (v.isNotEmpty) {
+            out["importacao_id"] = v;
+            break;
+          }
+        }
+      }
+      return out;
     } catch (_) {
-      return false;
+      return {"ok": false};
     }
   }
 
@@ -183,12 +226,12 @@ class ApiService {
     final id = idFazenda.trim();
 
     if (_usesOpenApiLists) {
-      return _getFieldpecListNoId(
-      label: "dietas",
-      attempts: const [
+      // TGC Horse: rota oficial e /dietas/get/:idfazenda. Tenta aberta e com id.
+      final attempts = <({String path, Map<String, dynamic>? query})>[
         (path: "/dietas/get", query: null),
-      ],
-    );
+        if (id.isNotEmpty) (path: "/dietas/get/$id", query: null),
+      ];
+      return _getFieldpecListNoId(label: "dietas", attempts: attempts);
     }
 
     if (id.isEmpty) {
@@ -201,12 +244,14 @@ class ApiService {
     final id = idFazenda.trim();
 
     if (_usesOpenApiLists) {
-      return _getFieldpecListNoId(
-      label: "detalhes de dietas",
-      attempts: const [
+      final attempts = <({String path, Map<String, dynamic>? query})>[
         (path: "/dietas_detalhes/get", query: null),
-      ],
-    );
+        if (id.isNotEmpty) (path: "/dietas_detalhes/get/$id", query: null),
+      ];
+      return _getFieldpecListNoId(
+        label: "detalhes de dietas",
+        attempts: attempts,
+      );
     }
 
     if (id.isEmpty) {
@@ -298,7 +343,7 @@ class ApiService {
     }
 
     throw Exception(
-      "Falha ao baixar $label (API aberta FieldPec/TGC). "
+      "Falha ao baixar $label (API aberta FieldPec/TGC/Planilha). "
       "Tentativas: ${errors.join(" | ")}",
     );
   }
@@ -460,11 +505,26 @@ class ApiService {
         ),
       );
 
-      if (_isHttpSuccess(r.statusCode) ||
-          r.statusCode == 201 ||
-          r.statusCode == 208 ||
-          r.statusCode == 409) {
+      if (fabricacaoPostContaComoSincronizado(
+        statusCode: r.statusCode,
+        isTgc: isTgc,
+      )) {
+        if (isTgc && r.data is Map && r.data["alreadySynced"] == true) {
+          log?.call(
+            "Fabricacao TGC ja existia no servidor "
+            "id=${r.data["id_servidor"] ?? r.data["Ok"] ?? ""}",
+          );
+        }
         return true;
+      }
+
+      if (isTgc && r.statusCode == 409) {
+        log?.call(
+          "❌ /Post/Fabricacao TGC conflito 409 "
+          "(mesmo id, conteudo diferente). Pendente. "
+          "${_extractApiError(r.data)}",
+        );
+        return false;
       }
 
       final errBody = _extractApiError(r.data);

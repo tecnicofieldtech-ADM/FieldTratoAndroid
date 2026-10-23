@@ -2,7 +2,7 @@ program ApiRFeedWindows;
 
 uses
   Vcl.SvcMgr,
-  UPrincipal in 'UPrincipal.pas' {ApiRFeed: TService},
+  UPrincipal in 'UPrincipal.pas' {ApiFiedlTrato: TService},
   Controllers.Get in '..\CGPec\Source\Controllers\Controllers.Get.pas',
   Controllers.Post in '..\CGPec\Source\Controllers\Controllers.Post.pas',
   Controllers.Admin in '..\CGPec\Source\Controllers\Controllers.Admin.pas',
@@ -38,7 +38,7 @@ begin
   //
   if not Application.DelayInitialize or Application.Installing then
     Application.Initialize;
-  Application.CreateForm(TApiRFeed, ApiRFeed);
+  Application.CreateForm(TApiFiedlTrato, ApiFiedlTrato);
   Application.CreateForm(Tdmdb, dmdb);
   Application.Run;
 end.

@@ -74,6 +74,9 @@ class _MenuPageState extends State<MenuPage> {
       } else {
         debugPrint("[MENU] tipo != estacionario, desligando bridge");
         await CarregamentoBridgeServer.instance.stop();
+        if (t == 2) {
+          await _cfgRepo.ensureTruckDeviceId();
+        }
       }
       if (!mounted) return;
       setState(() {

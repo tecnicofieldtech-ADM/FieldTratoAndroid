@@ -98,6 +98,7 @@ END""";
   static const String cfIdUsuario = "ID_USUARIO";
   static const String cfIdDieta = "ID_DIETA";
   static const String cfMapa = "MAPA";
+  static const String cfImportacaoId = "IMPORTACAO_ID";
 
   /// Soma dos realizados locais por baia+trato+data+dieta; se não houver linhas, usa PREVISAO.
   static String sqlChaveCadastroMatchPrevisao(

@@ -15,7 +15,7 @@ class MisturaTimerPage extends StatefulWidget {
 
     // opcionais
     this.titulo,
-    this.onDonePopToRoot = true,
+    this.onDonePopToRoot = false,
     this.segundosQuandoMinutosZero = 0,
     this.autoFinishWhenDone = false,
   });
@@ -34,7 +34,9 @@ class MisturaTimerPage extends StatefulWidget {
 
   final String? titulo;
 
-  /// quando terminar, volta pra tela inicial/raiz (padrão)
+  /// Se true, ao finalizar faz `popUntil(isFirst)` — **evitar** no fluxo de
+  /// fabricação (reconstrói/expõe a pesagem). Preferir `false` e deixar a
+  /// página chamadora sair da pesagem com `pushNamedAndRemoveUntil`.
   final bool onDonePopToRoot;
 
   /// Fecha automaticamente ao concluir a contagem (sem exigir toque em Finalizar).
@@ -112,6 +114,8 @@ class _MisturaTimerPageState extends State<MisturaTimerPage> {
     _closing = true;
     _autoFinishTimer?.cancel();
 
+    // Sempre só fecha o timer; quem abriu decide o destino (lista / fornecimento).
+    // popUntil(root) sozinho reconstruía a pesagem — isso era o bug.
     if (widget.onDonePopToRoot) {
       Navigator.of(context).popUntil((r) => r.isFirst);
     } else {

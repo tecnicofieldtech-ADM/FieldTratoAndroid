@@ -1,6 +1,7 @@
 const master = require("../services/master");
 const ops = require("../services/ops");
 const tenant = require("../services/tenant");
+const excelImport = require("../services/excelImport");
 
 async function withClient(req, reply, fn) {
   try {
@@ -20,8 +21,20 @@ async function withClient(req, reply, fn) {
 }
 
 function registerHorseRoutes(app) {
-  app.get("/GetTeste", async (_req, reply) => {
-    return reply.code(200).send({ "OK ": "Sevidor Online" });
+  app.get("/GetTeste", async (req, reply) => {
+    const tenant = require("../services/tenant");
+    const code = tenant.extractClientCode(req);
+    const body = { "OK ": "Sevidor Online" };
+    if (code) {
+      try {
+        const id = await excelImport.getActiveImportacaoId(code);
+        if (id) body.importacao_id = id;
+        body.cliente_codigo = code;
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    return reply.code(200).send(body);
   });
 
   /** Valida se o código está cadastrado/ativo (app / conector). */
@@ -135,9 +148,10 @@ function registerHorseRoutes(app) {
         return reply.code(201).send(result);
       } catch (e) {
         req.log.error(e);
-        return reply.code(500).send({
+        const status = e.code === "PLANILHA_IMPORTACAO" ? 400 : 500;
+        return reply.code(status).send({
           success: false,
-          message: "Erro ao salvar fabricação.",
+          message: status === 400 ? e.message : "Erro ao salvar fabricação.",
           error: e.message,
         });
       }
@@ -158,7 +172,8 @@ function registerHorseRoutes(app) {
         return reply.code(200).send({ success: true, cliente_codigo: cc });
       } catch (e) {
         req.log.error(e);
-        return reply.code(500).send({ success: false, error: e.message });
+        const status = e.code === "PLANILHA_IMPORTACAO" ? 400 : 500;
+        return reply.code(status).send({ success: false, error: e.message });
       }
     });
   });

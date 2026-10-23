@@ -2,6 +2,7 @@ import "package:sqflite/sqflite.dart";
 import "package:uuid/uuid.dart";
 
 import "../../../db/app_db.dart";
+import "../../../services/planilha_importacao.dart";
 import "../domain/fabricacao_flow.dart";
 
 /// Canal físico usado nesta fabricação (gravado em ORIGEM / ORIGIN_DEVICE).
@@ -44,6 +45,8 @@ class FabricacaoCreateService {
       FabricacaoCanalCarga.rotormix => "ROTORMIX",
     };
 
+    final importacaoId = await PlanilhaImportacao.freezeFromDb();
+
     await db.transaction((txn) async {
       // 1) Cabeçalho
       await txn.insert("CADASTRO_FABRICA_RACAO", {
@@ -69,6 +72,7 @@ class FabricacaoCreateService {
         "ORIGIN_DEVICE": origemTag,
         "MS_PREVISTA": 0,
         "MS_REALIZADA": 0,
+        if (importacaoId != null) "IMPORTACAO_ID": importacaoId,
       });
 
       // 2) Ingredientes da dieta (MN_PERCENT 1..100)

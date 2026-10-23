@@ -46,30 +46,7 @@ class GravaTagRepo {
   }
 
   Future<List<String>> listLinhas({String? idFazenda}) async {
-    final db = await _db;
-
-    final faz = _s(idFazenda);
-    final where = <String>["TRIM(COALESCE(LINHA, '')) <> ''"];
-    final args = <Object?>[];
-
-    if (faz.isNotEmpty) {
-      where.add("TRIM(COALESCE(ID_FAZENDA, '')) = TRIM(?)");
-      args.add(faz);
-    }
-
-    final rows = await db.query(
-      "DETALHES_BAIAS",
-      columns: ["LINHA"],
-      where: where.join(" AND "),
-      whereArgs: args,
-      distinct: true,
-      orderBy: "LINHA ASC",
-    );
-
-    return rows
-        .map((r) => _s(r["LINHA"]))
-        .where((v) => v.isNotEmpty)
-        .toList();
+    return const [];
   }
 
   Future<List<GravaTagCurral>> listCurrais({
@@ -82,40 +59,27 @@ class GravaTagRepo {
     final where = <String>["1=1"];
     final args = <Object?>[];
 
-    final faz = _s(idFazenda);
-    if (faz.isNotEmpty) {
-      where.add("TRIM(COALESCE(ID_FAZENDA, '')) = TRIM(?)");
-      args.add(faz);
-    }
-
-    final lin = _s(linha);
-    if (lin.isNotEmpty) {
-      where.add("TRIM(COALESCE(LINHA, '')) = TRIM(?)");
-      args.add(lin);
-    }
-
     final nome = _s(nomeCurral);
     if (nome.isNotEmpty) {
-      where.add("UPPER(COALESCE(NOME_LOCAL, '')) LIKE UPPER(?)");
+      where.add("UPPER(COALESCE(NOME, '')) LIKE UPPER(?)");
       args.add("%$nome%");
     }
 
     final rows = await db.query(
-      "DETALHES_BAIAS",
-      columns: ["ID", "NOME_LOCAL", "LINHA", "RFID", "ID_FAZENDA"],
+      "CADASTRO_CURRAL",
+      columns: ["ID", "NOME", "TAG"],
       where: where.join(" AND "),
       whereArgs: args,
-      orderBy: "COALESCE(LINHA, '') ASC, COALESCE(NOME_LOCAL, '') ASC",
+      orderBy: "COALESCE(NOME, '') ASC",
     );
 
     return rows
         .map(
           (r) => GravaTagCurral(
             id: _s(r["ID"]),
-            nomeLocal: _s(r["NOME_LOCAL"]),
-            linha: _s(r["LINHA"]),
-            rfid: _s(r["RFID"]).isEmpty ? null : _s(r["RFID"]),
-            idFazenda: _s(r["ID_FAZENDA"]).isEmpty ? null : _s(r["ID_FAZENDA"]),
+            nomeLocal: _s(r["NOME"]),
+            linha: "",
+            rfid: _s(r["TAG"]).isEmpty ? null : _s(r["TAG"]),
           ),
         )
         .where((e) => e.id.isNotEmpty)
@@ -131,25 +95,16 @@ class GravaTagRepo {
     final tag = _s(epc);
     if (tag.isEmpty) return null;
 
-    final faz = _s(idFazenda);
     final rfidMatch = await _rfidResolver.sqlRfidEquals(
-      "COALESCE(RFID, '')",
+      "COALESCE(TAG, '')",
       tag,
     );
 
-    final where = <String>[rfidMatch.clause];
-    final args = <Object?>[...rfidMatch.args];
-
-    if (faz.isNotEmpty) {
-      where.add("TRIM(COALESCE(ID_FAZENDA, '')) = TRIM(?)");
-      args.add(faz);
-    }
-
     final rows = await db.query(
-      "DETALHES_BAIAS",
-      columns: ["ID", "NOME_LOCAL", "LINHA", "RFID", "ID_FAZENDA"],
-      where: where.join(" AND "),
-      whereArgs: args,
+      "CADASTRO_CURRAL",
+      columns: ["ID", "NOME", "TAG"],
+      where: rfidMatch.clause,
+      whereArgs: rfidMatch.args,
       limit: 1,
     );
 
@@ -158,10 +113,9 @@ class GravaTagRepo {
 
     return GravaTagCurral(
       id: _s(r["ID"]),
-      nomeLocal: _s(r["NOME_LOCAL"]),
-      linha: _s(r["LINHA"]),
-      rfid: _s(r["RFID"]).isEmpty ? null : _s(r["RFID"]),
-      idFazenda: _s(r["ID_FAZENDA"]).isEmpty ? null : _s(r["ID_FAZENDA"]),
+      nomeLocal: _s(r["NOME"]),
+      linha: "",
+      rfid: _s(r["TAG"]).isEmpty ? null : _s(r["TAG"]),
     );
   }
 
@@ -181,17 +135,36 @@ class GravaTagRepo {
       await _ensureGravaTagTable(txn);
 
       final rfidMatch = await _rfidResolver.sqlRfidEquals(
+        "COALESCE(TAG, '')",
+        tag,
+      );
+      final rfidBaia = await _rfidResolver.sqlRfidEquals(
         "COALESCE(RFID, '')",
         tag,
       );
 
       await txn.update(
-        "DETALHES_BAIAS",
-        {"RFID": ""},
+        "CADASTRO_CURRAL",
+        {"TAG": ""},
         where: rfidMatch.clause,
         whereArgs: rfidMatch.args,
       );
+      await txn.update(
+        "DETALHES_BAIAS",
+        {"RFID": ""},
+        where: rfidBaia.clause,
+        whereArgs: rfidBaia.args,
+      );
 
+      final updated = await txn.update(
+        "CADASTRO_CURRAL",
+        {"TAG": tag},
+        where: "TRIM(ID) = TRIM(?)",
+        whereArgs: [curral],
+      );
+      if (updated == 0) {
+        throw Exception("Curral nao encontrado.");
+      }
       await txn.update(
         "DETALHES_BAIAS",
         {"RFID": tag},
@@ -219,8 +192,8 @@ class GravaTagRepo {
 
     await db.transaction((txn) async {
       final rows = await txn.query(
-        "DETALHES_BAIAS",
-        columns: ["RFID"],
+        "CADASTRO_CURRAL",
+        columns: ["TAG"],
         where: "TRIM(ID) = TRIM(?)",
         whereArgs: [curral],
         limit: 1,
@@ -230,10 +203,16 @@ class GravaTagRepo {
         throw Exception("Curral nao encontrado.");
       }
 
-      final atual = _s(rows.first["RFID"]);
+      final atual = _s(rows.first["TAG"]);
       if (atual.isEmpty) return;
       tagRemovida = atual;
 
+      await txn.update(
+        "CADASTRO_CURRAL",
+        {"TAG": ""},
+        where: "TRIM(ID) = TRIM(?)",
+        whereArgs: [curral],
+      );
       await txn.update(
         "DETALHES_BAIAS",
         {"RFID": ""},

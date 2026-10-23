@@ -5,12 +5,50 @@ const cors = require("@fastify/cors");
 const fastifyStatic = require("@fastify/static");
 const config = require("./config");
 const { registerHorseRoutes } = require("./routes/horse");
-const { registerAdminRoutes } = require("./routes/admin");
+const { registerAdminRoutes, assertAdmin, resolveAdminClient } = require("./routes/admin");
+const { registerPlanilhaRoutes } = require("./routes/planilha");
 const requestLog = require("./services/requestLog");
 const { query } = require("./db");
 
 const publicDir = path.join(__dirname, "..", "public");
 const adminHtmlPath = path.join(publicDir, "index.html");
+
+async function ensurePlanilhaSchema() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS planilha_importacoes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        cliente_codigo TEXT NOT NULL,
+        versao_layout INTEGER NOT NULL DEFAULT 1,
+        arquivo_nome TEXT,
+        arquivo_hash TEXT,
+        fazenda_codigo TEXT,
+        descricao TEXT,
+        status TEXT NOT NULL DEFAULT 'ok',
+        totais JSONB NOT NULL DEFAULT '{}'::jsonb,
+        erros JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_planilha_cliente_hash
+       ON planilha_importacoes (cliente_codigo, arquivo_hash)
+       WHERE arquivo_hash IS NOT NULL AND arquivo_hash <> ''`,
+    );
+    await query(`ALTER TABLE fornecimentos ADD COLUMN IF NOT EXISTS id_cadastro TEXT`);
+    await query(`ALTER TABLE fornecimentos ADD COLUMN IF NOT EXISTS importacao_id UUID`);
+    await query(`ALTER TABLE fornecimentos ADD COLUMN IF NOT EXISTS peso_inicio DOUBLE PRECISION`);
+    await query(`ALTER TABLE fornecimentos ADD COLUMN IF NOT EXISTS peso_fim DOUBLE PRECISION`);
+    await query(`ALTER TABLE fabricacoes ADD COLUMN IF NOT EXISTS importacao_id UUID`);
+    await query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_forn_cliente_id_cadastro
+       ON fornecimentos (cliente_codigo, id_cadastro)
+       WHERE id_cadastro IS NOT NULL AND id_cadastro <> ''`,
+    );
+  } catch (e) {
+    console.warn("[planilha] schema nao aplicado:", e.message);
+  }
+}
 
 async function ensureRequestLogTable() {
   try {
@@ -55,6 +93,9 @@ async function main() {
   });
 
   await app.register(cors, { origin: true });
+  await app.register(require("@fastify/multipart"), {
+    limits: { fileSize: 20 * 1024 * 1024 },
+  });
 
   app.addHook("onRequest", async (req) => {
     req.startTime = Date.now();
@@ -91,6 +132,7 @@ async function main() {
 
   registerHorseRoutes(app);
   registerAdminRoutes(app);
+  registerPlanilhaRoutes(app, { assertAdmin, resolveAdminClient });
 
   // Rotas explícitas do painel (não dependem só do static)
   app.get("/admin/ui", async (_req, reply) => sendAdminHtml(reply));
@@ -116,6 +158,7 @@ async function main() {
   });
 
   await ensureRequestLogTable();
+  await ensurePlanilhaSchema();
 
   await app.listen({ port: config.port, host: config.host });
   app.log.info(`FieldPec Online API em http://${config.host}:${config.port}`);

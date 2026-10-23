@@ -7,9 +7,12 @@ import "../../../helpers/rfid_comm.dart";
 
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
+import "../domain/linha_filtro.dart";
+import "../domain/previsto_ajustado.dart";
 import "fornecimento_dashboard_page.dart";
 import "fornecimento_bi_page.dart";
 import "widgets/fornecimento_sessoes_dialog.dart";
+import "widgets/linha_multi_select.dart";
 
 enum _StatusFiltro { todos, realizados, pendentes }
 enum _SyncFiltroLocal { todos, sincronizado, pendente }
@@ -54,7 +57,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
   int? _trato; // null = todos
   String? _racao; // filtro texto (nome da racao) - mantido (nao filtra por id)
-  String? _linha; // filtro por linha
+  final Set<String> _linhas = <String>{};
   final TextEditingController _curralCtrl = TextEditingController();
 
   List<CurralPrev> _items = const [];
@@ -108,22 +111,12 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
     try {
       if (_isPrevistos) {
-        final bool? realizadoMaiorZero = switch (_status) {
-          _StatusFiltro.todos => null,
-          _StatusFiltro.realizados => true,
-          _StatusFiltro.pendentes => false,
-        };
-
+        // Linha/trato/ração/curral/status filtram na tela. A consulta do dia
+        // inteiro mantém as opções e o realizado dos tratos anteriores,
+        // usado no previsto ajustado do último trato.
         final list = await widget.repo.listPrevisao(
           idFazenda: widget.idFazenda,
           data: _date,
-          trato: _trato,
-          racaoNome:
-              (_racao == null || _racao!.trim().isEmpty) ? null : _racao!.trim(),
-          linha: _linha,
-          curralNome:
-              _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
-          realizadoMaiorZero: realizadoMaiorZero,
         );
 
         if (!mounted) return;
@@ -140,12 +133,6 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
         final list = await widget.repo.listRealizadosLocal(
           data: _date,
-          trato: _trato,
-          racaoNome:
-              (_racao == null || _racao!.trim().isEmpty) ? null : _racao!.trim(),
-          linha: _linha,
-          curralNome:
-              _curralCtrl.text.trim().isEmpty ? null : _curralCtrl.text.trim(),
           syncOk: syncOk,
         );
 
@@ -327,10 +314,16 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
     setState(() => _loading = true);
     try {
-      final alterados = await widget.repo.reabilitarSyncFiltrados(
-        data: _date,
-        itens: _items,
-      );
+      final alterados = _isPrevistos
+          ? await widget.repo.reabilitarSyncFiltrados(
+              data: _date,
+              itens: _prevVisiveis,
+            )
+          : await widget.repo.reabilitarSyncFiltrados(
+              data: _date,
+              itens: const [],
+              idsCadastro: _idsCadastroFiltrados,
+            );
       _msg(
         "Sincronizacao habilitada em $alterados registro(s). "
         "Se a API estiver acumulativa, zere o realizado no CG Pec antes de sincronizar.",
@@ -375,10 +368,16 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
 
     setState(() => _loading = true);
     try {
-      final alterados = await widget.repo.marcarSyncOkFiltrados(
-        data: _date,
-        itens: _items,
-      );
+      final alterados = _isPrevistos
+          ? await widget.repo.marcarSyncOkFiltrados(
+              data: _date,
+              itens: _prevVisiveis,
+            )
+          : await widget.repo.marcarSyncOkFiltrados(
+              data: _date,
+              itens: const [],
+              idsCadastro: _idsCadastroFiltrados,
+            );
       _msg("Marcados como sincronizados: $alterados registro(s).\n");
       await _buscar();
     } catch (e) {
@@ -563,6 +562,44 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
     return "${two(d.day)}/${two(d.month)}/${d.year}";
   }
 
+  bool _matchTxt(String? value, String? filtro, {bool contains = false}) {
+    final f = (filtro ?? "").trim();
+    if (f.isEmpty) return true;
+    final v = (value ?? "").trim();
+    if (contains) return v.toUpperCase().contains(f.toUpperCase());
+    return v.toUpperCase() == f.toUpperCase();
+  }
+
+  List<CurralPrev> get _prevVisiveis {
+    final curral = _curralCtrl.text.trim();
+    return _items.where((i) {
+      if (_trato != null && i.trato != _trato) return false;
+      if (_status == _StatusFiltro.realizados && i.realizadoKg <= 0) {
+        return false;
+      }
+      if (_status == _StatusFiltro.pendentes && i.realizadoKg > 0) {
+        return false;
+      }
+      if (!linhaPassaFiltro(_resolveLinha(i), _linhas)) return false;
+      if (!_matchTxt(i.racao ?? i.idRacao, _racao, contains: true)) {
+        return false;
+      }
+      if (!_matchTxt(i.nomeLocal, curral, contains: true)) return false;
+      return true;
+    }).toList();
+  }
+
+  List<FornecimentoLocalRow> get _realVisiveis {
+    final curral = _curralCtrl.text.trim();
+    return _realizados.where((i) {
+      if (_trato != null && i.trato != _trato) return false;
+      if (!linhaPassaFiltro(i.linha, _linhas)) return false;
+      if (!_matchTxt(i.racaoDisplay, _racao, contains: true)) return false;
+      if (!_matchTxt(i.nomeBaia, curral, contains: true)) return false;
+      return true;
+    }).toList();
+  }
+
   List<int> get _tratoOptions {
     final set = <int>{};
     if (_isPrevistos) {
@@ -574,6 +611,7 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
         set.add(i.trato);
       }
     }
+    if (_trato != null) set.add(_trato!);
     final list = set.toList()..sort();
     return list;
   }
@@ -605,6 +643,9 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
         if (l.isNotEmpty && l != "-") set.add(l.toUpperCase());
       }
     }
+    for (final l in _linhas) {
+      if (l.trim().isNotEmpty) set.add(l.trim());
+    }
     final list = set.toList()..sort();
     return list;
   }
@@ -622,24 +663,42 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
         if (r.isNotEmpty && r != "-") set.add(r);
       }
     }
+    if ((_racao ?? "").trim().isNotEmpty) set.add(_racao!.trim());
     final list = set.toList()..sort();
     return list;
   }
 
+  List<CurralPrev>? _ajusteFonte;
+  PrevistoAjustadoIndex? _ajusteCache;
+
+  PrevistoAjustadoIndex get _ajuste {
+    if (!identical(_ajusteFonte, _items) || _ajusteCache == null) {
+      _ajusteFonte = _items;
+      _ajusteCache = PrevistoAjustadoIndex.de(_items);
+    }
+    return _ajusteCache!;
+  }
+
   num get _totalPrev =>
-      _items.fold<num>(0, (a, b) => a + b.previstoListaKg);
+      _prevVisiveis.fold<num>(0, (a, b) => a + _ajuste.de(b));
   num get _totalReal => _isPrevistos
-      ? _items.fold<num>(0, (a, b) => a + b.realizadoKg)
-      : _realizados.fold<num>(0, (a, b) => a + b.realizadoKg);
+      ? _prevVisiveis.fold<num>(0, (a, b) => a + b.realizadoKg)
+      : _realVisiveis.fold<num>(0, (a, b) => a + b.realizadoKg);
   num get _totalDif => _totalReal - _totalPrev;
-  int get _qtdRealizadosLocal => _realizados.length;
+  int get _qtdRealizadosLocal => _realVisiveis.length;
   int get _qtdRealizadosPendentesSync =>
-      _realizados.where((r) => !r.syncOk).length;
+      _realVisiveis.where((r) => !r.syncOk).length;
   int get _qtdPendentesFabNaoSync =>
-      _realizados.where((r) => r.bloqueadoPorFab).length;
+      _realVisiveis.where((r) => r.bloqueadoPorFab).length;
+  List<String> get _idsCadastroFiltrados => _realVisiveis
+      .where((r) => r.realizadoKg > 0 && r.id.trim().isNotEmpty)
+      .map((r) => r.id.trim())
+      .toSet()
+      .toList();
   int get _qtdFiltradosSyncHabilitavel {
+    if (!_isPrevistos) return _idsCadastroFiltrados.length;
     final keys = <String>{};
-    for (final c in _items) {
+    for (final c in _prevVisiveis) {
       final idFornecimento = (c.idFornecimento ?? "").trim();
       final idBaia = c.idBaia.trim();
       if (idFornecimento.isEmpty || idBaia.isEmpty) continue;
@@ -759,33 +818,23 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
             ),
           ),
         ],
-        onChanged: (v) => setState(() => _trato = v),
+        onChanged: (v) {
+          setState(() => _trato = v);
+          _buscar();
+        },
       );
     }
 
     Widget linhaField() {
-      return DropdownButtonFormField<String?>(
-        initialValue: _linha,
-        decoration: InputDecoration(
-          labelText: "Linha",
-          border: border,
-          enabledBorder: border,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        ),
-        items: [
-          const DropdownMenuItem<String?>(
-            value: null,
-            child: Text("Todas"),
-          ),
-          ..._linhaOptions.map(
-            (l) => DropdownMenuItem<String?>(
-              value: l,
-              child: Text(l),
-            ),
-          ),
-        ],
-        onChanged: (v) => setState(() => _linha = v),
+      return LinhaMultiSelect(
+        opcoes: _linhaOptions,
+        selecionadas: _linhas,
+        border: border,
+        onChanged: (v) => setState(() {
+          _linhas
+            ..clear()
+            ..addAll(v);
+        }),
       );
     }
 
@@ -817,7 +866,10 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
             ),
           ),
         ],
-        onChanged: (v) => setState(() => _racao = v),
+        onChanged: (v) {
+          setState(() => _racao = v);
+          _buscar();
+        },
       );
     }
 
@@ -1294,13 +1346,14 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
                         ),
                       ],
                     ),
-                    if (c.mostrarAjusteUltimoTrato) ...[
+                    if (_ajuste.ehUltimo(c) &&
+                        (_ajuste.de(c) - c.previstoListaKg).abs() > 0.5) ...[
                       const SizedBox(height: 8),
                       Row(
                         children: [
                           _pill(
                             title: "Ajuste",
-                            value: _fmtAjuste(c.ajusteUltimoTratoKg),
+                            value: _fmtAjuste(_ajuste.de(c) - c.previstoListaKg),
                             gradient: const [
                               Color(0xFFE07A1F),
                               Color(0xFFC45C0C)
@@ -1472,28 +1525,28 @@ class _FornecimentoListPageState extends State<FornecimentoListPage>
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _isPrevistos
-                    ? (_items.isEmpty
+                    ? (_prevVisiveis.isEmpty
                         ? const Center(
                             child: Text(
                                 "Sem previsao para os filtros selecionados."))
                         : ListView.separated(
                             padding: const EdgeInsets.only(top: 6, bottom: 6),
-                            itemCount: _items.length,
+                            itemCount: _prevVisiveis.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
-                            itemBuilder: (_, i) => _itemCard(_items[i]),
+                            itemBuilder: (_, i) => _itemCard(_prevVisiveis[i]),
                           ))
-                    : (_realizados.isEmpty
+                    : (_realVisiveis.isEmpty
                         ? const Center(
                             child: Text(
                                 "Sem registros locais para os filtros selecionados."))
                         : ListView.separated(
                             padding: const EdgeInsets.only(top: 6, bottom: 6),
-                            itemCount: _realizados.length,
+                            itemCount: _realVisiveis.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (_, i) =>
-                                _realizadoItemCard(_realizados[i]),
+                                _realizadoItemCard(_realVisiveis[i]),
                           )),
           ),
           _totaisBar(),

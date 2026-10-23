@@ -3,8 +3,10 @@ import "package:sqflite/sqflite.dart";
 import "package:uuid/uuid.dart";
 
 import "../../../db/app_db.dart";
+import "../../../services/planilha_importacao.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
 import "../domain/carregamento_payload.dart";
+import "../domain/station_handoff_mode.dart";
 
 class ImportadorFabricacaoEstacionario {
   Future<Database> get _db async => AppDb.instance.db;
@@ -25,6 +27,23 @@ class ImportadorFabricacaoEstacionario {
         "Payload sem identificador (handoff_id ou id da fabricação no estacionário).",
       );
     }
+
+    final mode = f.handoffMode ??
+        resolveStationHandoffMode(
+          fabStatus: fabricacaoStatusToDb(f.status),
+          finalizada: f.finalizada ? 1 : 0,
+        );
+    if (mode == null) {
+      debugPrint(
+        "[IMPORT_EST] handoffMode inválido status=${f.statusApi} "
+        "finalizada=${f.finalizada}",
+      );
+      throw Exception(
+        "Estado da fabricação inconsistente para handoff "
+        "(status=${f.statusApi}, finalizada=${f.finalizada}).",
+      );
+    }
+    debugPrint("[IMPORT_EST] handoffMode=${mode.apiValue}");
 
     String? idJaImportado;
     if (handoffId.isNotEmpty) {
@@ -71,6 +90,7 @@ class ImportadorFabricacaoEstacionario {
     }
 
     final novoIdFab = _uuid.v4();
+    final importacaoId = await PlanilhaImportacao.freezeFromDb();
 
     await db.transaction((txn) async {
       try {
@@ -110,6 +130,7 @@ class ImportadorFabricacaoEstacionario {
             ? DateTime.now().toIso8601String()
             : null,
         "ORIGIN_DEVICE": "ESTACIONARIO",
+        if (importacaoId != null) "IMPORTACAO_ID": importacaoId,
       });
 
       for (final i in payload.insumos) {

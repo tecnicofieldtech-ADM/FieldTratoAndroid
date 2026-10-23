@@ -62,6 +62,7 @@ class _ConfigPageState extends State<ConfigPage> {
   final _stationWifiSsidCtrl = TextEditingController();
   final _stationWifiPasswordCtrl = TextEditingController();
   final _stationBaseUrlCtrl = TextEditingController();
+  final _stationNameCtrl = TextEditingController();
 
   // NOVOS CONTROLES
   final _incrementoBalancaCtrl = TextEditingController();
@@ -253,6 +254,7 @@ class _ConfigPageState extends State<ConfigPage> {
     _stationWifiSsidCtrl.dispose();
     _stationWifiPasswordCtrl.dispose();
     _stationBaseUrlCtrl.dispose();
+    _stationNameCtrl.dispose();
 
     _incrementoBalancaCtrl.dispose();
     _tempoPuloCtrl.dispose();
@@ -349,6 +351,7 @@ class _ConfigPageState extends State<ConfigPage> {
       _stationWifiSsidCtrl.text = _asStr(cfg["STATION_WIFI_SSID"]);
       _stationWifiPasswordCtrl.text = _asStr(cfg["STATION_WIFI_PASSWORD"]);
       _stationBaseUrlCtrl.text = _asStr(cfg["STATION_BASE_URL"]);
+      _stationNameCtrl.text = _asStr(cfg["STATION_NAME"]);
       _flowMode = fabricacaoFlowModeFromDb(cfg["FLOW_MODE"]);
       _modoHibrido = _asInt(cfg["MODO_HIBRIDO"], 0) == 1;
 
@@ -495,6 +498,7 @@ class _ConfigPageState extends State<ConfigPage> {
       "BACKEND": _backend,
       "TIPO_TRABALHO": _operacao,
       "MODELO_BALANCA": _modeloBalanca,
+      "BALANCA_SIMULADOR": 0,
       "HOST_BALANCA": _ipBalancaCtrl.text.trim(),
       "PORTA_BALANCA": int.tryParse(_portaBalancaCtrl.text.trim()) ?? 0,
       "MODELO_RFID": _modeloRfid,
@@ -515,6 +519,7 @@ class _ConfigPageState extends State<ConfigPage> {
       "STATION_WIFI_SSID": _stationWifiSsidCtrl.text.trim(),
       "STATION_WIFI_PASSWORD": _stationWifiPasswordCtrl.text,
       "STATION_BASE_URL": stationBaseUrl,
+      "STATION_NAME": _stationNameCtrl.text.trim(),
       "PULO_AUTOMATICO": pulo,
       "TEMPO_EM_SEGUNDOS_PULO": tempo,
       "INCREMENTO_PESO": inc,
@@ -1411,6 +1416,16 @@ class _ConfigPageState extends State<ConfigPage> {
                     border: OutlineInputBorder(),
                   ),
                 ),
+                if (_modeloBalanca == 4) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    "Protocolo Advance USB: 48 bytes, RS232 38400 8N1. No conversor (USR-W610) use a mesma serial.\n"
+                    "Na central: código 84 → AV40/AV50/AV80. Deixe a tela em PESO TOTAL (o app lê o que o display mostra).\n"
+                    "AV40: cabo RS232 do indicador (pinos 3 Rx / 4 Tx do conector 7 pinos) via USR-W610.\n"
+                    "AV50: rádio do operador; o FieldTrato lê a serial da central, não o rádio.",
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 TextField(
                   controller: _incrementoBalancaCtrl,
@@ -1785,6 +1800,15 @@ class _ConfigPageState extends State<ConfigPage> {
                           Text(
                             "Opcional. Necessário apenas para carregamento via BeatBox/estacionário.",
                             style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _stationNameCtrl,
+                            decoration: const InputDecoration(
+                              labelText: "Nome da estacionaria",
+                              helperText: "Ex.: Misturador 01 (aparece no discovery)",
+                              border: OutlineInputBorder(),
+                            ),
                           ),
                           const SizedBox(height: 12),
                           TextField(

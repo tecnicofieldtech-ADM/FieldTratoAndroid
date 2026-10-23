@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulador PTM AV40/AV50 — FieldTrato</title>
+  <style>
+    :root { --c: #25A7CF; --bg: #0f1720; --card: #18222d; --t: #e8f4f8; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Segoe UI, sans-serif; background: var(--bg); color: var(--t);
+      min-height: 100vh; display: flex; justify-content: center; padding: 24px;
+    }
+    .card { background: var(--card); border-radius: 16px; padding: 24px; max-width: 520px; width: 100%; }
+    h1 { margin: 0 0 8px; font-size: 1.25rem; }
+    .kg { font-size: 3rem; font-weight: 800; text-align: center; color: var(--c); margin: 12px 0; }
+    .meta { color: #9bb; font-size: .9rem; line-height: 1.4; margin-bottom: 16px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    button, select {
+      background: var(--c); color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 600;
+    }
+    button.ghost { background: #314; }
+    input[type=range] { width: 100%; }
+    code { background: #0003; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Simulador PTM AV40/AV50</h1>
+    <div class="meta" id="meta">Carregando…</div>
+    <div class="kg" id="kg">0 kg</div>
+    <label>Protocolo
+      <select id="protocol">
+        <option value="ptm">PTM AV40/AV50</option>
+        <option value="topcom">Topcon / ST,GS</option>
+        <option value="dg500">Dinâmica Generale</option>
+        <option value="alfa">Alfa</option>
+        <option value="hook">Hook</option>
+        <option value="raw">Número cru</option>
+      </select>
+    </label>
+    <div class="row">
+      <button data-d="0">0</button>
+      <button data-d="10">+10</button>
+      <button data-d="50">+50</button>
+      <button data-d="100">+100</button>
+      <button data-d="500">+500</button>
+      <button class="ghost" data-d="-50">-50</button>
+      <button class="ghost" data-d="-100">-100</button>
+    </div>
+    <label>Alvo <span id="alvoLbl">500</span> kg
+      <input id="alvo" type="range" min="0" max="20000" step="10" value="500" />
+    </label>
+    <div class="row">
+      <button id="carregar">Carregar até o alvo</button>
+      <button class="ghost" id="descarregar">Descarregar</button>
+      <button class="ghost" id="pause">Pausar envio</button>
+    </div>
+  </div>
+  <script>
+    let kg = 0;
+    async function api(method, body) {
+      const r = await fetch("/api/state", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return r.json();
+    }
+    function render(s) {
+      kg = s.kg;
+      document.getElementById("kg").textContent = Math.round(s.kg) + " kg";
+      document.getElementById("protocol").value = s.protocol;
+      const ips = (s.ips || []).join(", ") || "localhost";
+      document.getElementById("meta").innerHTML =
+        "Pacote real: 48 bytes (STX…ETX). FieldTrato: modelo <b>PTM AV40/AV50</b>, IP <code>" + ips +
+        "</code>, porta <code>" + s.tcpPort + "</code>. Clientes TCP: " + s.clients +
+        (s.running ? "" : " — envio pausado") +
+        ". Balança física: RS232 38400 8N1, código 84.";
+      document.getElementById("pause").textContent = s.running ? "Pausar envio" : "Retomar envio";
+    }
+    async function refresh() { render(await api("GET")); }
+    document.getElementById("alvo").oninput = (e) => {
+      document.getElementById("alvoLbl").textContent = e.target.value;
+    };
+    document.querySelectorAll("button[data-d]").forEach((b) => {
+      b.onclick = async () => {
+        const d = Number(b.dataset.d);
+        await api("POST", { kg: d === 0 ? 0 : kg + d });
+        refresh();
+      };
+    });
+    document.getElementById("protocol").onchange = async (e) => {
+      await api("POST", { protocol: e.target.value });
+    };
+    document.getElementById("carregar").onclick = async () => {
+      await api("POST", { rampTarget: Number(document.getElementById("alvo").value) });
+    };
+    document.getElementById("descarregar").onclick = async () => {
+      await api("POST", { rampTarget: 0 });
+    };
+    document.getElementById("pause").onclick = async () => {
+      const s = await api("GET");
+      await api("POST", { running: !s.running });
+      refresh();
+    };
+    setInterval(refresh, 250);
+    refresh();
+  </script>
+</body>
+</html>

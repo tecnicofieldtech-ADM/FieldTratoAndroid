@@ -5,6 +5,7 @@ import "../db/app_db.dart";
 import "../features/fabricacao/domain/fabricacao_flow.dart";
 import "../repo/user_repo.dart";
 import "../services/api_service.dart";
+import "../services/planilha_importacao.dart";
 import "../services/session_service.dart";
 import "../utils/ms_percent.dart";
 
@@ -174,6 +175,73 @@ class OutboxSync {
     return MsPercent.isValid(v) ? v : 0;
   }
 
+  /// Fallback: MS da dieta a partir dos detalhes (inclusao % MS × teor MS do insumo).
+  /// MS dieta ≈ 100 / Σ(inclusao% / MS_insumo)  (base 100 kg MS).
+  Future<double> _computeMsFromDetalhesDieta(dynamic db, String idDieta) async {
+    final id = idDieta.trim();
+    if (id.isEmpty) return 0;
+    final rows = await db.rawQuery(
+      """
+      SELECT
+        COALESCE(MS_INCLUSAO, MN_PERCENT, MN_PERC, 0) AS inclusao,
+        COALESCE(MS_INSUMO, 0) AS ms_insumo
+      FROM DETALHES_DIETAS
+      WHERE TRIM(ID_DIETA) = TRIM(?)
+      """,
+      [id],
+    );
+    if (rows.isEmpty) return 0;
+    var mnPor100Ms = 0.0;
+    var temLinha = false;
+    for (final r in rows) {
+      final inclusao = _toDouble(r["inclusao"]);
+      final msInsumo = _toDouble(r["ms_insumo"]);
+      if (inclusao <= 0 || !MsPercent.isValid(msInsumo)) continue;
+      temLinha = true;
+      mnPor100Ms += inclusao / (msInsumo / 100.0);
+    }
+    if (!temLinha || mnPor100Ms <= 0) return 0;
+    final msDieta = 10000.0 / mnPor100Ms;
+    return MsPercent.isValid(msDieta) ? msDieta : 0;
+  }
+
+  Future<double> _resolveMsFornecimentoLinha({
+    required dynamic db,
+    required double msSql,
+    required String idFabricacao,
+    required String idDieta,
+  }) async {
+    if (MsPercent.isValid(msSql)) return msSql;
+
+    var msFab = 0.0;
+    var idDietaEff = idDieta.trim();
+    final idFab = idFabricacao.trim();
+    if (idFab.isNotEmpty) {
+      final fabRows = await db.rawQuery(
+        """
+        SELECT COALESCE(MS_REALIZADA, 0) AS ms, COALESCE(ID_DIETA, '') AS id_dieta
+        FROM CADASTRO_FABRICA_RACAO
+        WHERE TRIM(ID) = TRIM(?)
+        LIMIT 1
+        """,
+        [idFab],
+      );
+      if (fabRows.isNotEmpty) {
+        msFab = _toDouble(fabRows.first["ms"]);
+        if (idDietaEff.isEmpty) {
+          idDietaEff = _s(fabRows.first["id_dieta"]);
+        }
+      }
+    }
+
+    final msDietaCadastro = await _fetchDietaMs(db, idDietaEff);
+    final msDetalhes = await _computeMsFromDetalhesDieta(db, idDietaEff);
+    return MsPercent.resolve(
+      msFabricacao: msFab,
+      msDieta: MsPercent.firstValid([msDietaCadastro, msDetalhes]),
+    );
+  }
+
   double _resolveMsPayload({
     required double msFabricacao,
     required double msDieta,
@@ -220,28 +288,63 @@ class OutboxSync {
     return "$hh:$mm:$ss";
   }
 
+  Future<void> _enrichPlanilhaFornecimento(
+    Map<String, dynamic> payload,
+    Map r,
+  ) async {
+    if (!api.isPlanilha) return;
+    payload["peso_inicio"] = _br3(r["peso_inicio"]);
+    payload["peso_fim"] = _br3(r["peso_fim"]);
+    payload["PESO_INICIO"] = payload["peso_inicio"];
+    payload["PESO_FIM"] = payload["peso_fim"];
+    final importacaoId = PlanilhaImportacao.forOutbox(
+      backend: api.backend,
+      registroImportacaoId: _s(r["importacao_id"]).isNotEmpty
+          ? _s(r["importacao_id"])
+          : _s(r["IMPORTACAO_ID"]),
+    );
+    if (importacaoId != null) {
+      payload["importacao_id"] = importacaoId;
+      payload["IMPORTACAO_ID"] = importacaoId;
+    }
+  }
+
   void _putHorasPayload(
     Map<String, dynamic> map, {
     required String horaInicio,
     required String horaFim,
     bool insumo = false,
+    bool tgc = false,
   }) {
     if (horaInicio.isNotEmpty) {
       if (insumo) {
         map["hora_ini"] = horaInicio;
         map["HORA_INI"] = horaInicio;
+        if (tgc) {
+          map["DBT_HORA"] = horaInicio;
+          map["DBT_HORA_INI"] = horaInicio;
+        }
       } else {
         map["hora_inicio"] = horaInicio;
         map["HORA_INICIO"] = horaInicio;
+        if (tgc) {
+          map["CBT_INICIO"] = horaInicio;
+        }
       }
     }
     if (horaFim.isNotEmpty) {
       if (insumo) {
         map["hora_fim"] = horaFim;
         map["HORA_FIM"] = horaFim;
+        if (tgc) {
+          map["DBT_HORA_FIM"] = horaFim;
+        }
       } else {
         map["hora_fim"] = horaFim;
         map["HORA_FIM"] = horaFim;
+        if (tgc) {
+          map["CBT_FIM"] = horaFim;
+        }
       }
     }
   }
@@ -281,10 +384,18 @@ class OutboxSync {
     return d.toStringAsFixed(decimals).replaceAll(".", ",");
   }
 
+  /// Decimal invariante (ponto), sem zeros à direita.
+  /// `toStringAsFixed(3)` gerava `"405.000"` e o Delphi BR tratava o ponto
+  /// como milhar → `405000` no Field.
   String _fixDecimalToDot(dynamic v, {int decimals = 3}) {
     final d = _toDouble(v);
     if (d == 0) return "0";
-    return d.toStringAsFixed(decimals);
+    var s = d.toStringAsFixed(decimals);
+    if (s.contains(".")) {
+      s = s.replaceFirst(RegExp(r"0+$"), "");
+      if (s.endsWith(".")) s = s.substring(0, s.length - 1);
+    }
+    return s;
   }
 
   dynamic _fixBodyDecimals(dynamic node) {
@@ -293,7 +404,7 @@ class OutboxSync {
     }
     if (node is Map) {
       final out = <String, dynamic>{};
-      // Horse/Firebird: ponto decimal (vírgula gera SQL error -303).
+      // Ponto decimal, compacto. Nunca enviar "405.000" (milhar no Windows BR).
       node.forEach((k, v) {
         final key = k.toString();
         if (_decimalKeys.contains(key)) {
@@ -386,19 +497,27 @@ class OutboxSync {
       final idFabricacao = _s(f["ID"]);
       var idFazenda = _s(f["ID_FAZENDA"]);
       var idFazendaNum = int.tryParse(idFazenda) ?? 0;
-      if (idFazendaNum <= 0 && fazendaCfg.isNotEmpty) {
+      if (idFazenda.isEmpty && fazendaCfg.isNotEmpty) {
         idFazenda = fazendaCfg;
         idFazendaNum = int.tryParse(fazendaCfg) ?? 0;
+      } else if (idFazendaNum <= 0 && fazendaCfg.isNotEmpty) {
+        if (api.requiresNumericFazendaId) {
+          idFazenda = fazendaCfg;
+          idFazendaNum = int.tryParse(fazendaCfg) ?? 0;
+        }
       }
       var handoffId = _s(f["HANDOFF_ID"]);
       final usePacote = api.usesFabricacaoPacote;
+      final idFazendaPayload = api.requiresNumericFazendaId
+          ? (idFazendaNum > 0 ? idFazendaNum.toString() : "")
+          : idFazenda;
 
       if (idFabricacao.isEmpty) {
         log("Pulando fabricacao sem ID");
         continue;
       }
 
-      if (!api.ignoresFazendaId && idFazendaNum <= 0) {
+      if (!api.ignoresFazendaId && idFazendaPayload.isEmpty) {
         log(
           "Pulando fab $idFabricacao: id_fazenda/ID_PROPRIEDADE invalido "
           "(registro='${_s(f["ID_FAZENDA"])}' config='$fazendaCfg'). "
@@ -407,10 +526,10 @@ class OutboxSync {
         continue;
       }
 
-      if ((int.tryParse(_s(f["ID_FAZENDA"])) ?? 0) <= 0 && idFazendaNum > 0) {
+      if (_s(f["ID_FAZENDA"]).isEmpty && idFazendaPayload.isNotEmpty) {
         await db.update(
           "CADASTRO_FABRICA_RACAO",
-          {"ID_FAZENDA": idFazendaNum.toString()},
+          {"ID_FAZENDA": idFazendaPayload},
           where: "ID=?",
           whereArgs: [idFabricacao],
         );
@@ -477,15 +596,16 @@ class OutboxSync {
       final payloadFab = <String, dynamic>{
         "handoff_id": handoffId,
         if (!api.ignoresFazendaId) ...{
-          "id_fazenda": idFazendaNum.toString(),
-          "ID_PROPRIEDADE": idFazendaNum.toString(),
-          "id_propriedade": idFazendaNum.toString(),
+          "id_fazenda": idFazendaPayload,
+          "ID_PROPRIEDADE": idFazendaPayload,
+          "id_propriedade": idFazendaPayload,
         },
         "id_dieta": _s(f["ID_DIETA"]),
         "data": _toBrDate(f["DATA_FABRICACAO"]),
         "id_usuario": idUsuarioFab,
         "id_operador": idOperadorFab,
         if (api.isTgc) ...{
+          "id_local": idFabricacao,
           "CBT_USUARIO": "1",
           "CBT_COD_OPERADOR_PA": idOperadorFab,
           if (nomeOperadorFab.isNotEmpty) ...{
@@ -503,10 +623,23 @@ class OutboxSync {
         "ms_prevista": _br2(f["MS_PREVISTA"]),
         "ms_realizada": _br2(msFabResolved),
       };
+      final importacaoId = PlanilhaImportacao.forOutbox(
+        backend: api.backend,
+        registroImportacaoId: _s(f["IMPORTACAO_ID"]),
+      );
+      if (importacaoId != null) {
+        payloadFab["importacao_id"] = importacaoId;
+        payloadFab["IMPORTACAO_ID"] = importacaoId;
+      }
       _putHorasPayload(
         payloadFab,
         horaInicio: _toHora(f["HORA_INICIO"]),
-        horaFim: _toHora(f["HORA_FIM"]),
+        horaFim: () {
+          final fim = _toHora(f["HORA_FIM"]);
+          if (fim.isNotEmpty) return fim;
+          return _toHora(f["HORA_INICIO"]);
+        }(),
+        tgc: api.isTgc,
       );
       if (usePacote) {
         payloadFab["id_local"] = idFabricacao;
@@ -543,8 +676,8 @@ class OutboxSync {
             if (!usePacote) "id": _s(i["ID"]),
             if (usePacote) "id_local": _s(i["ID"]),
             if (!api.ignoresFazendaId) ...{
-              "id_fazenda": idFazendaNum.toString(),
-              "ID_PROPRIEDADE": idFazendaNum.toString(),
+              "id_fazenda": idFazendaPayload,
+              "ID_PROPRIEDADE": idFazendaPayload,
             },
             "id_insumo": _s(i["ID_INSUMO"]),
             "qtde_prevista": _br3(i["QTD_PREVISTA"]),
@@ -562,9 +695,20 @@ class OutboxSync {
           };
           _putHorasPayload(
             item,
-            horaInicio: _toHora(i["HORA_INICIO"]),
-            horaFim: _toHora(i["HORA_FIM"]),
+            horaInicio: () {
+              final h = _toHora(i["HORA_INICIO"]);
+              if (h.isNotEmpty) return h;
+              return _toHora(f["HORA_INICIO"]);
+            }(),
+            horaFim: () {
+              final h = _toHora(i["HORA_FIM"]);
+              if (h.isNotEmpty) return h;
+              final headerFim = _toHora(f["HORA_FIM"]);
+              if (headerFim.isNotEmpty) return headerFim;
+              return _toHora(f["HORA_INICIO"]);
+            }(),
             insumo: true,
+            tgc: api.isTgc,
           );
           itens.add(item);
         }
@@ -778,7 +922,7 @@ class OutboxSync {
   }
 
   Future<void> syncFornecimento(void Function(String) log) async {
-    if (api.isFieldpec) {
+    if (api.usesIndependentFornecimentoSync) {
       await _syncFornecimentoFieldpec(log);
       return;
     }
@@ -902,6 +1046,7 @@ class OutboxSync {
         "id_racao": idRacao,
         "trato": trato.toString(),
         "data": dataRef,
+        "DATA_FORN": dataRef,
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
       };
@@ -958,6 +1103,9 @@ class OutboxSync {
         cf.TRATO                                                    AS trato,
         cf.ID_FABRICACAO                                            AS id_fabricacao,
         cf.ID_USUARIO                                               AS id_usuario_lancamento,
+        COALESCE(cf.PESO_INICIO, 0)                                 AS peso_inicio,
+        COALESCE(cf.PESO_FIM, 0)                                    AS peso_fim,
+        TRIM(COALESCE(cf.IMPORTACAO_ID, ''))                        AS importacao_id,
         COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_dieta_realizada,
         COALESCE(cf.ID_DIETA, cfr.ID_DIETA)                         AS id_racao,
         COALESCE(cf.REALIZADO, 0)                                   AS delta_sessao,
@@ -1021,9 +1169,11 @@ class OutboxSync {
         "id_racao": idRacao,
         "trato": trato.toString(),
         "data": dataRef,
+        "DATA_FORN": dataRef,
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
       };
+      await _enrichPlanilhaFornecimento(payload, r);
       _putHorasFornecimento(
         payload,
         horaInicio: _toHora(r["hora_inicio"]),
@@ -1094,15 +1244,53 @@ class OutboxSync {
     if (blockedRows.isNotEmpty) {
       log(
         "TGC: ${blockedRows.length} fornecimento(s) vinculado(s) aguardando "
-        "fabricacao no servidor:",
+        "fabricacao (FLAG_SYNC fab=0). POST /Post/Fornecimento NAO sai "
+        "enquanto a fab nao subir:",
       );
       for (final b in blockedRows) {
         final idCad = _s(b["id_cadastro"]);
         final idFab = _s(b["id_fabricacao"]);
         final lote = _tgcLoteFabricacao(_s(b["handoff_id"]));
+        final fabRows = await db.query(
+          "CADASTRO_FABRICA_RACAO",
+          columns: [
+            "FLAG_SYNC",
+            "STATUS",
+            "QTD_REALIZADA",
+            "ID_OPERADOR",
+            "MS_REALIZADA",
+          ],
+          where: "TRIM(ID)=TRIM(?)",
+          whereArgs: [idFab],
+          limit: 1,
+        );
+        var motivo = "fab nao encontrada no tablet";
+        if (fabRows.isNotEmpty) {
+          final fr = fabRows.first;
+          final flag = int.tryParse("${fr["FLAG_SYNC"]}") ?? 0;
+          final status = int.tryParse("${fr["STATUS"]}") ?? 0;
+          final qtd = _toDouble(fr["QTD_REALIZADA"]);
+          final op = _s(fr["ID_OPERADOR"]);
+          final ms = _toDouble(fr["MS_REALIZADA"]);
+          if (flag == 1) {
+            motivo = "FLAG_SYNC=1 (inesperado no gate)";
+          } else if (status != 1) {
+            motivo = "STATUS=$status (precisa STATUS=1)";
+          } else if (qtd <= 0) {
+            motivo = "QTD_REALIZADA=0";
+          } else if (op.isEmpty) {
+            motivo =
+                "ID_OPERADOR vazio — refaca a fab selecionando o operador";
+          } else if (ms > 100) {
+            motivo = "MS_REALIZADA invalida ($ms)";
+          } else {
+            motivo =
+                "FLAG_SYNC=0 (fab ainda nao sincronizou ou falhou no POST)";
+          }
+        }
         log(
           "  - cadastro=$idCad fab=$idFab "
-          "lote=${lote.isEmpty ? '(sem handoff)' : lote}",
+          "lote=${lote.isEmpty ? '(sem handoff)' : lote} → $motivo",
         );
       }
     }
@@ -1184,14 +1372,23 @@ class OutboxSync {
         continue;
       }
 
-      final msResolved = _toDouble(r["ms_dieta_realizada"]);
+      final idDietaLinha = _s(r["id_dieta_realizada"]);
+      final msSql = _toDouble(r["ms_dieta_realizada"]);
+      var msResolved = await _resolveMsFornecimentoLinha(
+        db: db,
+        msSql: msSql,
+        idFabricacao: idFab,
+        idDieta: idDietaLinha.isNotEmpty ? idDietaLinha : idRacao,
+      );
       if (!MsPercent.isValid(msResolved)) {
-        failedCount++;
+        // API TGC resolve MS no servidor (body → MS_BATIDA fab → MS_DIETA).
+        // Envia 0 e deixa a API completar — evita travar 100% dos POSTs no tablet.
         log(
-          "TGC fornecimento cadastro=$idCad: MS invalida "
-          "(fab/dieta; deve ser > 0 e <= 100). Pulando.",
+          "TGC fornecimento cadastro=$idCad: MS local invalida "
+          "(sql=$msSql dieta=${idDietaLinha.isEmpty ? idRacao : idDietaLinha} "
+          "fab=$idFab). Enviando com MS=0 para a API resolver.",
         );
-        continue;
+        msResolved = 0;
       }
 
       final payload = <String, dynamic>{
@@ -1201,13 +1398,14 @@ class OutboxSync {
         "CFORN_CODIGO": idPrev,
         "id_usuario_lancamento": _s(r["id_usuario_lancamento"]),
         "id_tratador": _s(r["id_usuario_lancamento"]),
-        "id_dieta_realizada": _s(r["id_dieta_realizada"]),
+        "id_dieta_realizada": idDietaLinha.isNotEmpty ? idDietaLinha : idRacao,
         "id_baia": idBaia,
         "id_racao": idRacao,
         "trato": trato.toString(),
         "TRATO": trato.toString(),
         "CFORN_TRATO": trato.toString(),
         "data": dataRef,
+        "DATA_FORN": dataRef,
         "realizado": _br3(deltaSessao),
         "ms_dieta_realizada": _br3(msResolved),
       };

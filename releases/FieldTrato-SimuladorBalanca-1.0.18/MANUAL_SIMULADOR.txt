@@ -1,0 +1,57 @@
+MANUAL CURTO — Simulador de balança FieldTrato (PTM AV40/AV50)
+==============================================================
+
+O simulador finge ser a balança. O tablet lê o peso pelo Wi-Fi, sem vagão.
+
+Há dois jeitos. Use UM só.
+
+
+A) SIMULADOR NO PC  (para testar como a balança real)
+----------------------------------------------------
+
+1. Instale o Node.js LTS:  https://nodejs.org
+2. Extraia a pasta do simulador.
+3. Dê um duplo clique em  Iniciar-Simulador.bat
+   (deixe a janela preta ABERTA)
+4. No PC, abra o navegador em:  http://localhost:8787
+5. Anote o IP que aparece no painel (ex.: 192.168.137.1)
+
+   Tablet e PC precisam estar na MESMA rede
+   (Wi-Fi da fazenda ou hotspot do notebook).
+
+6. No FieldTrato → Configuração → Balança:
+     Modelo ............... PTM AV40/AV50
+     Simulador local ...... DESLIGADO
+     IP da balança ........ o IP do passo 5
+     Porta ................ 8899
+   Salve e toque em  Testar Balança.
+
+7. No painel do PC:
+     +10 / +50 / +100 ..... soma kg na hora
+     0 .................... zera
+     Alvo + Carregar ...... sobe o peso até o alvo
+     Descarregar .......... desce até 0
+     Pausar envio ......... para de mandar peso
+
+O peso no FieldTrato deve acompanhar o número grande do painel.
+
+
+B) SIMULADOR NO TABLET  (sem PC)
+--------------------------------
+
+No FieldTrato → Configuração:
+  ligue  "Simulador local (sem balança)"  e salve.
+
+Aparece um painel flutuante no canto da tela.
+Use Carregar / Descarregar nele.
+Não use o simulador do PC ao mesmo tempo.
+
+
+Se o Testar Balança não mostrar peso
+------------------------------------
+• A janela do .bat está aberta?
+• Modelo PTM e porta 8899?
+• Simulador local DESLIGADO (modo A)?
+• IP igual ao do painel http://localhost:8787 ?
+• Windows pediu firewall? Permita Node nas portas 8899 e 8787.
+• Clientes TCP no painel deve ir de 0 para 1 quando o app conectar.

@@ -439,6 +439,7 @@ class FornecimentoRepo {
     String? idRacao,
     bool strictRacaoFilter = false,
     bool omitirFiltroTrato = false,
+    bool omitirFiltroRacao = false,
   }) async {
     final d = data ?? DateTime.now();
     final ymd = _ymd(d);
@@ -448,14 +449,15 @@ class FornecimentoRepo {
         : ((trato != null && trato > 0)
             ? trato
             : (tratoAtual > 0 ? tratoAtual : null));
-    final racao = (idRacao ?? idRacaoAtual)?.trim();
+    final racao = omitirFiltroRacao ? null : (idRacao ?? idRacaoAtual)?.trim();
     final racaoFinal = (racao != null && racao.isNotEmpty) ? racao : null;
 
     final backend = await _cfg.getBackend();
-    final isFieldpec = ConfigOptions.isFieldPecBackend(backend);
+    final isFieldpec = ConfigOptions.isFieldPecBackend(backend) ||
+        ConfigOptions.isPlanilhaBackend(backend);
 
     // ✅ mantém idRacaoAtual consistente
-    if (racaoFinal != null) setIdRacaoAtual(racaoFinal);
+    if (!omitirFiltroRacao && racaoFinal != null) setIdRacaoAtual(racaoFinal);
 
     Future<List<Map<String, Object?>>> load({
       String? idRacaoFiltro,
@@ -603,12 +605,14 @@ class FornecimentoRepo {
     String idFornecimento, {
     DateTime? data,
     int? trato,
+    String? idBaia,
   }) {
     final dataYmd = _ymd(data ?? DateTime.now());
     return _dao.loadCurralSnapshot(
       idFornecimento: idFornecimento,
       dataYmd: dataYmd,
       trato: trato ?? tratoAtual,
+      idBaia: idBaia,
     );
   }
 
@@ -893,19 +897,21 @@ class FornecimentoRepo {
 
   Future<void> marcarSyncOk(String id) => _dao.marcarSyncOk(id);
 
-  /// Reabilita sync local (FLAG_SYNC=0). Com FornecimentoAcumulativo=1 na API,
-  /// o operador deve zerar REALIZADO no CG Pec antes de sincronizar de novo.
-  ///
-  /// Importante: reabilita TODOS os cadastros do dia (trato 1, 2, 3…), nao so
-  /// o filtro de previsao da tela — mesmo carregamento com varios tratos.
+  /// Reabilita FLAG_SYNC=0 somente nos cadastros da lista filtrada (curral/trato/dieta).
+  /// Nao reabre o dia inteiro: se a tela mostra 1 curral, so esse curral volta a pendente.
   Future<int> reabilitarSyncFiltrados({
     required DateTime data,
     required List<CurralPrev> itens,
+    List<String>? idsCadastro,
   }) async {
-    // Sempre prioriza o dia inteiro: trato 2 do mesmo carregamento nao pode
-    // ficar de fora so porque a lista filtrada mostra so o trato 1.
-    final doDia = await _dao.marcarSyncPendenteDoDia(data: data);
-    if (doDia > 0) return doDia;
+    final ids = <String>{};
+    for (final raw in idsCadastro ?? const <String>[]) {
+      final id = raw.trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+    if (ids.isNotEmpty) {
+      return _dao.marcarSyncPendentePorIds(ids.toList());
+    }
 
     final vistos = <String>{};
     var total = 0;
@@ -932,7 +938,17 @@ class FornecimentoRepo {
   Future<int> marcarSyncOkFiltrados({
     required DateTime data,
     required List<CurralPrev> itens,
+    List<String>? idsCadastro,
   }) async {
+    final ids = <String>{};
+    for (final raw in idsCadastro ?? const <String>[]) {
+      final id = raw.trim();
+      if (id.isNotEmpty) ids.add(id);
+    }
+    if (ids.isNotEmpty) {
+      return _dao.marcarSyncOkPorIds(ids.toList());
+    }
+
     final vistos = <String>{};
     var total = 0;
 
@@ -1314,6 +1330,7 @@ class FornecimentoRepo {
         COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
         a.${FornTables.pvIdFornecimento}           AS idFornecimento,
         $linhaExpr                                 AS linha,
+        COALESCE(CAST(db.${FornTables.dbIdLote} AS TEXT), '') AS idLote,
         CASE
           WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
             substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
@@ -1335,6 +1352,7 @@ class FornecimentoRepo {
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
+        COALESCE(a.${FornTables.pvRealizadoKg}, 0) AS realizadoApiKg,
         ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,
         substr(COALESCE(a.${FornTables.pvData}, ''), 1, 10) AS dataIso,
         COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,
@@ -1358,6 +1376,7 @@ class FornecimentoRepo {
         COALESCE(db.${FornTables.dbOrderTrato}, 0) AS ordemFornecimento,
         a.${FornTables.pvIdFornecimento}           AS idFornecimento,
         $linhaExpr                                 AS linha,
+        COALESCE(CAST(db.${FornTables.dbIdLote} AS TEXT), '') AS idLote,
         CASE
           WHEN instr(db.${FornTables.dbNomeLocal}, '-') > 0 THEN
             substr(db.${FornTables.dbNomeLocal}, instr(db.${FornTables.dbNomeLocal}, '-') + 1)
@@ -1379,6 +1398,7 @@ class FornecimentoRepo {
         COALESCE(a.${FornTables.pvUltimoTrato}, 0) AS isUltimoTrato,
         COALESCE(a.${FornTables.pvIdRacao}, '')   AS idRacao,
         ${FornTables.sqlRealizadoKgLocal("a")}    AS realizadoKg,
+        COALESCE(a.${FornTables.pvRealizadoKg}, 0) AS realizadoApiKg,
         ${FornTables.sqlQtdSessoesLocal("a")}     AS qtdSessoes,
         substr(COALESCE(a.${FornTables.pvData}, ''), 1, 10) AS dataIso,
         COALESCE(db.${FornTables.dbRfid}, '')     AS rfid,

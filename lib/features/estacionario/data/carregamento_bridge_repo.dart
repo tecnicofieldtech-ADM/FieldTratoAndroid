@@ -1,14 +1,39 @@
 import "package:sqflite/sqflite.dart";
 
+import "package:flutter/foundation.dart";
+
 import "../../../db/app_db.dart";
 import "../../fabricacao/domain/fabricacao_flow.dart";
+import "../domain/station_claim.dart";
+import "../domain/station_handoff_mode.dart";
+import "carregamento_claim_store.dart";
 
 class CarregamentoBridgeRepo {
-  Future<Database> get _db async => AppDb.instance.db;
+  CarregamentoBridgeRepo({Database? db}) : _injected = db;
 
-  Future<List<Map<String, Object?>>> listDisponiveis() async {
+  final Database? _injected;
+
+  Future<Database> get _db async {
+    final injected = _injected;
+    if (injected != null) return injected;
+    return AppDb.instance.db;
+  }
+
+  Future<CarregamentoClaimStore> _claimStore() async {
     final db = await _db;
-    return db.rawQuery("""
+    final store = CarregamentoClaimStore(db);
+    await store.ensureColumns();
+    return store;
+  }
+
+  Future<List<Map<String, Object?>>> listDisponiveis({
+    String? truckDeviceId,
+  }) async {
+    final db = await _db;
+    await (await _claimStore()).ensureColumns();
+    final now = DateTime.now();
+    // Etapa E: PENDENTE_CAMINHAO OU FINALIZADA (consistente), ainda não CARREGADA.
+    final rows = await db.rawQuery("""
       SELECT
         f.ID AS id_local,
         COALESCE(f.HANDOFF_ID,'') AS handoff_id,
@@ -16,40 +41,110 @@ class CarregamentoBridgeRepo {
         COALESCE(f.HORA_FIM, f.HORA_INICIO, '') AS hora,
         COALESCE(d.NOME,'') AS nome_racao,
         COALESCE(f.QTD_REALIZADA, 0) AS total_fabricado_kg,
-        COALESCE(f.FAB_STATUS,0) AS fab_status
+        COALESCE(f.FAB_STATUS,0) AS fab_status,
+        COALESCE(f.FINALIZADA,0) AS finalizada,
+        COALESCE(f.CLAIM_DEVICE_ID,'') AS claim_device_id,
+        COALESCE(f.CLAIM_EXPIRES_AT,'') AS claim_expires_at
       FROM CADASTRO_FABRICA_RACAO f
       LEFT JOIN DIETA d ON d.ID = f.ID_DIETA
       WHERE COALESCE(f.STATUS,1) = 1
         AND COALESCE(f.CARREGADA,0) = 0
-        AND COALESCE(f.FAB_STATUS,0) = $fabricacaoStatusPendenteCaminhao
+        AND (
+          (
+            COALESCE(f.FAB_STATUS,0) = $fabricacaoStatusPendenteCaminhao
+            AND COALESCE(f.FINALIZADA,0) = 0
+          )
+          OR
+          (
+            COALESCE(f.FAB_STATUS,0) = $fabricacaoStatusFinalizada
+            AND COALESCE(f.FINALIZADA,0) = 1
+          )
+        )
       ORDER BY COALESCE(f.DATA_FABRICACAO,'') DESC, COALESCE(f.HORA_FIM, f.HORA_INICIO, '') DESC
     """);
+
+    final viewer = (truckDeviceId ?? "").trim();
+    final out = <Map<String, Object?>>[];
+    for (final m in rows) {
+      final mode = resolveStationHandoffMode(
+        fabStatus: m["fab_status"],
+        finalizada: m["finalizada"],
+      );
+      if (mode == null) {
+        debugPrint(
+          "[BRIDGE_LIST] skip inconsistente id=${m["id_local"]} "
+          "fab=${m["fab_status"]} fin=${m["finalizada"]}",
+        );
+        continue;
+      }
+
+      final row = Map<String, Object?>.from(m);
+      final status = StationClaim.listStatus(
+        claimDeviceId: (m["claim_device_id"] ?? "").toString(),
+        claimExpiresAt: (m["claim_expires_at"] ?? "").toString(),
+        now: now,
+        viewerTruckDeviceId: viewer.isEmpty ? null : viewer,
+      );
+      row["claim_status"] = status;
+      final exp = (m["claim_expires_at"] ?? "").toString();
+      row["claim_expires_at"] =
+          status == StationClaim.statusAvailable ? "" : exp;
+      row["handoff_mode"] = mode.apiValue;
+      // Não expor CLAIM_DEVICE_ID do outro device.
+      row.remove("claim_device_id");
+      out.add(row);
+    }
+    return out;
   }
 
-  /// Marca lote como recebido pelo caminhão (some da lista do bridge).
+  Future<ClaimResult> claim({
+    required String idOrHandoff,
+    required String truckDeviceId,
+    DateTime? now,
+  }) async {
+    final store = await _claimStore();
+    return store.claim(
+      idOrHandoff: idOrHandoff,
+      truckDeviceId: truckDeviceId,
+      now: now,
+    );
+  }
+
+  Future<ReleaseResult> release({
+    required String idOrHandoff,
+    required String truckDeviceId,
+    DateTime? now,
+  }) async {
+    final store = await _claimStore();
+    return store.release(
+      idOrHandoff: idOrHandoff,
+      truckDeviceId: truckDeviceId,
+      now: now,
+    );
+  }
+
+  Future<AckResult> ack({
+    required String idOrHandoff,
+    String? truckDeviceId,
+    bool requireClaim = true,
+    DateTime? now,
+  }) async {
+    final store = await _claimStore();
+    return store.ack(
+      idOrHandoff: idOrHandoff,
+      truckDeviceId: truckDeviceId,
+      requireClaim: requireClaim,
+      now: now,
+    );
+  }
+
+  /// Legado: marca recebido sem claim (Bridge antigo / clients sem truckDeviceId).
   Future<bool> marcarRecebido(String idLocal) async {
-    final id = idLocal.trim();
-    if (id.isEmpty) return false;
-    final db = await _db;
-    final cur = await db.rawQuery(
-      "SELECT COALESCE(CARREGADA,0) AS c FROM CADASTRO_FABRICA_RACAO "
-      "WHERE TRIM(COALESCE(ID,'')) = TRIM(?) LIMIT 1",
-      [id],
+    final r = await ack(
+      idOrHandoff: idLocal,
+      requireClaim: false,
     );
-    if (cur.isEmpty) return false;
-    if ((_toInt(cur.first["c"]) ?? 0) == 1) return true;
-    final n = await db.rawUpdate(
-      "UPDATE CADASTRO_FABRICA_RACAO SET CARREGADA = 1 "
-      "WHERE TRIM(COALESCE(ID,'')) = TRIM(?)",
-      [id],
-    );
-    return n > 0;
-  }
-
-  int? _toInt(Object? v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    return int.tryParse(v.toString());
+    return r.ok;
   }
 
   Future<Map<String, Object?>?> getByFabricacaoId(String idLocal) async {
@@ -73,16 +168,22 @@ class CarregamentoBridgeRepo {
       FROM CADASTRO_FABRICA_RACAO f
       LEFT JOIN DIETA d ON d.ID = f.ID_DIETA
       WHERE TRIM(COALESCE(f.ID,'')) = TRIM(?)
+         OR TRIM(COALESCE(f.HANDOFF_ID,'')) = TRIM(?)
       LIMIT 1
       """,
-      [idLocal],
+      [idLocal, idLocal],
     );
     if (rows.isEmpty) return null;
     return rows.first;
   }
 
-  Future<List<Map<String, Object?>>> listInsumosFabricacao(String idFabricacao) async {
+  Future<List<Map<String, Object?>>> listInsumosFabricacao(
+    String idFabricacao,
+  ) async {
     final db = await _db;
+    // Se veio handoff, resolve ID local.
+    final fab = await getByFabricacaoId(idFabricacao);
+    final id = (fab?["id_local"] ?? idFabricacao).toString();
     return db.rawQuery(
       """
       SELECT
@@ -95,7 +196,7 @@ class CarregamentoBridgeRepo {
       WHERE TRIM(COALESCE(ID_FABRICACAO,'')) = TRIM(?)
       ORDER BY COALESCE(ORDEM,0) ASC
       """,
-      [idFabricacao],
+      [id],
     );
   }
 }

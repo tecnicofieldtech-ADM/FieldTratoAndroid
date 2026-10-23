@@ -102,7 +102,7 @@
         <DCC_RemoteDebug>false</DCC_RemoteDebug>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <DCC_UnitSearchPath>..\CGPec\Source;..\CGPec\Source\dpr\modules\horse\src;..\CGPec\Source\dpr\modules\jhonson\src;..\CGPec\Source\dpr\modules\horse-cors\src;..\CGPec\Source\dpr\modules\horse-basic-auth\src;..\CGPec\Source\dpr\modules\handle-exception\src;..\CGPec\Source\dpr\modules\loggerpro;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-        <DCC_ExeOutput>C:\RSistemas\Git\RFeedFlutter\api_horse\Deploy</DCC_ExeOutput>
+        <DCC_ExeOutput>C:\RSistemas\Git\RFeedFlutter\api_horse\FieldPec</DCC_ExeOutput>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <PostBuildEvent><![CDATA[if not exist "$(OUTPUTDIR)web-admin\" mkdir "$(OUTPUTDIR)web-admin\"
@@ -126,7 +126,7 @@ xcopy /Y /Q /E "$(PROJECTDIR)\..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></Pos
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="UPrincipal.pas">
-            <Form>ApiRFeed</Form>
+            <Form>ApiFiedlTrato</Form>
             <FormType>dfm</FormType>
             <DesignClass>TService</DesignClass>
         </DCCReference>
@@ -1029,8 +1029,7 @@ xcopy /Y /Q /E "$(PROJECTDIR)\..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></Pos
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
-&amp;&amp;xcopy /Y /Q /E &quot;$(PROJECTDIR)\..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q /E &quot;$(PROJECTDIR)\..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win32'">
@@ -1038,8 +1037,7 @@ xcopy /Y /Q /E "$(PROJECTDIR)\..\web-admin\*.*" "$(OUTPUTDIR)web-admin\"]]></Pos
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;
-&amp;&amp;xcopy /Y /Q /E &quot;$(PROJECTDIR)\..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
+        <PostBuildEvent>if not exist &quot;$(OUTPUTDIR)web-admin\&quot; mkdir &quot;$(OUTPUTDIR)web-admin\&quot;&amp;&amp;xcopy /Y /Q /E &quot;$(PROJECTDIR)\..\web-admin\*.*&quot; &quot;$(OUTPUTDIR)web-admin\&quot;</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

@@ -3,6 +3,7 @@ import "package:flutter/foundation.dart";
 
 import "../../../utils/station_bridge_url.dart";
 import "../domain/carregamento_payload.dart";
+import "../domain/station_claim.dart";
 
 /// Host + porta usados para chamar o **bridge HTTP** no tablet estacion?rio.
 typedef EstacionarioHostPort = ({String host, int port});
@@ -96,25 +97,56 @@ class CarregamentoEstacionarioApi {
   }
 
   /// Para toasts: devolve mensagem detalhada quando falha.
-  Future<({bool ok, String message})> tryHealth() async {
+  Future<({bool ok, String message, String? stationId, String? name})>
+      tryHealth() async {
     try {
       debugPrint("[EST_API] GET $_base/health");
       final r = await _dio.get("/health");
       debugPrint(
           "[EST_API] /health status=${r.statusCode} body=${_clip(r.data)}");
       if (r.statusCode == 200) {
-        return (ok: true, message: "Conex?o OK ($_base/health).");
+        String? stationId;
+        String? name;
+        final data = r.data;
+        if (data is Map) {
+          final sid = (data["stationId"] ?? "").toString().trim();
+          stationId = sid.isEmpty ? null : sid;
+          final n = (data["name"] ?? "").toString().trim();
+          name = n.isEmpty ? null : n;
+        }
+        return (
+          ok: true,
+          message: "Conexão OK ($_base/health).",
+          stationId: stationId,
+          name: name,
+        );
       }
-      return (ok: false, message: "HTTP ${r.statusCode} (esperado 200).");
+      return (
+        ok: false,
+        message: "HTTP ${r.statusCode} (esperado 200).",
+        stationId: null,
+        name: null,
+      );
     } catch (e) {
       debugPrint("[EST_API] /health erro=$e");
-      return (ok: false, message: mensagemErroDio(e));
+      return (
+        ok: false,
+        message: mensagemErroDio(e),
+        stationId: null,
+        name: null,
+      );
     }
   }
 
-  Future<List<CarregamentoResumoDto>> listCarregamentos() async {
-    debugPrint("[EST_API] GET $_base/carregamentos");
-    final r = await _dio.get("/carregamentos");
+  Future<List<CarregamentoResumoDto>> listCarregamentos({
+    String? truckDeviceId,
+  }) async {
+    final q = (truckDeviceId ?? "").trim();
+    final path = q.isEmpty
+        ? "/carregamentos"
+        : "/carregamentos?truckDeviceId=${Uri.encodeQueryComponent(q)}";
+    debugPrint("[EST_API] GET $_base$path");
+    final r = await _dio.get(path);
     debugPrint(
       "[EST_API] /carregamentos status=${r.statusCode} body=${_clip(r.data)}",
     );
@@ -144,24 +176,130 @@ class CarregamentoEstacionarioApi {
     return CarregamentoDetalheDto.fromJson(data);
   }
 
-  /// Confirma no estacion?rio que o lote foi importado (some da lista do bridge).
-  Future<bool> ack(
-      {required String id,
-      required String device,
-      required String appVersion}) async {
+  /// Resultado de claim/release/ack no cliente.
+  static StationApiResult resultFromResponse(Response r) {
+    final data = r.data is Map
+        ? Map<String, dynamic>.from(r.data as Map)
+        : <String, dynamic>{};
+    final code = (data["code"] ?? "").toString();
+    return StationApiResult(
+      statusCode: r.statusCode ?? 0,
+      ok: (r.statusCode ?? 0) >= 200 && (r.statusCode ?? 0) < 300,
+      code: code,
+      handoffId: (data["handoffId"] ?? "").toString(),
+      claimExpiresAt: (data["claimExpiresAt"] ?? "").toString(),
+      alreadyOwned: data["alreadyOwned"] == true,
+      alreadyAcked: data["alreadyAcked"] == true,
+      raw: data,
+    );
+  }
+
+  Future<StationApiResult> claim({
+    required String id,
+    required String truckDeviceId,
+  }) async {
+    try {
+      debugPrint("[EST_API] POST claim id=$id truck=$truckDeviceId");
+      final r = await _dio.post(
+        "/carregamentos/$id/claim",
+        data: {"truckDeviceId": truckDeviceId},
+        options: Options(
+          validateStatus: (s) => s != null && s < 500,
+        ),
+      );
+      if (r.statusCode == 404) {
+        final parsed = resultFromResponse(r);
+        // Bridge novo: carga inexistente. Bridge antigo: rota /claim inexistente.
+        if (parsed.code == StationClaim.codeNotFound) return parsed;
+        debugPrint("[${StationClaim.codeClaimUnsupported}] /claim 404");
+        return StationApiResult(
+          statusCode: 404,
+          ok: false,
+          code: StationClaim.codeClaimUnsupported,
+        );
+      }
+      return resultFromResponse(r);
+    } on DioException catch (e) {
+      final status = e.response?.statusCode ?? 0;
+      if (status == 404) {
+        final data = e.response?.data;
+        final code = data is Map ? (data["code"] ?? "").toString() : "";
+        if (code == StationClaim.codeNotFound) {
+          return StationApiResult(
+            statusCode: 404,
+            ok: false,
+            code: StationClaim.codeNotFound,
+          );
+        }
+        debugPrint("[${StationClaim.codeClaimUnsupported}] /claim Dio 404");
+        return StationApiResult(
+          statusCode: 404,
+          ok: false,
+          code: StationClaim.codeClaimUnsupported,
+        );
+      }
+      debugPrint("[EST_API] claim erro=$e");
+      return StationApiResult(
+        statusCode: status,
+        ok: false,
+        code: "NETWORK_ERROR",
+        message: mensagemErroDio(e),
+      );
+    }
+  }
+
+  Future<StationApiResult> release({
+    required String id,
+    required String truckDeviceId,
+  }) async {
     try {
       final r = await _dio.post(
+        "/carregamentos/$id/release",
+        data: {"truckDeviceId": truckDeviceId},
+        options: Options(
+          validateStatus: (s) => s != null && s < 500,
+        ),
+      );
+      return resultFromResponse(r);
+    } on DioException catch (e) {
+      debugPrint("[EST_API] release erro=$e");
+      return StationApiResult(
+        statusCode: e.response?.statusCode ?? 0,
+        ok: false,
+        code: "NETWORK_ERROR",
+        message: mensagemErroDio(e),
+      );
+    }
+  }
+
+  /// Confirma importação. Preferir [truckDeviceId] (Bridge novo).
+  Future<bool> ack({
+    required String id,
+    required String truckDeviceId,
+    String? appVersion,
+    String? deviceLegacy,
+  }) async {
+    try {
+      final body = <String, Object?>{
+        if (StationClaim.isValidTruckDeviceId(truckDeviceId))
+          "truckDeviceId": truckDeviceId.trim(),
+        if ((deviceLegacy ?? "").trim().isNotEmpty)
+          "device": deviceLegacy!.trim(),
+        "recebido_em": DateTime.now().toIso8601String(),
+        if ((appVersion ?? "").trim().isNotEmpty) "app_version": appVersion,
+      };
+      final r = await _dio.post(
         "/carregamentos/$id/ack",
-        data: {
-          "device": device,
-          "recebido_em": DateTime.now().toIso8601String(),
-          "app_version": appVersion,
-        },
+        data: body,
+        options: Options(
+          validateStatus: (s) => s != null && s < 500,
+        ),
       );
       final ok = r.statusCode == 200;
       if (!ok) {
         debugPrint(
-            "[ESTACIONARIO_API] ack HTTP ${r.statusCode} id=$id body=${_clip(r.data)}");
+          "[ESTACIONARIO_API] ack HTTP ${r.statusCode} id=$id body=${_clip(r.data)}",
+        );
       }
       return ok;
     } catch (e) {
@@ -169,4 +307,32 @@ class CarregamentoEstacionarioApi {
       return false;
     }
   }
+}
+
+class StationApiResult {
+  StationApiResult({
+    required this.statusCode,
+    required this.ok,
+    this.code = "",
+    this.handoffId = "",
+    this.claimExpiresAt = "",
+    this.alreadyOwned = false,
+    this.alreadyAcked = false,
+    this.message = "",
+    this.raw = const {},
+  });
+
+  final int statusCode;
+  final bool ok;
+  final String code;
+  final String handoffId;
+  final String claimExpiresAt;
+  final bool alreadyOwned;
+  final bool alreadyAcked;
+  final String message;
+  final Map<String, dynamic> raw;
+
+  bool get isConflict => statusCode == 409;
+  bool get isLegacyUnsupported =>
+      code == StationClaim.codeClaimUnsupported || statusCode == 404;
 }

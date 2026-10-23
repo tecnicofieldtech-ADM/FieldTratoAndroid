@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 
 import "../../../helpers/scale_comm.dart";
+import "../../../helpers/scale_connect.dart";
 import "../../../repo/config_repo.dart";
 import "../data/fabricacao_repo.dart";
 import "../domain/fabricacao_flow.dart";
@@ -75,19 +76,6 @@ class _FabricacaoRecebimentoPesoCaminhaoPageState
     super.dispose();
   }
 
-  ScaleModel _mapModel(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      default:
-        return ScaleModel.raw;
-    }
-  }
-
   Future<void> _boot() async {
     setState(() => _loadError = null);
     try {
@@ -142,10 +130,8 @@ class _FabricacaoRecebimentoPesoCaminhaoPageState
 
   Future<void> _connectScale() async {
     await _disconnectScale();
-    final host = (await _cfg.getHostBalanca()).trim();
-    final port = await _cfg.getPortaBalanca();
-    final modelInt = await _cfg.getModeloBalanca();
-    if (host.isEmpty || port <= 0) {
+    final link = await loadScaleLink(_cfg);
+    if (!link.canConnect) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -161,9 +147,9 @@ class _FabricacaoRecebimentoPesoCaminhaoPageState
     if (mounted) setState(() => _scaleConnecting = true);
 
     final scale = ScaleComm(
-      host: host,
-      port: port,
-      model: _mapModel(modelInt),
+      host: link.host.isEmpty ? "127.0.0.1" : link.host,
+      port: link.port <= 0 ? 1 : link.port,
+      model: link.model,
       allowNegative: true,
       autoReconnect: true,
       connectTimeout: const Duration(seconds: 5),
@@ -210,11 +196,11 @@ class _FabricacaoRecebimentoPesoCaminhaoPageState
     });
 
     try {
-      await scale.connect();
+      await connectScaleFromLink(scale, link);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Falha ao conectar balança TCP ($host:$port): $e")),
+          SnackBar(content: Text("Falha ao conectar balança: $e")),
         );
       }
     } finally {

@@ -1,9 +1,9 @@
 (function (global) {
   /** Versão esperada do pacote web + exe (atualize junto com UApiVersion.pas). */
   const EXPECTED = {
-    version: "1.0.18",
-    build: 2032,
-    label: "1.0.18+2032",
+    version: "1.0.19",
+    build: 2038,
+    label: "1.0.19+2038",
   };
 
   async function fetchRunning(configFallback) {

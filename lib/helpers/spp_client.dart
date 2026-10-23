@@ -75,12 +75,17 @@ class SppClient {
   }
 
   Future<void> disconnect() async {
-    await _inputSub?.cancel();
+    try {
+      await _inputSub?.cancel();
+    } catch (_) {}
     _inputSub = null;
 
-    if (_connection != null) {
-      await _connection!.close();
-      _connection = null;
+    final conn = _connection;
+    _connection = null;
+    if (conn != null) {
+      try {
+        await conn.close();
+      } catch (_) {}
     }
 
     _setStatus(SppConnectionStatus.disconnected);

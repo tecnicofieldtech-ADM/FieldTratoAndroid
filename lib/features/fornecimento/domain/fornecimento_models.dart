@@ -2,7 +2,7 @@
 
 import "../data/fornecimento_tables.dart";
 
-enum ModeloBalanca { topcon, dinamica, alfa, generale, hook, outro }
+enum ModeloBalanca { topcon, dinamica, alfa, generale, hook, ptm, outro }
 
 // =========================================================
 // Helpers locais de parse (robustos)
@@ -113,6 +113,7 @@ class CurralPrev {
     this.previstoCadastroKg,
     this.isUltimoTrato = false,
     this.realizadoKg = 0,
+    this.realizadoApiKg,
     this.faltaKg = 0,
     this.concluido = false,
     this.rfid,
@@ -139,6 +140,11 @@ class CurralPrev {
   final bool isUltimoTrato;
 
   double realizadoKg;
+
+  /// Realizado já embutido no PREVISTO_RECALCULADO da API (PREVISAO.REALIZADO_KG).
+  /// Null = não informado (trata como igual a [realizadoKg], sem extra local).
+  final double? realizadoApiKg;
+
   double faltaKg;
   bool concluido;
 
@@ -173,12 +179,23 @@ class CurralPrev {
     return previstoKg;
   }
 
-  /// Meta do último trato já com o saldo dos anteriores (não encolhe).
-  double get aFornecerUltimoTratoKg {
+  /// P do mapa e dos totais. No último trato usa o previsto calculado.
+  double get previstoMapaKg {
+    if (isUltimoTrato) {
+      final rec = previstoRecalculadoKg ?? 0;
+      if (rec > 0) return rec;
+    }
     final orig = previstoOriginalKg ?? 0;
     if (orig > 0) return orig;
+    return previstoKg;
+  }
+
+  /// Meta do último trato: previsto calculado (saldo), senão o original.
+  double get aFornecerUltimoTratoKg {
     final rec = previstoRecalculadoKg ?? 0;
     if (rec > 0) return rec;
+    final orig = previstoOriginalKg ?? 0;
+    if (orig > 0) return orig;
     return previstoKg;
   }
 
@@ -190,6 +207,7 @@ class CurralPrev {
 
   CurralPrev copyWith({
     double? realizadoKg,
+    double? realizadoApiKg,
     double? faltaKg,
     bool? concluido,
     String? idFornecimento,
@@ -216,6 +234,7 @@ class CurralPrev {
       previstoCadastroKg: previstoCadastroKg ?? this.previstoCadastroKg,
       isUltimoTrato: isUltimoTrato ?? this.isUltimoTrato,
       realizadoKg: realizadoKg ?? this.realizadoKg,
+      realizadoApiKg: realizadoApiKg ?? this.realizadoApiKg,
       faltaKg: faltaKg ?? this.faltaKg,
       concluido: concluido ?? this.concluido,
       rfid: rfid,
@@ -326,6 +345,14 @@ class CurralPrev {
         previstoOriginal > 0 ? previstoOriginal : previstoExibicao;
     final realizado =
         dAny(["realizadoKg", "realizado", "REALIZADO_KG", "REALIZADO"]);
+    final realizadoApiRaw = pickAny([
+      "realizadoApiKg",
+      "realizado_api_kg",
+      "realizadoApi",
+      "REALIZADO_API_KG",
+    ]);
+    final realizadoApi =
+        realizadoApiRaw == null ? null : _toDouble(realizadoApiRaw);
 
     final linha = snAny(["linha", "LINHA", "linha_local"]);
 
@@ -360,6 +387,7 @@ class CurralPrev {
       previstoCadastroKg: previstoCadastro > 0 ? previstoCadastro : null,
       isUltimoTrato: isUltimoTrato,
       realizadoKg: realizado,
+      realizadoApiKg: realizadoApi,
       faltaKg: falta,
       concluido: concluido,
       rfid: snAny(["rfid", "RFID"]),

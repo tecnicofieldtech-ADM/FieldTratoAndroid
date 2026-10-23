@@ -1,0 +1,7 @@
+Leia primeiro: MANUAL_SIMULADOR.txt
+
+Atalho: Iniciar-Simulador.bat
+Painel: http://localhost:8787
+TCP: porta 8899
+
+Requisito: Node.js LTS  https://nodejs.org

@@ -5,6 +5,7 @@ import "package:flutter/material.dart";
 import "package:permission_handler/permission_handler.dart";
 
 import "../../../helpers/scale_comm.dart";
+import "../../../helpers/scale_connect.dart";
 import "../../../constants/config_options.dart";
 import "../../../repo/config_repo.dart";
 import "../../../repo/dieta_repo.dart";
@@ -194,19 +195,6 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
     return v > 0 ? v : 0;
   }
 
-  ScaleModel _mapModel(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      default:
-        return ScaleModel.raw;
-    }
-  }
-
   Future<void> _loadDietas() async {
     setState(() => _loadingDietas = true);
     try {
@@ -232,6 +220,7 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
   }
 
   Future<void> _connectScale() async {
+    final link = await loadScaleLink(_cfg);
     if (!await _ensureOnFieldTratoNetwork(abrirWifi: false)) {
       if (mounted) {
         setState(() {
@@ -244,10 +233,7 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
 
     await _disconnectScale();
 
-    final host = (await _cfg.getHostBalanca()).trim();
-    final port = await _cfg.getPortaBalanca();
-    final modelInt = await _cfg.getModeloBalanca();
-    if (host.isEmpty || port <= 0) {
+    if (!link.canConnect) {
       if (mounted) {
         setState(() {
           _scaleConnecting = false;
@@ -260,9 +246,9 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
     if (mounted) setState(() => _scaleConnecting = true);
 
     final scale = ScaleComm(
-      host: host,
-      port: port,
-      model: _mapModel(modelInt),
+      host: link.host.isEmpty ? "127.0.0.1" : link.host,
+      port: link.port <= 0 ? 1 : link.port,
+      model: link.model,
       allowNegative: true,
       autoReconnect: true,
       connectTimeout: const Duration(seconds: 5),
@@ -302,7 +288,7 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
       _aplicarLeituraBalanca(w.weight, w.readAt);
     });
 
-    await scale.connect();
+    await connectScaleFromLink(scale, link);
     if (mounted) {
       _aplicarLeituraBalanca(scale.lastWeight, scale.lastReadAt);
       setState(() => _scaleConnecting = false);
@@ -402,11 +388,9 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
       _msg("Selecione o trato.");
       return;
     }
+    final link = await loadScaleLink(_cfg);
     if (!await _ensureOnFieldTratoNetwork()) return;
-
-    final host = (await _cfg.getHostBalanca()).trim();
-    final port = await _cfg.getPortaBalanca();
-    if (host.isEmpty || port <= 0) {
+    if (!link.canConnect) {
       await _alertBalanca(
         "Configure o IP e a porta da balança em Configuração antes de iniciar.",
       );
@@ -422,8 +406,8 @@ class _CarregamentoSemVinculoPageState extends State<CarregamentoSemVinculoPage>
       if (!mounted) return;
       if (_scale == null || _scale!.lastStatus != ScaleStatus.connected) {
         await _alertBalanca(
-          "Não foi possível conectar à balança em $host:$port.\n"
-          "Verifique a rede Wi‑Fi e as configurações da balança.",
+          "Não foi possível conectar à balança.\n"
+          "Verifique a rede Wi‑Fi ou as configurações da PTM AV40/AV50.",
         );
         return;
       }

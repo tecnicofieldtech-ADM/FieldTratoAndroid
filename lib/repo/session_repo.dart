@@ -19,6 +19,17 @@ class SessionRepo {
     await sp.setString(_kLastUserId, userId);
   }
 
+  /// Só marca o último usuário (pré-seleção no login). Não mantém sessão ativa.
+  Future<void> saveLastUserOnly({required String userId}) async {
+    final sp = await SharedPreferences.getInstance();
+    final id = userId.trim();
+    if (id.isEmpty) return;
+    await sp.setString(_kLastUserId, id);
+    await sp.remove(_kUserId);
+    await sp.remove(_kUserNome);
+    await sp.remove(_kUserLogin);
+  }
+
   /// Último usuário logado (mantido após logout).
   Future<String?> getLastUserId() async {
     final sp = await SharedPreferences.getInstance();

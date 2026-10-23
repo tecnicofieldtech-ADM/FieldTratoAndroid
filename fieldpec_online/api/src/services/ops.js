@@ -1,5 +1,6 @@
 const { query } = require("../db");
 const { pickStr, toNum, parseDate } = require("../util/numbers");
+const excelImport = require("./excelImport");
 
 function requireTenant(clienteCodigo) {
   const c = String(clienteCodigo || "").trim().toUpperCase();
@@ -42,12 +43,21 @@ async function saveFabricacao(clienteCodigo, body = {}) {
     }
   }
 
+  const importacaoId =
+    pickStr(body, ["importacao_id", "IMPORTACAO_ID"]) || null;
+  const importacao = await excelImport.resolveImportacaoForOps(
+    cc,
+    importacaoId,
+  );
+  const importacaoIdOk = importacao ? importacao.id : null;
+
   const ins = await query(
     `INSERT INTO fabricacoes (
        cliente_codigo, id_local, handoff_id, id_fazenda, id_dieta, data_fab,
        id_usuario, id_operador, id_vagao, qtde_prevista, qtde_realizada,
-       ms_prevista, ms_realizada, hora_inicio, hora_fim, lote_fabricacao, payload
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ms_prevista, ms_realizada, hora_inicio, hora_fim, lote_fabricacao,
+       payload, importacao_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING id`,
     [
       cc,
@@ -67,6 +77,7 @@ async function saveFabricacao(clienteCodigo, body = {}) {
       pickStr(body, ["hora_fim", "HORA_FIM"]) || null,
       lote || null,
       JSON.stringify({ ...body, cliente_codigo: cc }),
+      importacaoIdOk,
     ],
   );
   const fabId = ins.rows[0].id;
@@ -101,6 +112,7 @@ async function saveFabricacao(clienteCodigo, body = {}) {
       ...f,
       id_fabricacao: idLocal || f.id_fabricacao,
       handoff_id_fabricacao: handoffId || f.handoff_id_fabricacao,
+      importacao_id: f.importacao_id || f.IMPORTACAO_ID || importacaoIdOk,
     });
     fornProcessados++;
   }
@@ -125,28 +137,38 @@ async function saveFornecimento(clienteCodigo, body = {}) {
   );
   const trato = Math.trunc(toNum(pickStr(body, ["trato", "TRATO"])));
   const idBaia = pickStr(body, ["id_baia", "ID_BAIA", "IDCURRAL", "idcurral"]);
+  const idCadastro = pickStr(body, ["id_cadastro", "ID_CADASTRO"]);
+  const importacaoId =
+    pickStr(body, ["importacao_id", "IMPORTACAO_ID"]) || null;
+  const pesoInicio = toNum(pickStr(body, ["peso_inicio", "PESO_INICIO"]));
+  const pesoFim = toNum(pickStr(body, ["peso_fim", "PESO_FIM"]));
 
-  if (idForn && dataForn && trato > 0) {
+  if (idCadastro) {
     const ex = await query(
       `SELECT id FROM fornecimentos
-       WHERE cliente_codigo = $1
-         AND id_fornecimento = $2 AND data_forn = $3 AND trato = $4
-         AND coalesce(id_baia,'') = coalesce($5,'')
+       WHERE cliente_codigo = $1 AND id_cadastro = $2
        LIMIT 1`,
-      [cc, idForn, dataForn, trato, idBaia || null],
+      [cc, idCadastro],
     );
     if (ex.rows[0]) {
       return { success: true, id: ex.rows[0].id, duplicate: true, cliente_codigo: cc };
     }
   }
 
+  const importacao = await excelImport.resolveImportacaoForOps(
+    cc,
+    importacaoId,
+  );
+  const importacaoIdOk = importacao ? importacao.id : null;
+
   const ins = await query(
     `INSERT INTO fornecimentos (
        cliente_codigo, id_fornecimento, id_fabricacao_local, handoff_id_fabricacao,
        id_baia, id_racao, data_forn, trato, realizado, ms_dieta_realizada,
        id_usuario_lancamento, id_tratador, id_dieta_realizada, hora_inicio,
-       hora_fim, lote_fabricacao, payload
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       hora_fim, lote_fabricacao, payload, id_cadastro, importacao_id,
+       peso_inicio, peso_fim
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      RETURNING id`,
     [
       cc,
@@ -166,22 +188,21 @@ async function saveFornecimento(clienteCodigo, body = {}) {
       pickStr(body, ["hora_fim", "HORA_FIM"]) || null,
       pickStr(body, ["lote_fabricacao", "CFORN_LOTE_FABRICACAO"]) || null,
       JSON.stringify({ ...body, cliente_codigo: cc }),
+      idCadastro || null,
+      importacaoIdOk,
+      pesoInicio || null,
+      pesoFim || null,
     ],
   );
 
   if (idForn && dataForn && idBaia && trato > 0) {
+    const delta = toNum(pickStr(body, ["realizado", "REALIZADO"]));
     await query(
-      `UPDATE previsao_trato SET realizado = $1, updated_at = now()
+      `UPDATE previsao_trato
+       SET realizado = COALESCE(realizado, 0) + $1, updated_at = now()
        WHERE cliente_codigo = $2 AND id_fornecimento = $3 AND data = $4
          AND id_baia = $5 AND trato = $6`,
-      [
-        toNum(pickStr(body, ["realizado", "REALIZADO"])),
-        cc,
-        idForn,
-        dataForn,
-        idBaia,
-        trato,
-      ],
+      [delta, cc, idForn, dataForn, idBaia, trato],
     );
   }
 

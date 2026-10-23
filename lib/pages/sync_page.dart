@@ -44,6 +44,7 @@ class _SyncPageState extends State<SyncPage> {
 
   bool _running = false;
   bool _auditRunning = false;
+  SyncMode? _runningMode;
   int _currentIndex = -1;
   String _currentTitle = "";
   List<SyncStep> _steps = [];
@@ -165,11 +166,60 @@ class _SyncPageState extends State<SyncPage> {
     return null;
   }
 
-  Future<void> _runSync() async {
-    if (_running || _auditRunning) return;
+  bool _isLoopbackHost(String host) {
+    final h = host.trim().toLowerCase();
+    if (h.isEmpty) return true;
+    if (h == "localhost" || h == "127.0.0.1" || h == "::1") return true;
+    if (h.startsWith("127.")) return true;
+    return false;
+  }
+
+  Future<bool> _preflightSyncNetwork() async {
+    final cfg = await _cfgRepo.getConfig();
+    if (!mounted) return false;
+    if (cfg == null) {
+      _toast("Config nao encontrada. Abra Config e salve HOST/PORTA.");
+      return false;
+    }
+
+    final baseUrl = _cfgRepo.buildBaseUrl(cfg);
+    final host = (cfg["HOST_API"] ??
+            cfg["HOST"] ??
+            cfg["SERVER"] ??
+            cfg["IP"] ??
+            cfg["API_HOST"] ??
+            "")
+        .toString()
+        .trim();
+
+    if (_isLoopbackHost(host) ||
+        baseUrl.contains("127.0.0.1") ||
+        baseUrl.contains("localhost")) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("HOST da API invalido"),
+          content: Text(
+            "HOST atual aponta para o proprio tablet ($baseUrl).\n\n"
+            "No TGC o fornecimento so sobe no Sync, e a request precisa "
+            "ir para o IP do servidor da fazenda (ex.: 192.168.x.x), "
+            "nao 127.0.0.1.\n\n"
+            "Ajuste em Config > HOST_API / PORTA (padrao TGC: 3001).",
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Entendi"),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
 
     final ssid = await WifiGuard.getCurrentSsid();
-    if (!mounted) return;
+    if (!mounted) return false;
+
     if (WifiGuard.isFieldTratoSsid(ssid)) {
       final trocar = await showDialog<bool>(
             context: context,
@@ -177,7 +227,8 @@ class _SyncPageState extends State<SyncPage> {
               title: const Text("Rede para sincronizacao"),
               content: Text(
                 "Rede atual: ${ssid.isEmpty ? "FieldTrato" : ssid}.\n\n"
-                "Para sincronizar, conecte no Wi-Fi do servidor da fazenda (nao FieldTrato*).",
+                "No Wi-Fi FieldTrato* a sync NAO envia nada ao servidor.\n"
+                "Conecte no Wi-Fi da fazenda (onde a API TGC responde) e tente de novo.",
               ),
               actions: [
                 TextButton(
@@ -196,11 +247,69 @@ class _SyncPageState extends State<SyncPage> {
       if (trocar) {
         await WifiGuard.openWifiSelector();
       }
-      return;
+      return false;
     }
+
+    if (!WifiGuard.isSsidIdentifiable(ssid)) {
+      final seguir = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text("Wi-Fi nao identificado"),
+              content: const Text(
+                "Nao foi possivel ler o SSID (permissao de localizacao "
+                "ou OEM).\n\n"
+                "Se o tablet ainda estiver no Wi-Fi FieldTrato*, as requests "
+                "nao chegam na API TGC.\n\n"
+                "Confirme a rede da fazenda e continue somente se tiver certeza.",
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text("Voltar"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text("Continuar sync"),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!seguir) return false;
+    }
+
+    return true;
+  }
+
+  String _modeLabel(SyncMode mode) {
+    switch (mode) {
+      case SyncMode.downloadOnly:
+        return "Baixar dados";
+      case SyncMode.uploadOnly:
+        return "Enviar pendências";
+      case SyncMode.full:
+        return "Baixar e enviar tudo";
+    }
+  }
+
+  Future<void> _runSync(SyncMode mode) async {
+    if (_running || _auditRunning) return;
+
+    final okNet = await _preflightSyncNetwork();
+    if (!okNet || !mounted) return;
+
+    final cfg = await _cfgRepo.getConfig();
+    if (!mounted) return;
+    final baseUrl = cfg == null ? "" : _cfgRepo.buildBaseUrl(cfg);
+    final backend = int.tryParse((cfg?["BACKEND"] ?? "0").toString()) ?? 0;
+    final ssid = await WifiGuard.getCurrentSsid();
+    if (!mounted) return;
+
+    final modeLabel = _modeLabel(mode);
 
     setState(() {
       _running = true;
+      _runningMode = mode;
       _currentIndex = -1;
       _currentTitle = "";
       _log.clear();
@@ -213,8 +322,21 @@ class _SyncPageState extends State<SyncPage> {
       // ✅ antes de começar, atualiza cards
       await _loadPendencias();
 
-      _addLog("Preparando etapas de sincronização...");
-      _steps = await _orchestrator.buildSteps(log: _addLog);
+      _addLog("Modo: $modeLabel");
+      _addLog("Destino API: $baseUrl");
+      _addLog(
+        "Backend: ${backend == 2 ? "Outros (TGC)" : "codigo $backend"} · "
+        "SSID: ${WifiGuard.isSsidIdentifiable(ssid) ? ssid : "(nao lido)"}",
+      );
+      if (backend != 2) {
+        _addLog(
+          "AVISO: cliente TGC deve usar Config > Backend = 'Outros (TGC)'. "
+          "Com outro backend a ordem fab→fornecimento fica incorreta.",
+        );
+      }
+
+      _addLog("Preparando etapas ($modeLabel)...");
+      _steps = await _orchestrator.buildSteps(log: _addLog, mode: mode);
       _addLog("Total de etapas: ${_steps.length}");
 
       for (int i = 0; i < _steps.length; i++) {
@@ -256,13 +378,15 @@ class _SyncPageState extends State<SyncPage> {
       }
 
       swAll.stop();
-      _addLog("🏁 FIM: sincronização concluída em ${_fmtMs(swAll.elapsedMilliseconds)}");
-      _toast("Sincronização concluída com sucesso.");
+      _addLog(
+        "🏁 FIM: $modeLabel concluído em ${_fmtMs(swAll.elapsedMilliseconds)}",
+      );
+      _toast("$modeLabel concluído com sucesso.");
     } catch (e, st) {
       swAll.stop();
       _addLog("❌ FALHA GERAL: $e");
       _addLog("🧠 Stack: ${st.toString().split("\n").take(6).join(" | ")}");
-      _toast("Falha na sincronização.");
+      _toast("Falha: $modeLabel.");
     } finally {
       // ✅ depois da sync, atualiza cards de novo (muito importante)
       await _loadPendencias();
@@ -270,10 +394,66 @@ class _SyncPageState extends State<SyncPage> {
       if (mounted) {
         setState(() {
           _running = false;
+          _runningMode = null;
           _currentTitle = "Pronto";
         });
       }
     }
+  }
+
+  Widget _syncActionButton({
+    required SyncMode mode,
+    required IconData icon,
+    required String label,
+    required Color color,
+    bool primary = false,
+  }) {
+    final busy = _running || _auditRunning;
+    final thisRunning = _running && _runningMode == mode;
+    return SizedBox(
+      width: double.infinity,
+      height: primary ? 52 : 48,
+      child: primary
+          ? ElevatedButton.icon(
+              onPressed: busy ? null : () => _runSync(mode),
+              icon: thisRunning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(icon),
+              label: Text(thisRunning ? "Sincronizando..." : label),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            )
+          : OutlinedButton.icon(
+              onPressed: busy ? null : () => _runSync(mode),
+              icon: thisRunning
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: color,
+                      ),
+                    )
+                  : Icon(icon, color: busy ? null : color),
+              label: Text(thisRunning ? "Sincronizando..." : label),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: color,
+                side: BorderSide(color: color.withValues(alpha: 0.55)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+    );
   }
 
   Future<void> _enviarAuditoriaFornecimento() async {
@@ -521,27 +701,26 @@ class _SyncPageState extends State<SyncPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton.icon(
-                      onPressed: (_running || _auditRunning) ? null : _runSync,
-                      icon: _running
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.sync),
-                      label: Text(_running ? "Sincronizando..." : "Sincronizar Agora"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF25A7CF),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                    ),
+                  _syncActionButton(
+                    mode: SyncMode.downloadOnly,
+                    icon: Icons.cloud_download_outlined,
+                    label: "Baixar dados",
+                    color: const Color(0xFF2E7D32),
+                  ),
+                  const SizedBox(height: 8),
+                  _syncActionButton(
+                    mode: SyncMode.uploadOnly,
+                    icon: Icons.cloud_upload_outlined,
+                    label: "Enviar pendências",
+                    color: const Color(0xFFEF6C00),
+                  ),
+                  const SizedBox(height: 8),
+                  _syncActionButton(
+                    mode: SyncMode.full,
+                    icon: Icons.sync,
+                    label: "Baixar e enviar tudo",
+                    color: const Color(0xFF25A7CF),
+                    primary: true,
                   ),
                   const SizedBox(height: 10),
                   SizedBox(

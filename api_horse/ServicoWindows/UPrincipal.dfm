@@ -1,6 +1,5 @@
-object ApiRFeed: TApiRFeed
-  Name = 'ApiRFeed'
-  DisplayName = 'RFeed API Horse'
+object ApiFiedlTrato: TApiFiedlTrato
+  DisplayName = 'ApiFiedlTrato'
   OnStart = ServiceStart
   OnStop = ServiceStop
   Height = 600

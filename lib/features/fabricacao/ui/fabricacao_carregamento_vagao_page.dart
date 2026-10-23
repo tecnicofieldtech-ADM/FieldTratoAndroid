@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flutter/material.dart";
 
 import "../../../helpers/scale_comm.dart";
+import "../../../helpers/scale_connect.dart";
 import "../../../repo/config_repo.dart";
 import "../../../services/session_service.dart";
 import "../data/fabricacao_repo.dart";
@@ -64,19 +65,6 @@ class _FabricacaoCarregamentoVagaoPageState
     super.dispose();
   }
 
-  ScaleModel _mapModel(int v) {
-    switch (v) {
-      case 0:
-        return ScaleModel.topcom;
-      case 1:
-        return ScaleModel.dg500;
-      case 2:
-        return ScaleModel.alfa;
-      default:
-        return ScaleModel.raw;
-    }
-  }
-
   Future<void> _boot() async {
     setState(() {
       _loadError = null;
@@ -108,11 +96,9 @@ class _FabricacaoCarregamentoVagaoPageState
   Future<void> _connectScale() async {
     await _disconnectScale();
 
-    final host = (await _cfg.getHostBalanca()).trim();
-    final port = await _cfg.getPortaBalanca();
-    final modelInt = await _cfg.getModeloBalanca();
+    final link = await loadScaleLink(_cfg);
 
-    if (host.isEmpty || port <= 0) {
+    if (!link.canConnect) {
       if (mounted) {
         setState(() {
           _scaleConnecting = false;
@@ -125,9 +111,9 @@ class _FabricacaoCarregamentoVagaoPageState
     setState(() => _scaleConnecting = true);
 
     final scale = ScaleComm(
-      host: host,
-      port: port,
-      model: _mapModel(modelInt),
+      host: link.host.isEmpty ? "127.0.0.1" : link.host,
+      port: link.port <= 0 ? 1 : link.port,
+      model: link.model,
       allowNegative: true,
       autoReconnect: true,
       connectTimeout: const Duration(seconds: 3),
@@ -169,7 +155,7 @@ class _FabricacaoCarregamentoVagaoPageState
       });
     });
 
-    await scale.connect();
+    await connectScaleFromLink(scale, link);
     if (mounted) setState(() => _scaleConnecting = false);
   }
 

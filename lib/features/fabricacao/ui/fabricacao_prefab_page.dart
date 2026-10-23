@@ -63,7 +63,10 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         dietas = await _dietaRepo.listAll();
       }
 
-      final users = await _userRepo.listAll();
+      final isTgc = ConfigOptions.isTgcBackend(backend);
+      final users = isTgc
+          ? await _userRepo.listOperadoresPa()
+          : await _userRepo.listAll();
 
       final amostra = dietas
           .take(5)
@@ -89,7 +92,10 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
         if (_dietas.isNotEmpty) {
           _dietaId = (_dietas.first["ID"] ?? "").toString();
         }
-        if (_users.isNotEmpty) {
+        // TGC: campo começa vazio — o operador de pá é obrigatório.
+        if (isTgc) {
+          _operadorId = null;
+        } else if (_users.isNotEmpty) {
           _operadorId = (_users.first["ID"] ?? "").toString();
         }
       });
@@ -97,6 +103,11 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
       if (_dietas.isEmpty) {
         _msg(
           "Nenhuma dieta encontrada para a fabricação. Verifique sincronização e vínculo de fazenda.",
+        );
+      }
+      if (isTgc && users.isEmpty) {
+        _msg(
+          "Nenhum operador de pá (OPERADOR=1). Sincronize os usuários do TGC.",
         );
       }
 
@@ -365,8 +376,9 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: DropdownButtonFormField<String>(
-                                  key: ValueKey(_operadorId),
+                                  key: ValueKey(_operadorId ?? ""),
                                   initialValue: _operadorId,
+                                  hint: const Text("Selecione o operador"),
                                   items: _users
                                       .map(
                                         (u) => DropdownMenuItem<String>(
@@ -376,8 +388,10 @@ class _FabricacaoPreFabPageState extends State<FabricacaoPreFabPage> {
                                         ),
                                       )
                                       .toList(),
-                                  onChanged: (v) =>
-                                      setState(() => _operadorId = v),
+                                  onChanged: _users.isEmpty
+                                      ? null
+                                      : (v) =>
+                                          setState(() => _operadorId = v),
                                   decoration: const InputDecoration(
                                     labelText: "Operador",
                                     border: InputBorder.none,

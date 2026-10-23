@@ -15,8 +15,13 @@ implementation
 uses
   System.Classes,
   System.DateUtils,
+  System.Hash,
   System.IniFiles,
   System.IOUtils,
+  Data.DB,
+  FireDAC.Stan.Error,
+  FireDAC.Stan.Option,
+  FireDAC.Stan.Param,
   UdmTGC,
   Controllers.Mirror;
 
@@ -149,36 +154,58 @@ begin
   end;
 end;
 
-function ParseHoraRef(const S: string): TDateTime;
+function TryParseHoraRef(const S: string; out Hora: TDateTime): Boolean;
 var
   Txt: string;
-  P: Integer;
+  P, H, M, Sec: Integer;
+  Parts: TArray<string>;
 begin
-  Result := 0;
+  Result := False;
+  Hora := 0;
   Txt := Trim(S);
   if Txt = '' then
     Exit;
+
   if Pos('T', Txt) > 0 then
-  begin
-    P := Pos('T', Txt);
-    Txt := Copy(Txt, P + 1, MaxInt);
-  end
+    Txt := Trim(Copy(Txt, Pos('T', Txt) + 1, MaxInt))
   else if Pos(' ', Txt) > 0 then
-  begin
-    P := LastDelimiter(' ', Txt);
-    Txt := Copy(Txt, P + 1, MaxInt);
-  end;
+    Txt := Trim(Copy(Txt, LastDelimiter(' ', Txt) + 1, MaxInt));
+
+  P := Pos('.', Txt);
+  if P > 0 then
+    Txt := Copy(Txt, 1, P - 1);
+  P := Pos('+', Txt);
+  if P > 1 then
+    Txt := Copy(Txt, 1, P - 1);
+  P := Pos('-', Txt);
+  if P > 2 then
+    Txt := Copy(Txt, 1, P - 1);
+  if (Txt <> '') and (UpCase(Txt[Length(Txt)]) = 'Z') then
+    Delete(Txt, Length(Txt), 1);
+
   Txt := Trim(StringReplace(Txt, '.', ':', [rfReplaceAll]));
-  if Pos(':', Txt) = 0 then
+  Parts := Txt.Split([':']);
+  if Length(Parts) < 2 then
     Exit;
-  try
-    if Length(Txt) = 5 then
-      Result := StrToTime(Txt + ':00')
-    else
-      Result := StrToTime(Copy(Txt, 1, 8));
-  except
+
+  H := StrToIntDef(Trim(Parts[0]), -1);
+  M := StrToIntDef(Trim(Parts[1]), -1);
+  Sec := 0;
+  if Length(Parts) >= 3 then
+    Sec := StrToIntDef(Trim(Parts[2]), 0);
+  if (H < 0) or (H > 23) or (M < 0) or (M > 59) then
+    Exit;
+  if (Sec < 0) or (Sec > 59) then
+    Sec := 0;
+
+  Hora := EncodeTime(Word(H), Word(M), Word(Sec), 0);
+  Result := True;
+end;
+
+function ParseHoraRef(const S: string): TDateTime;
+begin
+  if not TryParseHoraRef(S, Result) then
     Result := 0;
-  end;
 end;
 
 procedure SetParamAsFloatBR(Q: TFDQuery; const ParamName, Value: string);
@@ -315,18 +342,18 @@ end;
 
 procedure SetParamAsTimeStr(Q: TFDQuery; const ParamName, Value: string);
 var
+  P: TFDParam;
   T: TDateTime;
 begin
-  if Trim(Value) = '' then
+  P := Q.ParamByName(ParamName);
+  P.DataType := ftTime;
+  if not TryParseHoraRef(Value, T) then
   begin
-    Q.ParamByName(ParamName).Clear;
+    P.Clear;
+    P.Bound := True;
     Exit;
   end;
-  T := ParseHoraRef(Value);
-  if T > 0 then
-    Q.ParamByName(ParamName).AsTime := T
-  else
-    Q.ParamByName(ParamName).Clear;
+  P.AsTime := Frac(T);
 end;
 
 function TgcUsuarioId: string;
@@ -672,11 +699,13 @@ begin
       'INSERT INTO CAD_BATIDA ( ' +
       '  CBT_CODIGO, CBT_CODRACAOPROD, CBT_QTDEBATIDA, CBT_CUSTO, CBT_DATA, ' +
       '  CBT_INICIO, CBT_FIM, CBT_USUARIO, CBT_QTDEPREVISTA, CBT_LOTE_FABRICACAO, ' +
-      '  CBT_NOMEOPERADOR, CBT_COD_OPERADOR_PA, CBT_NOME_MOTORISTA ' +
+      '  CBT_NOMEOPERADOR, CBT_COD_OPERADOR_PA, CBT_NOME_MOTORISTA, ' +
+      '  CBT_TOT_BATIDA_ENVIADA ' +
       ') VALUES ( ' +
       '  :CBT_CODIGO, :CBT_CODRACAOPROD, :CBT_QTDEBATIDA, :CBT_CUSTO, :CBT_DATA, ' +
       '  :CBT_INICIO, :CBT_FIM, :CBT_USUARIO, :CBT_QTDEPREVISTA, :CBT_LOTE_FABRICACAO, ' +
-      '  :CBT_NOMEOPERADOR, :CBT_COD_OPERADOR_PA, :CBT_NOME_MOTORISTA ' +
+      '  :CBT_NOMEOPERADOR, :CBT_COD_OPERADOR_PA, :CBT_NOME_MOTORISTA, ' +
+      '  :CBT_TOT_BATIDA_ENVIADA ' +
       ')';
     Q.ParamByName('CBT_CODIGO').AsInteger := NextId;
     Q.ParamByName('CBT_CODRACAOPROD').AsString := CodRacaoProd;
@@ -687,6 +716,9 @@ begin
     SetParamAsTimeStr(Q, 'CBT_FIM', HoraFim);
     SetParamAsIntStr(Q, 'CBT_USUARIO', Usuario);
     SetParamAsIntRound(Q, 'CBT_QTDEPREVISTA', QtdePrevista);
+    { Total enviado pela automacao. CAD_BATIDA_ATUALIZA_HORA usa este valor
+      no previsto do cabecalho quando for maior que zero. }
+    SetParamAsIntRound(Q, 'CBT_TOT_BATIDA_ENVIADA', QtdePrevista);
     Q.ParamByName('CBT_LOTE_FABRICACAO').AsString := LoteFab;
     Q.ParamByName('CBT_NOMEOPERADOR').AsString := NomeOp;
     SetParamAsIntStr(Q, 'CBT_COD_OPERADOR_PA', CodOperadorPA);
@@ -702,7 +734,7 @@ procedure InsertFabricacaoInsumoTGC(
   Conn: TFDConnection;
   const Item: TJSONObject;
   const DefaultCodBatida, DefaultDataFab, DefaultUsuario,
-    DefaultOperador, DefaultCodRacao: string);
+    DefaultOperador, DefaultCodRacao, DefaultHoraIni, DefaultHoraFim: string);
 var
   Q: TFDQuery;
   NextId: Integer;
@@ -734,8 +766,13 @@ begin
     if Trim(DataFab) = '' then
       raise Exception.Create('Data da fabricacao ausente no insumo.');
 
-    HoraIni := JSONStrFirst(Item, ['hora_ini', 'DBT_HORA_INI', 'hora_inicio', 'HORA_INI']);
-    HoraFim := JSONStrFirst(Item, ['hora_fim', 'DBT_HORA_FIM', 'HORA_FIM']);
+    HoraIni := JSONStrFirst(Item,
+      ['hora_ini', 'DBT_HORA_INI', 'hora_inicio', 'HORA_INI', 'HORA_INICIO'],
+      DefaultHoraIni);
+    HoraFim := JSONStrFirst(Item,
+      ['hora_fim', 'DBT_HORA_FIM', 'HORA_FIM'], DefaultHoraFim);
+    if Trim(HoraFim) = '' then
+      HoraFim := HoraIni;
     Hora := JSONStrFirst(Item, ['hora', 'DBT_HORA', 'HORA'], HoraIni);
     MsInsumo := JSONStrFirst(Item, ['ms_insumo', 'DBT_MS', 'DBT_PREV_MS'], '0');
 
@@ -801,15 +838,273 @@ begin
   end;
 end;
 
+type
+  EFabSyncConflict = class(Exception);
+  EFabSyncRetry = class(Exception);
+
+  TFabSyncRow = record
+    Found: Boolean;
+    Cbt: Integer;
+    Hash: string;
+  end;
+
+const
+  CFabSyncOrigem = 'FIELDTRATO';
+
+function CanonicalQty(const S: string): string;
+var
+  V: Double;
+  Neg: Boolean;
+  Milli, Whole, Frac: Int64;
+begin
+  V := ParseQtde(S);
+  Neg := V < 0;
+  if Neg then
+    V := -V;
+  Milli := Round(V * 1000.0);
+  Whole := Milli div 1000;
+  Frac := Milli mod 1000;
+  Result := IntToStr(Whole) + '.' + Format('%.3d', [Frac]);
+  if Neg then
+    Result := '-' + Result;
+end;
+
+function CanonicalFabricacaoHash(const Body: TJSONObject): string;
+var
+  Lines: TStringList;
+  Itens: TJSONArray;
+  Item: TJSONObject;
+  I: Integer;
+  Canon, Fim: string;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.Sorted := True;
+    Lines.Duplicates := dupAccept;
+    Itens := JSONArrayFirst(Body, ['itens', 'FabricacaoAlimentosTGC', 'TGCFabricacao']);
+    if Assigned(Itens) then
+      for I := 0 to Itens.Count - 1 do
+      begin
+        if not (Itens.Items[I] is TJSONObject) then
+          Continue;
+        Item := TJSONObject(Itens.Items[I]);
+        Lines.Add(
+          Trim(JSONStrFirst(Item, ['id_insumo', 'DBT_CODALIMENTO', 'ID_ALIMENTO'])) + '|' +
+          CanonicalQty(JSONStrFirst(Item, ['qtde_prevista', 'DBT_QTDEPREVISTA'], '0')) + '|' +
+          CanonicalQty(JSONStrFirst(Item, ['qtd_realizada', 'DBT_QTDE', 'qtde_realizada'], '0')));
+      end;
+    Fim := Trim(JSONStrFirst(Body, ['hora_fim', 'CBT_FIM', 'HORA_FIM']));
+    Canon :=
+      'v1|racao=' + Trim(JSONStrFirst(Body, ['id_dieta', 'CBT_CODRACAOPROD', 'IDRACAO'])) +
+      '|prev=' + CanonicalQty(JSONStrFirst(Body, ['qtde_prevista', 'CBT_QTDEPREVISTA'], '0')) +
+      '|real=' + CanonicalQty(JSONStrFirst(Body, ['qtde_realizada', 'CBT_QTDEBATIDA', 'qtd_realizada'], '0')) +
+      '|data=' + Trim(JSONStrFirst(Body, ['data', 'CBT_DATA', 'DATA_FAB'])) +
+      '|ini=' + Trim(JSONStrFirst(Body, ['hora_inicio', 'CBT_INICIO', 'HORA_INICIO', 'hora_ini', 'HORA_INI'])) +
+      '|fim=' + Fim +
+      '|itens=' + Lines.Text;
+    Result := THashSHA2.GetHashString(Canon);
+  finally
+    Lines.Free;
+  end;
+end;
+
+function IsUniqueViolation(E: Exception): Boolean;
+begin
+  Result := (E is EFDDBEngineException) and
+    (EFDDBEngineException(E).Kind = ekUKViolated);
+  if not Result then
+    Result := Pos('335544665', E.Message) > 0;
+end;
+
+{ Deadlock e lock conflict nao significam que o vencedor ja esta visivel.
+  A transacao Firebird fica invalida: rollback e nova leitura. }
+function IsSyncContention(E: Exception): Boolean;
+begin
+  Result := IsUniqueViolation(E) or
+    (Pos('335544336', E.Message) > 0) or
+    (Pos('335544345', E.Message) > 0) or
+    (Pos('335544349', E.Message) > 0) or
+    (Pos('335544451', E.Message) > 0) or
+    (Pos('335544510', E.Message) > 0);
+end;
+
+function IsSyncTableMissing(E: Exception): Boolean;
+var
+  Msg: string;
+begin
+  Msg := E.Message;
+  Result := (Pos('RFEED_FABRICACAO_SYNC', Msg) > 0) and
+    ((Pos('Table unknown', Msg) > 0) or (Pos('-204', Msg) > 0) or
+     ((E is EFDDBEngineException) and
+      (EFDDBEngineException(E).Kind = ekObjNotExists)));
+end;
+
+procedure RaiseIfSyncTableMissing(E: Exception);
+begin
+  if IsSyncTableMissing(E) then
+    raise Exception.Create(
+      'Tabela RFEED_FABRICACAO_SYNC ausente. A API cria essa tabela ao conectar no TGC. ' +
+      'Confira se o usuario do banco tem permissao de DDL.');
+end;
+
+function FindFabSync(Conn: TFDConnection; const IdEvento, Handoff: string;
+  out Row: TFabSyncRow): Boolean;
+var
+  Q: TFDQuery;
+begin
+  Row.Found := False;
+  Row.Cbt := 0;
+  Row.Hash := '';
+  Result := False;
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    { HANDOFF nulo nao casa (NULL = NULL e desconhecido). }
+    Q.SQL.Text :=
+      'SELECT FIRST 1 HASH_PAYLOAD, COALESCE(ID_FABRICACAO_TGC, 0) AS CBT ' +
+      'FROM RFEED_FABRICACAO_SYNC ' +
+      'WHERE ORIGEM_SISTEMA = :ORIGEM ' +
+      '  AND (ID_EVENTO_SYNC = :ID OR HANDOFF_ID = :HANDOFF)';
+    Q.ParamByName('ORIGEM').AsString := CFabSyncOrigem;
+    Q.ParamByName('ID').AsString := IdEvento;
+    if Trim(Handoff) = '' then
+      Q.ParamByName('HANDOFF').Clear
+    else
+      Q.ParamByName('HANDOFF').AsString := Trim(Handoff);
+    try
+      Q.Open;
+    except
+      on E: Exception do
+      begin
+        RaiseIfSyncTableMissing(E);
+        raise;
+      end;
+    end;
+    if Q.IsEmpty then
+      Exit;
+    Row.Found := True;
+    Row.Hash := Trim(Q.FieldByName('HASH_PAYLOAD').AsString);
+    Row.Cbt := Q.FieldByName('CBT').AsInteger;
+    Result := True;
+  finally
+    Q.Free;
+  end;
+end;
+
+procedure AssertFabSyncCompatible(const Row: TFabSyncRow; const Hash: string);
+begin
+  if not SameText(Row.Hash, Hash) then
+    raise EFabSyncConflict.Create(
+      'Conflito de fabricacao: o mesmo identificador chegou com conteudo diferente.');
+  if Row.Cbt <= 0 then
+    raise EFabSyncRetry.Create(
+      'Vinculo de fabricacao ainda sem CBT_CODIGO. Reenvie a sincronizacao.');
+end;
+
+procedure InsertFabSyncReserve(Conn: TFDConnection;
+  const IdEvento, Handoff, Hash: string);
+var
+  Q: TFDQuery;
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text :=
+      'INSERT INTO RFEED_FABRICACAO_SYNC (' +
+      '  ORIGEM_SISTEMA, ID_EVENTO_SYNC, HANDOFF_ID, ID_FABRICACAO_TGC, ' +
+      '  DATA_SINCRONIZACAO, HASH_PAYLOAD) VALUES (' +
+      '  :ORIGEM, :ID, :HANDOFF, NULL, CURRENT_TIMESTAMP, :HASH)';
+    Q.ParamByName('ORIGEM').AsString := CFabSyncOrigem;
+    Q.ParamByName('ID').AsString := IdEvento;
+    if Trim(Handoff) = '' then
+      Q.ParamByName('HANDOFF').Clear
+    else
+      Q.ParamByName('HANDOFF').AsString := Trim(Handoff);
+    Q.ParamByName('HASH').AsString := Hash;
+    Q.ExecSQL;
+  finally
+    Q.Free;
+  end;
+end;
+
+procedure BindFabSyncCbt(Conn: TFDConnection; const IdEvento, Cbt: string);
+var
+  Q: TFDQuery;
+begin
+  Q := TFDQuery.Create(nil);
+  try
+    Q.Connection := Conn;
+    Q.SQL.Text :=
+      'UPDATE RFEED_FABRICACAO_SYNC SET ID_FABRICACAO_TGC = :CBT ' +
+      'WHERE ORIGEM_SISTEMA = :ORIGEM AND ID_EVENTO_SYNC = :ID';
+    Q.ParamByName('CBT').AsInteger := StrToInt(Cbt);
+    Q.ParamByName('ORIGEM').AsString := CFabSyncOrigem;
+    Q.ParamByName('ID').AsString := IdEvento;
+    Q.ExecSQL;
+  finally
+    Q.Free;
+  end;
+end;
+
+function ResolveFabSyncAfterUnique(Conn: TFDConnection;
+  const IdEvento, Handoff, Hash: string; out Cbt: string): Boolean;
+var
+  Attempt: Integer;
+  Row: TFabSyncRow;
+begin
+  Result := False;
+  Cbt := '';
+  for Attempt := 1 to 8 do
+  begin
+    if not Conn.InTransaction then
+      Conn.StartTransaction;
+    try
+      if FindFabSync(Conn, IdEvento, Handoff, Row) then
+      begin
+        AssertFabSyncCompatible(Row, Hash);
+        Cbt := IntToStr(Row.Cbt);
+        Conn.Commit;
+        Exit(True);
+      end;
+      Conn.Rollback;
+    except
+      on E: EFabSyncConflict do
+      begin
+        if Conn.InTransaction then
+          Conn.Rollback;
+        raise;
+      end;
+      on E: EFabSyncRetry do
+      begin
+        if Conn.InTransaction then
+          Conn.Rollback;
+        raise;
+      end;
+      on E: Exception do
+      begin
+        if Conn.InTransaction then
+          Conn.Rollback;
+        raise;
+      end;
+    end;
+    if Attempt < 8 then
+      Sleep(40 * Attempt);
+  end;
+end;
+
 procedure PostFabricacao(Req: THorseRequest; Res: THorseResponse; Next: TProc);
 var
   dm: TdmTGC;
   Body, Resp: TJSONObject;
   Itens: TJSONArray;
   IdBatida, DataFab, HoraIni, HoraFim, LoteFab, CodRacao, QtdeRealizadaStr: string;
+  IdEvento, HandoffSync, HashSync: string;
   CustoKg, QtdeRealizada, CustoFab: Double;
   I: Integer;
   Item: TJSONObject;
+  SyncRow: TFabSyncRow;
+  Already: Boolean;
+  HttpStatus: Integer;
 begin
   dm := nil;
   Body := nil;
@@ -820,6 +1115,14 @@ begin
       raise Exception.Create('JSON inválido.');
 
     dm := TdmTGC.Create(nil);
+    { Espera no maximo 5s por lock. Timeout vira releitura, nao insert cego. }
+    dm.FBCon.TxOptions.Isolation := xiReadCommitted;
+    dm.FBCon.TxOptions.Params.Clear;
+    dm.FBCon.TxOptions.Params.Add('read_committed');
+    dm.FBCon.TxOptions.Params.Add('rec_version');
+    dm.FBCon.TxOptions.Params.Add('write');
+    dm.FBCon.TxOptions.Params.Add('wait');
+    dm.FBCon.TxOptions.Params.Add('lock_timeout=5');
     dm.ConectaDBTGC;
 
     CodRacao := JSONStrFirst(Body, ['id_dieta', 'CBT_CODRACAOPROD', 'IDRACAO']);
@@ -828,52 +1131,102 @@ begin
     CustoKg := LookupCustoKgRacao(dm.FBCon, CodRacao);
     CustoFab := CustoKg * QtdeRealizada;
 
+    IdEvento := Trim(JSONStrFirst(Body, ['id_local', 'id']));
+    HandoffSync := Trim(JSONStrFirst(Body, ['handoff_id', 'handoff_id_fabricacao']));
+    if IdEvento = '' then
+      IdEvento := HandoffSync;
+    if IdEvento = '' then
+      raise Exception.Create('id_local/handoff_id ausente na fabricacao TGC.');
+    HashSync := CanonicalFabricacaoHash(Body);
+
     if not dm.FBCon.InTransaction then
       dm.FBCon.StartTransaction;
 
     try
       DataFab := JSONStrFirst(Body, ['data', 'CBT_DATA', 'DATA_FAB']);
-      HoraIni := JSONStrFirst(Body, ['hora_inicio', 'CBT_INICIO', 'HORA_INICIO']);
+      HoraIni := JSONStrFirst(Body,
+        ['hora_inicio', 'CBT_INICIO', 'HORA_INICIO', 'hora_ini', 'HORA_INI']);
       HoraFim := JSONStrFirst(Body, ['hora_fim', 'CBT_FIM', 'HORA_FIM']);
+      if Trim(HoraFim) = '' then
+        HoraFim := HoraIni;
       LoteFab := ResolveLoteFabricacaoTGC(Body, 100);
+      Already := False;
+      IdBatida := '';
 
-      InsertFabricacaoTGC(
-        dm.FBCon,
-        CodRacao,
-        QtdeRealizadaStr,
-        CustoFab,
-        DataFab,
-        HoraIni,
-        HoraFim,
-        TgcUsuarioId,
-        JSONStrFirst(Body, ['qtde_prevista', 'CBT_QTDEPREVISTA'], '0'),
-        LoteFab,
-        JSONStrFirst(Body, ['CBT_NOMEOPERADOR', 'nome_operador']),
-        ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
-        ResolveMotoristaNome(dm.FBCon, Body),
-        IdBatida);
-
-      Itens := JSONArrayFirst(Body, ['itens', 'FabricacaoAlimentosTGC', 'TGCFabricacao']);
-      if Assigned(Itens) then
+      if FindFabSync(dm.FBCon, IdEvento, HandoffSync, SyncRow) then
       begin
-        for I := 0 to Itens.Count - 1 do
-        begin
-          if not (Itens.Items[I] is TJSONObject) then
-            Continue;
-          Item := TJSONObject(Itens.Items[I]);
-          InsertFabricacaoInsumoTGC(dm.FBCon, Item, IdBatida, DataFab,
-            TgcUsuarioId,
-            ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
-            CodRacao);
+        AssertFabSyncCompatible(SyncRow, HashSync);
+        IdBatida := IntToStr(SyncRow.Cbt);
+        Already := True;
+      end
+      else
+      begin
+        try
+          InsertFabSyncReserve(dm.FBCon, IdEvento, HandoffSync, HashSync);
+        except
+          on E: Exception do
+          begin
+            if not IsSyncContention(E) then
+              raise;
+            if dm.FBCon.InTransaction then
+              dm.FBCon.Rollback;
+            if not ResolveFabSyncAfterUnique(
+              dm.FBCon, IdEvento, HandoffSync, HashSync, IdBatida) then
+              raise EFabSyncRetry.Create(
+                'Fabricacao concorrente ainda nao visivel. Reenvie a sincronizacao.');
+            Already := True;
+          end;
         end;
       end;
 
-      SyncTgcFabricacaoGenerators(dm.FBCon);
-      dm.FBCon.Commit;
+      if not Already then
+      begin
+        InsertFabricacaoTGC(
+          dm.FBCon,
+          CodRacao,
+          QtdeRealizadaStr,
+          CustoFab,
+          DataFab,
+          HoraIni,
+          HoraFim,
+          TgcUsuarioId,
+          JSONStrFirst(Body, ['qtde_prevista', 'CBT_QTDEPREVISTA'], '0'),
+          LoteFab,
+          JSONStrFirst(Body, ['CBT_NOMEOPERADOR', 'nome_operador']),
+          ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
+          ResolveMotoristaNome(dm.FBCon, Body),
+          IdBatida);
+
+        Itens := JSONArrayFirst(Body, ['itens', 'FabricacaoAlimentosTGC', 'TGCFabricacao']);
+        if Assigned(Itens) then
+        begin
+          for I := 0 to Itens.Count - 1 do
+          begin
+            if not (Itens.Items[I] is TJSONObject) then
+              Continue;
+            Item := TJSONObject(Itens.Items[I]);
+            InsertFabricacaoInsumoTGC(dm.FBCon, Item, IdBatida, DataFab,
+              TgcUsuarioId,
+              ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
+              CodRacao, HoraIni, HoraFim);
+          end;
+        end;
+
+        BindFabSyncCbt(dm.FBCon, IdEvento, IdBatida);
+        SyncTgcFabricacaoGenerators(dm.FBCon);
+      end;
+
+      if dm.FBCon.InTransaction then
+        dm.FBCon.Commit;
 
       Resp := TJSONObject.Create;
       Resp.AddPair('Ok', IdBatida);
       Resp.AddPair('id_servidor', IdBatida);
+      Resp.AddPair('idFabricacaoTgc', IdBatida);
+      if Already then
+        Resp.AddPair('alreadySynced', TJSONTrue.Create)
+      else
+        Resp.AddPair('alreadySynced', TJSONFalse.Create);
       if LoteFab <> '' then
         Resp.AddPair('lote_fabricacao', LoteFab);
       Resp.AddPair('success', TJSONTrue.Create(True));
@@ -881,10 +1234,36 @@ begin
       Resp.AddPair('_debug_custo_kg', TJSONNumber.Create(CustoKg));
       Resp.AddPair('_debug_qtde_realizada', TJSONNumber.Create(QtdeRealizada));
       Resp.AddPair('_debug_custo_fab', TJSONNumber.Create(CustoFab));
+      Resp.AddPair('_debug_hora_ini', HoraIni);
+      Resp.AddPair('_debug_hora_fim', HoraFim);
       MirrorPostBody('/Post/Fabricacao', Body, Resp.ToJSON, 200);
       Res.Status(200).Send<TJSONObject>(Resp);
       Resp := nil;
     except
+      on E: EFabSyncConflict do
+      begin
+        if Assigned(dm) and dm.FBCon.InTransaction then
+          dm.FBCon.Rollback;
+        HttpStatus := 409;
+        Resp := TJSONObject.Create;
+        Resp.AddPair('Erro', E.Message);
+        Resp.AddPair('conflict', TJSONTrue.Create);
+        MirrorPostBody('/Post/Fabricacao', Body, Resp.ToJSON, HttpStatus);
+        Res.Status(HttpStatus).Send<TJSONObject>(Resp);
+        Resp := nil;
+      end;
+      on E: EFabSyncRetry do
+      begin
+        if Assigned(dm) and dm.FBCon.InTransaction then
+          dm.FBCon.Rollback;
+        HttpStatus := 503;
+        Resp := TJSONObject.Create;
+        Resp.AddPair('Erro', E.Message);
+        Resp.AddPair('retry', TJSONTrue.Create);
+        MirrorPostBody('/Post/Fabricacao', Body, Resp.ToJSON, HttpStatus);
+        Res.Status(HttpStatus).Send<TJSONObject>(Resp);
+        Resp := nil;
+      end;
       on E: Exception do
       begin
         if Assigned(dm) and dm.FBCon.InTransaction then
@@ -944,7 +1323,9 @@ begin
         InsertFabricacaoInsumoTGC(dm.FBCon, Item, IdBatida, DataFab,
           TgcUsuarioId,
           ResolveTgcOperadorId(Body, ['id_operador', 'CBT_COD_OPERADOR_PA']),
-          CodRacao);
+          CodRacao,
+          JSONStrFirst(Body, ['hora_inicio', 'CBT_INICIO', 'HORA_INICIO']),
+          JSONStrFirst(Body, ['hora_fim', 'CBT_FIM', 'HORA_FIM']));
       end;
       SyncTgcFabricacaoGenerators(dm.FBCon);
       dm.FBCon.Commit;

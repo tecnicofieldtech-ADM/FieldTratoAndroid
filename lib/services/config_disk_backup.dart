@@ -130,15 +130,12 @@ class ConfigDiskBackup {
 
     await repo.saveConfig(cfg);
 
+    // Não restaura sessão ativa — login/senha são obrigatórios a cada abertura.
     final sessRaw = payload["session"];
     if (sessRaw is Map) {
       final id = (sessRaw["ID"] ?? "").toString().trim();
       if (id.isNotEmpty) {
-        await SessionRepo().saveLogin(
-          userId: id,
-          nome: (sessRaw["NOME"] ?? "").toString(),
-          login: (sessRaw["LOGIN"] ?? "").toString(),
-        );
+        await SessionRepo().saveLastUserOnly(userId: id);
       }
     }
 
@@ -164,15 +161,12 @@ class ConfigDiskBackup {
 
     await repo.saveConfig(cfg);
 
+    // Não restaura sessão ativa — só último usuário para pré-seleção.
     final sessRaw = payload["session"];
     if (sessRaw is Map) {
       final id = (sessRaw["ID"] ?? "").toString().trim();
       if (id.isNotEmpty) {
-        await SessionRepo().saveLogin(
-          userId: id,
-          nome: (sessRaw["NOME"] ?? "").toString(),
-          login: (sessRaw["LOGIN"] ?? "").toString(),
-        );
+        await SessionRepo().saveLastUserOnly(userId: id);
       }
     }
     return true;

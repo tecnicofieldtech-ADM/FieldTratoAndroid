@@ -11,7 +11,6 @@ import "../domain/models.dart";
 import "pre_pesado_dialog.dart";
 import "ingredientes_modal.dart";
 import "mistura_timer_page.dart";
-import "fabricacao_list_page.dart";
 import "../../../helpers/mirror_service.dart";
 import "../../../helpers/responsive.dart";
 import "../../../widgets/scale_peso_highlight_card.dart";
@@ -72,9 +71,11 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
   Widget _wrapPop(Widget child) {
     return PopScope(
-      // bloqueia back enquanto finalizacao/timer estiver em andamento
+      // Bloqueia back durante finalização + timer; após sair, a pesagem
+      // já foi removida da pilha (pushNamedAndRemoveUntil).
       canPop: !_finishing,
       onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop) return;
         if (_reconnecting) return;
         await c.shutdown();
       },
@@ -322,14 +323,17 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
     return false;
   }
 
+  /// Sai da pesagem removendo-a da pilha (nunca volta à weigh da fab finalizada).
   Future<void> _goFabricacaoList() async {
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => FabricacaoListPage(repo: widget.repo),
-      ),
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      "/fabricacao",
+      _keepRootOrMenu,
     );
   }
+
+  bool _keepRootOrMenu(Route<dynamic> r) =>
+      r.isFirst || r.settings.name == "/menu";
 
   Future<FabricacaoFlowMode> _getFlowMode() async {
     return _cfgRepo.getFabricacaoFlowMode();
@@ -470,8 +474,9 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
     if (!mounted) return;
 
-    Navigator.of(context).pushReplacementNamed(
+    Navigator.of(context).pushNamedAndRemoveUntil(
       "/fornecimento",
+      _keepRootOrMenu,
       arguments: {
         "idFazenda": idFazenda,
         "autoOpenNovoFornecimento": true,
@@ -639,6 +644,7 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
     if (!mounted) return;
     setState(() => _finishing = true);
+    var saiuDaPesagem = false;
     try {
       await c.prepararFinalizacao();
 
@@ -657,10 +663,13 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
 
       if (!navegarAposFinalizar) {
         await _goFabricacaoList();
+        saiuDaPesagem = true;
         return;
       }
 
       final semTempoMistura = minutos <= 0;
+      // Timer empilhado; o pop do timer NÃO encerra o fluxo — pesagem ainda
+      // está abaixo (UI neutra via _finishing) até sair com removeUntil.
       await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => MisturaTimerPage(
@@ -676,6 +685,11 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       );
       if (!mounted) return;
 
+      // Garante um frame da UI neutra antes do diálogo (sem flash de kg ao vivo).
+      setState(() {});
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+
       if (await _isModoRotormix()) {
         await _perguntarIrParaFornecimento(
           trato: c.header?.trato ?? 0,
@@ -683,10 +697,14 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
       } else {
         await _goFabricacaoList();
       }
+      saiuDaPesagem = true;
     } catch (e) {
       await _dialogErroFinalizacao(e);
     } finally {
-      if (mounted) setState(() => _finishing = false);
+      // Não reexpor o dashboard se já navegamos embora (evita flash de kg ao vivo).
+      if (mounted && !saiuDaPesagem) {
+        setState(() => _finishing = false);
+      }
     }
   }
 
@@ -830,6 +848,37 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
   // =========================
   // UI
   // =========================
+  Widget _buildFinalizadaAguardando() {
+    return _wrapPop(
+      Scaffold(
+        appBar: const _TopAppBar(title: "Fabricação"),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, size: 72, color: Colors.green.shade600),
+                const SizedBox(height: 16),
+                const Text(
+                  "Fabricação finalizada",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  "Aguardando sua escolha…",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: Colors.grey.shade700),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_booting) {
@@ -868,6 +917,11 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
           ),
         ),
       );
+    }
+
+    // Durante finalização / timer / diálogo pós-mistura: sem dashboard de kg ao vivo.
+    if (_finishing) {
+      return _buildFinalizadaAguardando();
     }
 
     final header = c.header!;
@@ -1116,15 +1170,8 @@ class _FabricacaoWeighPageState extends State<FabricacaoWeighPage> {
             "${tolPct > 0 ? " · tol ${tolPct.toStringAsFixed(0)}%" : ""}"
         : null;
 
-    final balancaDetail = () {
-      final base = "$text · $lastAtTxt${pausado ? " · PAUSADA" : ""}";
-      final raw = c.lastRaw.trim();
-      if (raw.isNotEmpty) {
-        final snippet = raw.length > 40 ? "${raw.substring(0, 40)}…" : raw;
-        return "$base · RX: $snippet";
-      }
-      return base;
-    }();
+    final balancaDetail =
+        "$text · $lastAtTxt${pausado ? " · PAUSADA" : ""}";
 
     Color mirrorColor;
     IconData mirrorIcon;

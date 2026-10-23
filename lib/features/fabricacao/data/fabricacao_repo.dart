@@ -6,6 +6,8 @@ import "../../../db/app_db.dart";
 import "../../../utils/ms_percent.dart";
 import "../../fornecimento/data/carregamento_dao.dart";
 import "../../fornecimento/data/fornecimento_tables.dart";
+import "../../fornecimento/domain/fornecimento_models.dart";
+import "../../fornecimento/domain/previsto_ajustado.dart";
 import "../domain/models.dart";
 import "../domain/fabricacao_flow.dart";
 
@@ -68,6 +70,15 @@ class FabricacaoRepo {
   // =========================================================
   // RESUMO POR DIETA/DATA/TRATO (PREVISAO)
   // =========================================================
+  bool _dietaDoResumo(String? idLinha, String dietaNorm) {
+    final n = _normalizeDietaId(idLinha);
+    if (n.isEmpty) return false;
+    if (n == dietaNorm) return true;
+    final a = int.tryParse(n);
+    final b = int.tryParse(dietaNorm);
+    return a != null && b != null && a == b;
+  }
+
   static String _normalizeDietaId(String? raw) {
     return (raw ?? "").replaceAll(RegExp(r"\s+"), "").trim().toUpperCase();
   }
@@ -95,21 +106,12 @@ class FabricacaoRepo {
     final where = <String>[];
     final args = <Object?>[];
 
-    where.add(
-      "REPLACE(UPPER(TRIM(COALESCE(p.${FornTables.pvIdRacao},''))), ' ', '') = ?",
-    );
-    args.add(dietaNorm);
-
-    if (trato != null && trato > 0) {
-      where.add("COALESCE(p.${FornTables.pvTrato},0) = ?");
-      args.add(trato);
-    }
-
     where.add("substr(COALESCE(p.${FornTables.pvData},''),1,10) = ?");
     args.add(ymd);
 
+    final hasBaias = await _hasTable(FornTables.detalhesBaias);
     final faz = (idFazenda ?? "").trim();
-    if (faz.isNotEmpty && await _hasTable(FornTables.detalhesBaias)) {
+    if (faz.isNotEmpty && hasBaias) {
       where.add("""
         EXISTS (
           SELECT 1
@@ -122,22 +124,75 @@ class FabricacaoRepo {
       args.add(faz);
     }
 
+    final loteExpr = hasBaias
+        ? "COALESCE(CAST(db.${FornTables.dbIdLote} AS TEXT), '')"
+        : "''";
+    final joinBaias = hasBaias
+        ? """
+      LEFT JOIN ${FornTables.detalhesBaias} db
+        ON TRIM(CAST(db.${FornTables.dbId} AS TEXT)) =
+           TRIM(CAST(p.${FornTables.pvIdBaia} AS TEXT))
+    """
+        : "";
+
+    // Todas as rações do dia: o último trato do curral (mesmo em transição)
+    // desconta o realizado dos tratos anteriores, de qualquer dieta.
     final sql = """
       SELECT
-        COALESCE(p.${FornTables.pvIdRacao},'') AS id_dieta,
-        substr(COALESCE(p.${FornTables.pvData},''),1,10) AS data_ymd,
+        COALESCE(p.${FornTables.pvIdRacao},'') AS idRacao,
+        substr(COALESCE(p.${FornTables.pvData},''),1,10) AS dataIso,
         COALESCE(p.${FornTables.pvTrato},0) AS trato,
-        SUM(COALESCE(p.${FornTables.pvPrevistoKg},0)) AS previsto,
-        SUM(${FornTables.sqlRealizadoKgLocal("p")}) AS realizado
+        COALESCE(CAST(p.${FornTables.pvIdBaia} AS TEXT),'') AS idBaia,
+        COALESCE(CAST(p.${FornTables.pvIdFornecimento} AS TEXT),'') AS idFornecimento,
+        COALESCE(p.${FornTables.pvPrevistoKg},0) AS previstoKg,
+        COALESCE(NULLIF(p.${FornTables.pvPrevistoOriginalKg},0),0) AS previstoOriginalKg,
+        COALESCE(
+          NULLIF(p.${FornTables.pvPrevistoRecalculadoKg},0),
+          NULLIF(p.${FornTables.pvPrevistoKg},0),
+          0
+        ) AS previstoRecalculadoKg,
+        COALESCE(NULLIF(p.${FornTables.pvPrevistoCadastroKg},0),0) AS previstoCadastroKg,
+        COALESCE(p.${FornTables.pvUltimoTrato},0) AS isUltimoTrato,
+        $loteExpr AS idLote,
+        ${FornTables.sqlRealizadoKgLocal("p")} AS realizadoKg,
+        COALESCE(p.${FornTables.pvRealizadoKg}, 0) AS realizadoApiKg
       FROM ${FornTables.previsao} p
+      $joinBaias
       WHERE ${where.join(" AND ")}
-      GROUP BY id_dieta, data_ymd, trato
-      ORDER BY data_ymd DESC, trato ASC
     """;
 
     final db = await _db;
     final rows = await db.rawQuery(sql, args);
-    return rows.map((e) => _lowerKeys(Map<String, Object?>.from(e))).toList();
+    final currais = rows
+        .map((e) => CurralPrev.fromMap(Map<String, Object?>.from(e)))
+        .toList();
+    final indice = PrevistoAjustadoIndex.de(currais);
+
+    final acc = <int, ({String dieta, String ymd, double prev, double real})>{};
+    for (final c in currais) {
+      if (!_dietaDoResumo(c.idRacao, dietaNorm)) continue;
+      if (trato != null && trato > 0 && c.trato != trato) continue;
+      final cur = acc[c.trato];
+      final dieta = (c.idRacao ?? "").trim().isEmpty ? dietaNorm : c.idRacao!.trim();
+      acc[c.trato] = (
+        dieta: dieta,
+        ymd: c.dataIso,
+        prev: (cur?.prev ?? 0) + indice.de(c),
+        real: (cur?.real ?? 0) + c.realizadoKg,
+      );
+    }
+
+    final tratos = acc.keys.toList()..sort();
+    return [
+      for (final t in tratos)
+        {
+          "id_dieta": acc[t]!.dieta,
+          "data_ymd": acc[t]!.ymd,
+          "trato": t,
+          "previsto": acc[t]!.prev,
+          "realizado": acc[t]!.real,
+        },
+    ];
   }
 
   Future<List<Map<String, Object?>>> listResumoPorDietaDataTrato({

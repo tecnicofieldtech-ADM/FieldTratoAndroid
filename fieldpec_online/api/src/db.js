@@ -1,12 +1,36 @@
 const { Pool } = require("pg");
+const { AsyncLocalStorage } = require("async_hooks");
 const config = require("./config");
+
+const txStore = new AsyncLocalStorage();
 
 let pool = new Pool({
   connectionString: config.databaseUrl,
 });
 
 async function query(text, params) {
+  const client = txStore.getStore();
+  if (client) return client.query(text, params);
   return pool.query(text, params);
+}
+
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await txStore.run(client, () => fn(client));
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {
+      /* ignore */
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function reconnect(connectionString) {
@@ -50,6 +74,7 @@ module.exports = {
     return pool;
   },
   query,
+  withTransaction,
   reconnect,
   testConnection,
 };

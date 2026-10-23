@@ -136,7 +136,10 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     final dietas = <String>{};
     final tratos = <int>{};
 
-    for (final it in _items) {
+    // Opções do dia inteiro, antes do filtro de ração/trato.
+    // Se montar o combo em cima da lista já filtrada, ao escolher uma
+    // ração o próximo filtro só mostra essa ração.
+    for (final it in _porData) {
       final dn = it.dietaNome.trim();
       if (dn.isNotEmpty) dietas.add(dn);
       tratos.add(it.trato);
@@ -186,18 +189,20 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
     return ids.length;
   }
 
-  List<FabricacaoHeader> get _filtered {
-    Iterable<FabricacaoHeader> it = _items;
-
+  List<FabricacaoHeader> get _porData {
     final d0 = _filterDate;
-    it = it.where((e) {
+    return _items.where((e) {
       try {
         final d = DateTime.parse(e.dataFabricacao);
         return _sameDate(d, d0);
       } catch (_) {
         return false;
       }
-    });
+    }).toList();
+  }
+
+  List<FabricacaoHeader> get _filtered {
+    Iterable<FabricacaoHeader> it = _porData;
 
     if (_filterDieta != null && _filterDieta!.trim().isNotEmpty) {
       final dn = _filterDieta!.trim().toLowerCase();
@@ -499,6 +504,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
 
     setState(() {
       _filterDate = DateTime(picked.year, picked.month, picked.day);
+      _rebuildFilterOptions();
     });
   }
 
@@ -507,6 +513,7 @@ class _FabricacaoListPageState extends State<FabricacaoListPage>
       _filterDate = _today();
       _filterDieta = null;
       _filterTrato = null;
+      _rebuildFilterOptions();
     });
   }
 

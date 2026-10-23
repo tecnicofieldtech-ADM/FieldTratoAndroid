@@ -1,4 +1,5 @@
 import "../../fabricacao/domain/fabricacao_flow.dart";
+import "station_handoff_mode.dart";
 
 class CarregamentoResumoDto {
   CarregamentoResumoDto({
@@ -9,6 +10,10 @@ class CarregamentoResumoDto {
     required this.nomeRacao,
     required this.totalFabricadoKg,
     required this.statusApi,
+    this.claimStatus = "available",
+    this.claimExpiresAt = "",
+    this.handoffModeApi = "",
+    this.finalizada = false,
   });
 
   final String idLocal;
@@ -18,8 +23,31 @@ class CarregamentoResumoDto {
   final String nomeRacao;
   final double totalFabricadoKg;
   final String statusApi;
+  final String claimStatus;
+  final String claimExpiresAt;
+  final String handoffModeApi;
+  final bool finalizada;
 
   FabricacaoStatus get status => fabricacaoStatusFromApi(statusApi);
+
+  StationHandoffMode? get handoffMode {
+    final fromApi = stationHandoffModeFromApi(handoffModeApi);
+    if (fromApi != null) return fromApi;
+    return resolveStationHandoffMode(
+      fabStatus: fabricacaoStatusToDb(status),
+      finalizada: finalizada ? 1 : 0,
+    );
+  }
+
+  bool get isAvailable =>
+      claimStatus == "available" || claimStatus.trim().isEmpty;
+
+  bool get isClaimedByMe => claimStatus == "claimedByMe";
+
+  bool get isClaimedByOther => claimStatus == "claimed";
+
+  bool get isFabricationComplete =>
+      handoffMode == StationHandoffMode.fabricationComplete;
 
   factory CarregamentoResumoDto.fromJson(Map<String, dynamic> j) {
     return CarregamentoResumoDto(
@@ -30,6 +58,13 @@ class CarregamentoResumoDto {
       nomeRacao: (j["nome_racao"] ?? "").toString(),
       totalFabricadoKg: _toDouble(j["total_fabricado_kg"]),
       statusApi: (j["status"] ?? "EM_ANDAMENTO").toString(),
+      claimStatus: (j["claimStatus"] ?? j["claim_status"] ?? "available")
+          .toString(),
+      claimExpiresAt:
+          (j["claimExpiresAt"] ?? j["claim_expires_at"] ?? "").toString(),
+      handoffModeApi:
+          (j["handoffMode"] ?? j["handoff_mode"] ?? "").toString(),
+      finalizada: _toBool(j["finalizada"]),
     );
   }
 }
@@ -48,6 +83,7 @@ class FabricacaoPayloadDto {
     required this.totalRealizadoKg,
     required this.observacao,
     required this.finalizada,
+    this.handoffModeApi = "",
   });
 
   final String idOrigem;
@@ -62,8 +98,18 @@ class FabricacaoPayloadDto {
   final double totalRealizadoKg;
   final String observacao;
   final bool finalizada;
+  final String handoffModeApi;
 
   FabricacaoStatus get status => fabricacaoStatusFromApi(statusApi);
+
+  StationHandoffMode? get handoffMode {
+    final fromApi = stationHandoffModeFromApi(handoffModeApi);
+    if (fromApi != null) return fromApi;
+    return resolveStationHandoffMode(
+      fabStatus: fabricacaoStatusToDb(status),
+      finalizada: finalizada ? 1 : 0,
+    );
+  }
 
   factory FabricacaoPayloadDto.fromJson(Map<String, dynamic> j) {
     return FabricacaoPayloadDto(
@@ -79,6 +125,7 @@ class FabricacaoPayloadDto {
       totalRealizadoKg: _toDouble(j["total_realizado_kg"]),
       observacao: (j["observacao"] ?? "").toString(),
       finalizada: _toBool(j["finalizada"]),
+      handoffModeApi: (j["handoff_mode"] ?? j["handoffMode"] ?? "").toString(),
     );
   }
 
@@ -95,6 +142,7 @@ class FabricacaoPayloadDto {
         "total_realizado_kg": totalRealizadoKg,
         "observacao": observacao,
         "finalizada": finalizada,
+        "handoff_mode": handoffModeApi,
       };
 }
 
@@ -169,6 +217,18 @@ class CarregamentoDetalheDto {
     final fab = Map<String, dynamic>.from((j["fabricacao"] ?? const {}) as Map);
     final insumosRaw = (j["insumos"] as List?) ?? const [];
     final meta = Map<String, dynamic>.from((j["meta"] ?? const {}) as Map);
+
+    // Preferir handoffMode do meta se fabricacao não trouxe.
+    if ((fab["handoff_mode"] ?? fab["handoffMode"] ?? "")
+            .toString()
+            .trim()
+            .isEmpty &&
+        (meta["handoffMode"] ?? meta["handoff_mode"] ?? "")
+            .toString()
+            .trim()
+            .isNotEmpty) {
+      fab["handoff_mode"] = meta["handoffMode"] ?? meta["handoff_mode"];
+    }
 
     return CarregamentoDetalheDto(
       fabricacao: FabricacaoPayloadDto.fromJson(fab),

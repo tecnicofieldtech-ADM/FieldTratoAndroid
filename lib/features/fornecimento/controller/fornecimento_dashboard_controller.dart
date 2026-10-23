@@ -9,6 +9,11 @@ import "../../../repo/config_repo.dart";
 import "../data/fornecimento_repo.dart";
 import "../domain/fornecimento_models.dart";
 import "../domain/fornecimento_peso.dart";
+import "../domain/linha_filtro.dart";
+import "../domain/mapa_troca_curral.dart";
+import "../domain/previsto_ajustado.dart";
+import "../domain/ancora_troca.dart";
+import "../domain/troca_curral_relogio.dart";
 import "../../../services/session_service.dart";
 import "../../../services/rfid_tag_resolver.dart";
 import "../../../utils/rfid_tag_utils.dart";
@@ -91,14 +96,21 @@ class CurralCardVM {
     );
   }
 
-  /// Meta fixa de previsto (nunca muda após fornecimento parcial).
-  double get previstoFixoKg =>
-      previstoOriginalKg > 0 ? previstoOriginalKg : previstoKg;
+  /// Meta do curral. No último trato é o previsto ajustado (pode ser zero).
+  double get previstoFixoKg {
+    if (isUltimoTratoEfetivo) return previstoRecalculadoKg;
+    if (previstoOriginalKg > 0) return previstoOriginalKg;
+    return previstoKg;
+  }
 
   double get diffKg => realizadoKg - previstoFixoKg;
 
-  /// Previsto exibido no mapa/painel — sempre o valor original planejado.
+  /// Previsto exibido no mapa/painel. Último trato: previsto calculado.
   double get previstoExibicaoKg => previstoFixoKg;
+
+  /// Identidade no mapa. ID_FORNECIMENTO sozinho não basta: a previsão
+  /// copiada grava "0" em todos os currais do dia.
+  String get chaveMapa => "${idFornecimento.trim()}|${idBaia.trim()}";
 
   /// @deprecated Use [previstoFixoKg]. Mantido para compatibilidade interna.
   double get metaPrevistoUltimoTratoKg => previstoFixoKg;
@@ -169,6 +181,18 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   TotaisVM _totais = const TotaisVM(totalPrevistoKg: 0, totalRealizadoKg: 0);
   TotaisVM get totais => _totais;
+
+  /// Prev/Real/Falta do que está na tela: mesma linha do filtro e o P do card.
+  TotaisVM get totaisVisiveis {
+    final list = curraisFiltrados;
+    var prev = 0.0;
+    var real = 0.0;
+    for (final c in list) {
+      prev += c.previstoExibicaoKg;
+      real += c.realizadoKg;
+    }
+    return TotaisVM(totalPrevistoKg: prev, totalRealizadoKg: real);
+  }
 
   List<CurralCardVM> _curraisAll = const [];
   List<CurralCardVM> get currais => _curraisAll;
@@ -259,7 +283,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   double _pesoAtual = 0;
   double get pesoAtual => _pesoAtual;
-  String lastScaleRaw = "";
 
   StreamSubscription<ScaleWeightEvent>? _scaleSub;
 
@@ -299,11 +322,26 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   int _origemMapa = 0; // 0 = RFID, 1 = Mapa
 
+  final MapaReloadGate _mapaReload = MapaReloadGate();
+  final CliqueCurralFila _cliquesMapa = CliqueCurralFila();
+  final Map<String, CurralCardVM> _cliquePedido = {};
+
   // Proteção double-start
   bool _startingSessao = false;
+  bool get startingSessao => _startingSessao;
+  bool _vivo = true;
+  FaseTrocaCurral _fase = FaseTrocaCurral.aguardandoPeso;
+  FaseTrocaCurral get faseTroca => _fase;
+  int _geracaoTransicao = 0;
+  DateTime? _conectadoEm;
+  DateTime? _corteAncora;
+  AmostraCandidata? _ultimaAmostra;
+  bool _abrindoCadastro = false;
+  Completer<ScaleWeightEvent?>? _esperaAncora;
   DateTime _lastStartAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _sessaoIniciadaEm;
   bool _rebasePesoInicialFeito = false;
+  Stopwatch? _rfidPerf;
 
   // ===========================
   // “tempo real” no painel
@@ -350,8 +388,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // Filtro por Linha
   // ===========================
 
-  String? _linhaFiltro;
-  String? get linhaFiltro => _linhaFiltro;
+  final Set<String> _linhasFiltro = <String>{};
+  Set<String> get linhasFiltro => Set<String>.unmodifiable(_linhasFiltro);
 
   List<String> get linhasDisponiveis {
     final set = <String>{};
@@ -373,19 +411,21 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   List<CurralCardVM> get curraisFiltrados {
     if (!tratoSelecionado) return const [];
-    final lf = (_linhaFiltro ?? "").trim();
-    if (lf.isEmpty) return _curraisAll;
-    final lfUp = lf.toUpperCase();
+    if (_linhasFiltro.isEmpty) return _curraisAll;
     return _curraisAll
-        .where((c) => (c.linha ?? "").trim().toUpperCase() == lfUp)
+        .where((c) => linhaPassaFiltro(c.linha, _linhasFiltro))
         .toList();
   }
 
-  void setLinhaFiltro(String? linha) {
-    final v = (linha ?? "").trim();
-    final next = v.isEmpty ? null : v;
-    if (_linhaFiltro == next) return;
-    _linhaFiltro = next;
+  void setLinhasFiltro(Set<String> linhas) {
+    final next = normalizarLinhas(linhas);
+    if (next.length == _linhasFiltro.length &&
+        next.every(_linhasFiltro.contains)) {
+      return;
+    }
+    _linhasFiltro
+      ..clear()
+      ..addAll(next);
     notifyListeners();
   }
 
@@ -486,7 +526,6 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     limparSessao();
     _selected = null;
-    _linhaFiltro = null;
 
     await _reloadMapa(idFazenda: _idFazenda);
     notifyListeners();
@@ -495,6 +534,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // ===========================
   // Helpers gerais
   // ===========================
+
+  void _logRfidPerf(String stage, {String? extra}) {
+    if (!kDebugMode) return;
+    final ms = _rfidPerf?.elapsedMilliseconds;
+    final t = ms == null ? "" : " ${ms}ms";
+    final x = (extra ?? "").trim();
+    debugPrint("[RFID_PERF] $stage$t${x.isEmpty ? "" : " $x"}");
+  }
 
   void _setLoading(bool v) {
     if (_loading == v) return;
@@ -574,7 +621,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _error = null;
 
     _idFazenda = idFazenda.trim();
-    _isFieldpec = ConfigOptions.isFieldPecBackend(await _cfg.getBackend());
+    final backend = await _cfg.getBackend();
+    _isFieldpec = ConfigOptions.usesDualPrevisao(backend);
 
     // garante listeners 1 vez
     _startScaleListener();
@@ -638,6 +686,9 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _vivo = false;
+    _geracaoTransicao++;
+    _cancelarEsperaAncora();
     // desliga leitura no hardware ao sair da tela
     _rfid.setLeituraAtiva(false);
 
@@ -657,10 +708,19 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _scaleStatus = _scale.lastStatus;
     _rfidStatus = _rfid.lastStatus;
 
+    if (_scale.lastStatus == ScaleStatus.connected) {
+      _conectadoEm = DateTime.now();
+    }
+
     _scaleStatusSub = _scale.statusStream.listen((ev) {
       _scaleStatus = ev.status;
       _scaleMsg =
           (ev.message ?? "").trim().isNotEmpty ? ev.message!.trim() : null;
+      if (ev.status == ScaleStatus.connected) {
+        _conectadoEm = DateTime.now();
+      } else {
+        _conectadoEm = null;
+      }
       notifyListeners();
     }, onError: (_) {});
 
@@ -681,8 +741,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _scaleSub?.cancel();
     _primePesoFromScale();
     _scaleSub = _scale.weightStream.listen((ev) {
+      _registrarAmostra(ev);
       _pesoAtual = ev.weight;
-      lastScaleRaw = ev.rawLine;
       if (_scaleStatus != ScaleStatus.connected) {
         _scaleStatus = ScaleStatus.connected;
         _scaleMsg = null;
@@ -700,28 +760,85 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _pesoAtual = w;
   }
 
-  /// Aguarda leitura recente da balança antes de gravar o peso inicial da sessão.
-  Future<double> _awaitPesoBalanca({
-    Duration timeout = const Duration(milliseconds: 1500),
-  }) async {
-    final deadline = DateTime.now().add(timeout);
+  void _registrarAmostra(ScaleWeightEvent ev) {
+    _ultimaAmostra = AmostraCandidata(
+      peso: ev.weight,
+      recebidaEm: ev.readAt,
+      conexaoId: _scale.conexaoId,
+    );
+  }
 
-    while (DateTime.now().isBefore(deadline)) {
-      final last = _scale.lastWeight;
-      final lastAt = _scale.lastReadAt;
-      if (last != null && lastAt != null) {
-        final ageMs = DateTime.now().difference(lastAt).inMilliseconds;
-        if (ageMs <= 5000) {
-          _pesoAtual = last;
-          return last;
-        }
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+  bool _transicaoVigente(int geracao, String chaveMapa) {
+    if (!_vivo) return false;
+    if (geracao != _geracaoTransicao) return false;
+    return _selected?.chaveMapa == chaveMapa;
+  }
+
+  bool _amostraValida(AmostraCandidata amostra, int geracao, String id) {
+    final corte = _corteAncora;
+    if (corte == null) return false;
+    return amostraServeDeAncora(
+      recebidaEm: amostra.recebidaEm,
+      corte: corte,
+      conectadoEm: _conectadoEm,
+      conexaoAmostra: amostra.conexaoId,
+      conexaoAtual: _scale.conexaoId,
+      geracaoPedido: geracao,
+      geracaoAtual: _geracaoTransicao,
+      curralPedido: id,
+      curralAtual: _selected?.chaveMapa ?? "",
+    );
+  }
+
+  void _cancelarEsperaAncora() {
+    final espera = _esperaAncora;
+    if (espera != null && !espera.isCompleted) {
+      espera.complete(null);
+    }
+  }
+
+  void _avisar() {
+    if (!_vivo) return;
+    notifyListeners();
+  }
+
+  /// Próxima amostra desta troca. Não reutiliza peso anterior ao corte
+  /// e não transforma timeout em âncora.
+  Future<AmostraCandidata?> _aguardarAmostraDaTroca(
+    int geracao,
+    String idFornecimento,
+  ) async {
+    final cache = _ultimaAmostra;
+    if (cache != null && _amostraValida(cache, geracao, idFornecimento)) {
+      return cache;
     }
 
-    final fallback = _scale.lastWeight ?? _pesoAtual;
-    _pesoAtual = fallback;
-    return fallback;
+    final completer = Completer<ScaleWeightEvent?>();
+    _esperaAncora = completer;
+    final sub = _scale.weightStream.listen((ev) {
+      final amostra = AmostraCandidata(
+        peso: ev.weight,
+        recebidaEm: ev.readAt,
+        conexaoId: _scale.conexaoId,
+      );
+      _ultimaAmostra = amostra;
+      if (!_transicaoVigente(geracao, idFornecimento)) {
+        if (!completer.isCompleted) completer.complete(null);
+        return;
+      }
+      if (_amostraValida(amostra, geracao, idFornecimento)) {
+        if (!completer.isCompleted) completer.complete(ev);
+      }
+    });
+
+    try {
+      final ev = await completer.future;
+      if (ev == null) return null;
+      return _ultimaAmostra;
+    } finally {
+      await sub.cancel();
+      if (identical(_esperaAncora, completer)) _esperaAncora = null;
+    }
   }
 
   /// Ancora o peso inicial na primeira leitura estável (evita sessão com peso 0).
@@ -826,6 +943,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // ===========================
 
   Future<void> _handleRfidAutoFlow(String epc) async {
+    if (_startingSessao) return;
     if (_rfidProcessing) return;
 
     final now = DateTime.now();
@@ -837,6 +955,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
     }
 
     _rfidProcessing = true;
+    _rfidPerf = kDebugMode ? (Stopwatch()..start()) : null;
+    _logRfidPerf("tag_received", extra: epc);
     try {
       final currentSessao = _selected;
       final currentEpc = _normalizeEpc(currentSessao?.epc ?? "");
@@ -847,6 +967,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
       final target = await _findCurralByEpc(epc);
 
       if (target == null) {
+        _logRfidPerf("curral_found", extra: "none");
         if (lidoEpc.isEmpty) return;
 
         // Se leu outra tag e havia sessao ativa, persiste igual ao botao Salvar.
@@ -879,12 +1000,14 @@ class FornecimentoDashboardController extends ChangeNotifier {
         return;
       }
 
+      _logRfidPerf("curral_found", extra: target.curralNome);
+
       final current = _selected;
 
       // Se já está no mesmo curral:
       // - com sessão ativa: ignora leitura repetida
       // - sem sessão ativa: reabre sessão (evita precisar sair/voltar da tela)
-      if (current != null && current.idFornecimento == target.idFornecimento) {
+      if (current != null && current.chaveMapa == target.chaveMapa) {
         if (_sessaoAtiva &&
             _pesoInicial != null &&
             (_idCadastroAberto ?? "").trim().isNotEmpty) {
@@ -906,6 +1029,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
           return;
         }
 
+        _logRfidPerf("session_ready");
+        _logRfidPerf("total_ms");
         _lastRfidHandled = epc;
         _lastRfidHandledAt = now;
         return;
@@ -935,6 +1060,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
         return;
       }
 
+      _logRfidPerf("session_ready");
+      _logRfidPerf("total_ms");
       _lastRfidHandled = epc;
       _lastRfidHandledAt = now;
     } catch (e) {
@@ -945,6 +1072,8 @@ class FornecimentoDashboardController extends ChangeNotifier {
       );
     } finally {
       _rfidProcessing = false;
+      _rfidPerf?.stop();
+      _rfidPerf = null;
     }
   }
 
@@ -971,15 +1100,12 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     if (idFornecimento == null || idFornecimento.trim().isEmpty) return null;
 
-    for (final c in _curraisAll) {
-      if (c.idFornecimento == idFornecimento) return c;
-    }
+    final porId = _unicoPorIdFornecimento(idFornecimento);
+    if (porId != null) return porId;
 
     if (_idFazenda.trim().isNotEmpty) {
       await _reloadMapa(idFazenda: _idFazenda);
-      for (final c in _curraisAll) {
-        if (c.idFornecimento == idFornecimento) return c;
-      }
+      return _unicoPorIdFornecimento(idFornecimento);
     }
 
     return null;
@@ -988,6 +1114,18 @@ class FornecimentoDashboardController extends ChangeNotifier {
   // ===========================
   // LOAD MAPA / TOTAIS
   // ===========================
+
+  bool _mesmaRacao(String? idLinha, String idFiltro) {
+    String n(String? s) =>
+        (s ?? "").replaceAll(RegExp(r"\s+"), "").trim().toUpperCase();
+    final a = n(idLinha);
+    final b = n(idFiltro);
+    if (a.isEmpty || b.isEmpty) return false;
+    if (a == b) return true;
+    final ia = int.tryParse(a);
+    final ib = int.tryParse(b);
+    return ia != null && ib != null && ia == ib;
+  }
 
   Future<void> _reloadMapa({
     required String idFazenda,
@@ -1000,15 +1138,30 @@ class FornecimentoDashboardController extends ChangeNotifier {
     if (racaoId.isEmpty) return;
 
     final tratoFiltro = h.trato!;
+    final token = _mapaReload.capture();
+    final swReload = Stopwatch()..start();
 
-    var rows = await _repo.listCurraisPrevistosHoje(
+    // Dia inteiro, todas as rações: na transição o 3º trato (terminação)
+    // precisa do realizado do 1º e do 2º (adaptação).
+    final todas = await _repo.listCurraisPrevistosHoje(
       data: h.data,
-      trato: tratoFiltro,
       idFazenda: idFazenda,
-      idRacao: racaoId,
-      strictRacaoFilter: true,
-      omitirFiltroTrato: false,
+      omitirFiltroTrato: true,
+      omitirFiltroRacao: true,
     );
+    if (!_mapaReload.vigente(token)) {
+      if (kDebugMode) {
+        debugPrint(
+          "[FORN_MAPA] reload descartado token=$token epoch=${_mapaReload.epoch} "
+          "${swReload.elapsedMilliseconds}ms",
+        );
+      }
+      return;
+    }
+    final indice = PrevistoAjustadoIndex.de(todas);
+    final rows = todas
+        .where((r) => r.trato == tratoFiltro && _mesmaRacao(r.idRacao, racaoId))
+        .toList();
 
     if (rows.isEmpty) {
       _setNotice(
@@ -1040,14 +1193,11 @@ class FornecimentoDashboardController extends ChangeNotifier {
       );
       final linha = linhaRaw.isEmpty ? null : linhaRaw;
 
-      final orig = r.previstoOriginalKg ?? 0;
-      final recalc = r.previstoRecalculadoKg ?? r.previstoKg;
-      final previstoFixo = orig > 0 ? orig : r.previstoKg;
-      final ultimo = r.isUltimoTrato ||
-          (_isFieldpec &&
-              previstoFixo > 0 &&
-              recalc > 0 &&
-              (previstoFixo - recalc).abs() > 0.01);
+      final cadastro = cadastroPrevistoKg(r) ??
+          ((r.previstoOriginalKg ?? 0) > 0
+              ? r.previstoOriginalKg!
+              : r.previstoKg);
+      final alvo = indice.de(r);
 
       return CurralCardVM(
         idFornecimento: idForne.isEmpty ? "?" : idForne,
@@ -1055,10 +1205,10 @@ class FornecimentoDashboardController extends ChangeNotifier {
         curralNome: nome.isEmpty ? "Baia $idBaiaTxt" : nome,
         linha: linha,
         orderTrato: r.ordemFornecimento ?? 0,
-        previstoKg: previstoFixo,
-        previstoOriginalKg: previstoFixo,
-        previstoRecalculadoKg: recalc,
-        isUltimoTrato: ultimo,
+        previstoKg: cadastro,
+        previstoOriginalKg: cadastro,
+        previstoRecalculadoKg: alvo,
+        isUltimoTrato: indice.ehUltimo(r),
         previsaoDuplaFieldpec: _isFieldpec,
         realizadoKg: _toD(r.realizadoKg),
         epc: rfid,
@@ -1068,7 +1218,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     double tp = 0;
     double tr = 0;
     for (final c in cards) {
-      tp += c.previstoKg;
+      tp += c.previstoExibicaoKg;
       tr += c.realizadoKg;
     }
 
@@ -1098,32 +1248,45 @@ class FornecimentoDashboardController extends ChangeNotifier {
 
     _curraisAll = cards;
 
-    // se filtro linha não existe mais, limpa (comparação case-insensitive)
-    if (_linhaFiltro != null) {
-      final lfUp = _linhaFiltro!.trim().toUpperCase();
-      final ok = linhasDisponiveis
-          .any((l) => l.trim().toUpperCase() == lfUp);
-      if (!ok) _linhaFiltro = null;
+    // tira do filtro a linha que saiu da previsão do trato
+    if (_linhasFiltro.isNotEmpty) {
+      final disponiveis = linhasDisponiveis
+          .map((l) => l.trim().toUpperCase())
+          .toSet();
+      _linhasFiltro.removeWhere(
+        (l) => !disponiveis.contains(l.trim().toUpperCase()),
+      );
     }
 
-    // mantém seleção se existir
+    // SQL vigente substitui o card, inclusive realizado menor (estorno).
+    // Não derruba sessão/start se o curral sumiu da previsão no meio da troca.
     if (_selected != null) {
-      final id = _selected!.idFornecimento;
+      final chave = _selected!.chaveMapa;
       CurralCardVM? found;
       for (final c in _curraisAll) {
-        if (c.idFornecimento == id) {
+        if (c.chaveMapa == chave) {
           found = c;
           break;
         }
       }
-      _selected = found;
-      if (_selected == null) limparSessao();
+      if (found != null) {
+        _selected = found;
+      } else if (!_sessaoAtiva && !_startingSessao) {
+        _selected = null;
+        limparSessao();
+      }
     }
 
     _totais = TotaisVM(totalPrevistoKg: tp, totalRealizadoKg: tr);
 
     notifyListeners();
     _flushPendingBootEpc();
+    if (kDebugMode) {
+      debugPrint(
+        "[FORN_MAPA] reload aplicado n=${cards.length} "
+        "${swReload.elapsedMilliseconds}ms",
+      );
+    }
   }
 
   // ===========================
@@ -1210,18 +1373,30 @@ class FornecimentoDashboardController extends ChangeNotifier {
     }
   }
 
-  CurralCardVM? _cardDoMapa(String idFornecimento) {
+  CurralCardVM? _unicoPorIdFornecimento(String idFornecimento) {
     final id = idFornecimento.trim();
     if (id.isEmpty) return null;
+    CurralCardVM? found;
     for (final c in _curraisAll) {
-      if (c.idFornecimento == id) return c;
+      if (c.idFornecimento != id) continue;
+      if (found != null) return null;
+      found = c;
+    }
+    return found;
+  }
+
+  CurralCardVM? _cardDoMapa(String chaveMapa) {
+    final chave = chaveMapa.trim();
+    if (chave.isEmpty) return null;
+    for (final c in _curraisAll) {
+      if (c.chaveMapa == chave) return c;
     }
     return null;
   }
 
   /// Recarrega realizado do SQLite (soma CADASTRO + PREVISAO) antes de abrir sessão.
   Future<CurralCardVM> _hydrateCurral(CurralCardVM c) async {
-    CurralCardVM base = _cardDoMapa(c.idFornecimento) ?? c;
+    CurralCardVM base = _cardDoMapa(c.chaveMapa) ?? c;
     final h = _header;
     if (h == null || !h.tratoSelecionado) return base;
 
@@ -1230,6 +1405,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
         c.idFornecimento,
         data: h.data,
         trato: h.trato!,
+        idBaia: c.idBaia,
       );
       if (snap != null && snap.realizadoKg > base.realizadoKg) {
         base = base.copyWith(realizadoKg: snap.realizadoKg);
@@ -1242,29 +1418,112 @@ class FornecimentoDashboardController extends ChangeNotifier {
     return base;
   }
 
-  /// ✅ ao clicar manualmente, aplica a mesma regra do RFID:
-  /// - se tinha sessão ativa em outro curral, salva
-  /// - relê realizado local (não usa card stale)
-  /// - seleciona o curral
-  /// - inicia carregamento
+  /// Clique no mapa: uma transição por vez. Clique novo durante a gravação
+  /// substitui o alvo ainda não aberto. Persistência falha → não abre o próximo.
   Future<void> selecionarCurralPorClique(CurralCardVM c) async {
+    _cliquePedido[c.chaveMapa] = c;
+    final lider = _cliquesMapa.oferecer(c.chaveMapa);
+    if (!lider) return;
+
+    try {
+      while (_cliquesMapa.pendingId != null) {
+        final id = _cliquesMapa.pendingId!;
+        _cliquesMapa.pendingId = null;
+        final alvo = _cliquePedido[id] ?? _cardDoMapa(id);
+        if (alvo == null) continue;
+        final abortar = await _executarCliqueMapa(alvo);
+        if (abortar) {
+          _cliquesMapa.descartarPendentes();
+          break;
+        }
+      }
+    } finally {
+      _cliquesMapa.liberar();
+      final pendente = _cliquesMapa.pendingId;
+      if (pendente != null) {
+        final alvo = _cliquePedido[pendente] ?? _cardDoMapa(pendente);
+        if (alvo != null) {
+          unawaited(selecionarCurralPorClique(alvo));
+        }
+      }
+    }
+  }
+
+  /// true = gravação falhou; a fila de cliques deve parar.
+  Future<bool> _executarCliqueMapa(CurralCardVM c) async {
+    final relogio = TrocaCurralRelogio(
+      de: _selected?.curralNome ?? "",
+      para: c.curralNome,
+    );
+    relogio.marcar("inicio");
+
+    final atual = _selected;
+    if (atual != null && atual.chaveMapa == c.chaveMapa) {
+      if (_sessaoAtiva || _fase == FaseTrocaCurral.aguardandoPeso) {
+        relogio.marcar("ja_ativo");
+        _logTroca(relogio);
+        return false;
+      }
+    }
+
+    final geracao = ++_geracaoTransicao;
+    _cancelarEsperaAncora();
+
+    while (_startingSessao || _abrindoCadastro) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      if (_cliquesMapa.supera(c.chaveMapa)) {
+        relogio.marcar("fila_abortada");
+        _logTroca(relogio);
+        return false;
+      }
+    }
+    relogio.marcar("fila");
+
     final current = _selected;
+    final corteAntes = _corteAncora;
 
     if (_sessaoAtiva &&
         current != null &&
-        current.idFornecimento != c.idFornecimento) {
+        current.chaveMapa != c.chaveMapa) {
+      _fase = FaseTrocaCurral.transicao;
+      _avisar();
       await salvarFornecimento(idFazenda: _idFazenda);
-    } else if (_idFazenda.trim().isNotEmpty) {
-      await _reloadMapa(idFazenda: _idFazenda);
+      relogio.marcar("persistencia");
+      if ((_error ?? "").trim().isNotEmpty) {
+        _fase = _sessaoAtiva
+            ? FaseTrocaCurral.sessaoAtiva
+            : FaseTrocaCurral.erroPeso;
+        _avisar();
+        _logTroca(relogio);
+        return true;
+      }
+      if (_cliquesMapa.supera(c.chaveMapa)) {
+        relogio.marcar("substituido");
+        _logTroca(relogio);
+        return false;
+      }
+      if (_corteAncora == corteAntes) {
+        _corteAncora = DateTime.now();
+      }
+    } else {
+      _corteAncora = DateTime.now();
     }
 
-    final fresh = await _hydrateCurral(c);
-    _selected = fresh;
-    _origemMapa = 1;
-    clearNotice();
-    notifyListeners();
+    if (_cliquesMapa.supera(c.chaveMapa)) {
+      relogio.marcar("substituido");
+      _logTroca(relogio);
+      return false;
+    }
 
-    await iniciarCarregamento();
+    _selected = _cardDoMapa(c.chaveMapa) ?? c;
+    _origemMapa = 1;
+    _fase = FaseTrocaCurral.aguardandoPeso;
+    clearNotice();
+    _avisar();
+    relogio.marcar("selecao");
+
+    await iniciarCarregamento(relogio: relogio, geracao: geracao);
+    return false;
   }
 
   Future<void> selecionarCurralPorEpc(String epc) async {
@@ -1295,11 +1554,19 @@ class FornecimentoDashboardController extends ChangeNotifier {
     if (id.isEmpty) return;
 
     CurralCardVM? found;
-    for (final c in _curraisAll) {
-      if (c.idFornecimento == id) {
-        found = c;
-        break;
+    if (id.contains("|")) {
+      for (final c in _curraisAll) {
+        if (c.chaveMapa == id) {
+          found = c;
+          break;
+        }
       }
+    } else {
+      final iguais = <CurralCardVM>[];
+      for (final c in _curraisAll) {
+        if (c.idFornecimento == id) iguais.add(c);
+      }
+      if (iguais.length == 1) found = iguais.first;
     }
     if (found == null) return;
 
@@ -1342,36 +1609,37 @@ class FornecimentoDashboardController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> iniciarCarregamento() async {
+  Future<void> iniciarCarregamento({
+    TrocaCurralRelogio? relogio,
+    int? geracao,
+  }) async {
     final h = _header;
-    var s = _selected;
+    final s = _selected;
     if (h == null || s == null) return;
-
-    s = await _hydrateCurral(s);
-    _selected = s;
 
     if (!h.tratoSelecionado) {
       setError("Selecione o trato antes de iniciar o fornecimento.");
       return;
     }
 
-    final trato = h.trato!;
-
     // se já está ativo no mesmo curral, não reinicia
     if (_sessaoAtiva &&
         _pesoInicial != null &&
         (_idCadastroAberto ?? "").trim().isNotEmpty &&
-        _selected?.idFornecimento == s.idFornecimento) {
+        _selected?.chaveMapa == s.chaveMapa) {
+      if (relogio != null) {
+        relogio.marcar("ja_ativo");
+        _logTroca(relogio);
+      }
       return;
     }
 
-    // evita double-start por spam / concorrência (aguarda em vez de abortar)
-    while (_startingSessao) {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
+    if (_startingSessao || _abrindoCadastro) return;
 
     final now = DateTime.now();
-    if (now.difference(_lastStartAt).inMilliseconds < 350) {
+    // Clique no mapa já é intencional — não atrasa 350ms (só anti-spam RFID).
+    if (_origemMapa != 1 &&
+        now.difference(_lastStartAt).inMilliseconds < 350) {
       await Future<void>.delayed(
         Duration(
           milliseconds: 350 - now.difference(_lastStartAt).inMilliseconds,
@@ -1385,53 +1653,141 @@ class FornecimentoDashboardController extends ChangeNotifier {
       return;
     }
 
-    _startingSessao = true;
+    final marcas = relogio ?? TrocaCurralRelogio(de: "", para: s.curralNome);
+    if (relogio == null) marcas.marcar("inicio");
+
+    final g = geracao ??
+        () {
+          final n = ++_geracaoTransicao;
+          _cancelarEsperaAncora();
+          _corteAncora = DateTime.now();
+          return n;
+        }();
+
     _lastStartAt = now;
+    _error = null;
+    _fase = FaseTrocaCurral.aguardandoPeso;
+    if (geracao == null) marcas.marcar("selecao");
+    _avisar();
+
+    unawaited(_abrirSessaoQuandoAncora(geracao: g, relogio: marcas));
+  }
+
+  Future<void> _abrirSessaoQuandoAncora({
+    required int geracao,
+    required TrocaCurralRelogio relogio,
+  }) async {
+    final h = _header;
+    final selecionado = _selected;
+    if (h == null || selecionado == null) return;
+    if (!h.tratoSelecionado) return;
+
+    final id = selecionado.chaveMapa;
+    final idUsuario = _currentUserId();
+    if (idUsuario.isEmpty) return;
+    final trato = h.trato!;
 
     try {
-      _setLoading(true);
-      _error = null;
+      final s = await _hydrateCurral(selecionado);
+      if (!_transicaoVigente(geracao, id)) return;
+      _selected = s;
+      relogio.marcar("hidratacao");
+      _avisar();
 
-      final pesoRef = await _awaitPesoBalanca();
-
-      // ✅ abre/recupera CADASTRO_FORNECIMENTO e guarda o idCadastro
-      final idCad = await _repo.iniciarCadastroFornecimento(
-        idFornecimento: s.idFornecimento,
-        idCurral: s.idBaia,
-        data: h.data,
-        trato: trato,
-        previstoKg: s.previstoFixoKg,
-        pesoInicio: pesoRef,
-        idUsuario: idUsuario,
+      final amostra = await _aguardarAmostraDaTroca(geracao, id);
+      if (amostra == null || !_amostraValida(amostra, geracao, id)) {
+        relogio.marcar("peso_cancelado");
+        _logTroca(relogio);
+        return;
+      }
+      relogio.marcar("peso_valido");
+      debugPrint(
+        "[FORN_TROCA] ancora_idade="
+        "${DateTime.now().difference(amostra.recebidaEm).inMilliseconds}ms "
+        "conexao=${amostra.conexaoId} geracao=$geracao",
       );
 
-      _idCadastroAberto = idCad;
-
-      _sessaoAtiva = true;
-      _sessaoIniciadaEm = DateTime.now();
-      _rebasePesoInicialFeito = false;
-
-      // Sempre ancora na leitura atual da balança (cadastro reutilizado pode ter peso antigo).
-      _pesoInicial = pesoRef;
-      if (idCad.trim().isNotEmpty) {
-        await _repo.rebasePesoInicioCadastroAberto(
-          idCadastro: idCad,
-          pesoInicio: pesoRef,
+      _abrindoCadastro = true;
+      _startingSessao = true;
+      _avisar();
+      try {
+        final idCad = await _repo.iniciarCadastroFornecimento(
+          idFornecimento: s.idFornecimento,
+          idCurral: s.idBaia,
+          data: h.data,
+          trato: trato,
+          previstoKg: s.previstoFixoKg,
+          pesoInicio: amostra.peso,
+          idUsuario: idUsuario,
         );
-      }
+        if (!_transicaoVigente(geracao, id)) {
+          await _descartarCadastroNaoAtivado(idCad);
+          relogio.marcar("cadastro_descartado");
+          _logTroca(relogio);
+          return;
+        }
+        relogio.marcar("cadastro");
+        _logRfidPerf("cadastro_opened", extra: idCad);
 
-      if (kDebugMode) {
-        debugPrint(
-          "[FORN_SESSAO] curral=${s.curralNome} pesoIni=$pesoRef pesoAtual=$_pesoAtual",
-        );
-      }
+        _idCadastroAberto = idCad;
+        _pesoInicial = amostra.peso;
+        _pesoAtual = amostra.peso;
+        if (idCad.trim().isNotEmpty) {
+          await _repo.rebasePesoInicioCadastroAberto(
+            idCadastro: idCad,
+            pesoInicio: amostra.peso,
+          );
+        }
+        if (!_transicaoVigente(geracao, id)) {
+          await _descartarCadastroNaoAtivado(idCad);
+          _idCadastroAberto = null;
+          _pesoInicial = null;
+          relogio.marcar("ancora_descartada");
+          _logTroca(relogio);
+          return;
+        }
 
-      _setLoading(false);
+        _sessaoAtiva = true;
+        _sessaoIniciadaEm = DateTime.now();
+        _rebasePesoInicialFeito = false;
+        _fase = FaseTrocaCurral.sessaoAtiva;
+        relogio.marcar("ancora");
+        relogio.marcar("painel");
+        _logTroca(relogio);
+        _logRfidPerf("peso_confirmed", extra: "${amostra.peso}");
+        if (kDebugMode) {
+          debugPrint(
+            "[FORN_SESSAO] curral=${s.curralNome} pesoIni=${amostra.peso}",
+          );
+        }
+      } finally {
+        _abrindoCadastro = false;
+        _startingSessao = false;
+        _avisar();
+      }
     } catch (e) {
-      setError(e.toString());
-    } finally {
+      _abrindoCadastro = false;
       _startingSessao = false;
+      if (_transicaoVigente(geracao, id)) {
+        _fase = FaseTrocaCurral.erroPeso;
+        setError(e.toString());
+      }
     }
+  }
+
+  Future<void> _descartarCadastroNaoAtivado(String idCad) async {
+    if (idCad.trim().isEmpty) return;
+    try {
+      await _repo.cancelarCadastroFornecimentoAberto(idCadastro: idCad);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("_descartarCadastroNaoAtivado: $e");
+      }
+    }
+  }
+
+  void _logTroca(TrocaCurralRelogio relogio) {
+    debugPrint(relogio.resumo());
   }
 
   void limparSessao() {
@@ -1441,6 +1797,52 @@ class FornecimentoDashboardController extends ChangeNotifier {
     _sessaoIniciadaEm = null;
     _rebasePesoInicialFeito = false;
     notifyListeners();
+  }
+
+  /// Soma o kg da sessão no card do mapa e nos totais (UI imediata).
+  /// Invalida reloads que já estavam em consulta.
+  void _aplicarRealizadoLocalNoMapa({
+    required String idFornecimento,
+    required String idBaia,
+    required double deltaKg,
+  }) {
+    if (deltaKg <= 0) return;
+    final id = idFornecimento.trim();
+    final baia = idBaia.trim();
+    if (id.isEmpty || baia.isEmpty) return;
+
+    _mapaReload.notarPatchLocal();
+
+    var changed = false;
+    _curraisAll = _curraisAll.map((c) {
+      if (c.idFornecimento != id || c.idBaia.trim() != baia) return c;
+      changed = true;
+      return c.copyWith(realizadoKg: c.realizadoKg + deltaKg);
+    }).toList();
+
+    if (!changed) return;
+
+    double tp = 0;
+    double tr = 0;
+    for (final c in _curraisAll) {
+      tp += c.previstoExibicaoKg;
+      tr += c.realizadoKg;
+    }
+    _totais = TotaisVM(totalPrevistoKg: tp, totalRealizadoKg: tr);
+  }
+
+  void _reloadMapaEmBackground(String idFazenda) {
+    final fazenda = idFazenda.trim();
+    if (fazenda.isEmpty) return;
+    unawaited(() async {
+      try {
+        await _reloadMapa(idFazenda: fazenda);
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint("_reloadMapaEmBackground: $e");
+        }
+      }
+    }());
   }
 
   Future<void> salvarFornecimento({required String idFazenda}) async {
@@ -1473,6 +1875,7 @@ class FornecimentoDashboardController extends ChangeNotifier {
     try {
       _setLoading(true);
       _error = null;
+      final swSave = Stopwatch()..start();
 
       final idUsuario = _currentUserId();
       if (idUsuario.isEmpty) {
@@ -1480,33 +1883,53 @@ class FornecimentoDashboardController extends ChangeNotifier {
         return;
       }
 
-      // ✅ Grava 1 linha em CADASTRO_FORNECIMENTO (kg da sessão).
-      // Mapa = realizado da API/TGC + sessões locais ainda não sincronizadas.
-      await _repo.salvarCadastroFinalizado(
-        idFornecimento: s.idFornecimento,
-        idCurral: s.idBaia,
-        data: h.data,
-        trato: trato,
-        previstoKg: s.previstoFixoKg,
-        pesoFim: _pesoAtual,
-        realizadoKg: fornecidoKg,
-        idUsuario: idUsuario,
-        idCadastroAberto: _idCadastroAberto,
-      );
+      // Persistência obrigatória (await) — não abre próximo sem isso.
+      // O corte congela o peso final: só amostra posterior pode ancorar o próximo.
+      final pesoFim = _pesoAtual;
+      final corteAnterior = _corteAncora;
+      _corteAncora = DateTime.now();
+      try {
+        await _repo.salvarCadastroFinalizado(
+          idFornecimento: s.idFornecimento,
+          idCurral: s.idBaia,
+          data: h.data,
+          trato: trato,
+          previstoKg: s.previstoFixoKg,
+          pesoFim: pesoFim,
+          realizadoKg: fornecidoKg,
+          idUsuario: idUsuario,
+          idCadastroAberto: _idCadastroAberto,
+        );
+      } catch (e) {
+        _corteAncora = corteAnterior;
+        rethrow;
+      }
+      if (kDebugMode) {
+        debugPrint(
+          "[FORN_SAVE] sqlite ${swSave.elapsedMilliseconds}ms "
+          "curral=${s.curralNome} kg=$fornecidoKg",
+        );
+      }
 
       _ultimo = UltimoFornecimentoVM(
         curralNome: s.curralNome,
         fornecidoKg: fornecidoKg,
       );
 
-      await _reloadMapa(idFazenda: idFazenda);
+      // UI rápida: patch local + libera loading; mapa completo em background.
+      _aplicarRealizadoLocalNoMapa(
+        idFornecimento: s.idFornecimento,
+        idBaia: s.idBaia,
+        deltaKg: fornecidoKg,
+      );
 
-      // ✅ encerra sessão + limpa seleção
       limparSessao();
       _selected = null;
       clearNotice();
-
       _setLoading(false);
+      notifyListeners();
+
+      _reloadMapaEmBackground(idFazenda);
     } catch (e) {
       setError(e.toString());
     }

@@ -238,3 +238,42 @@ CREATE TABLE IF NOT EXISTS request_logs (
 CREATE INDEX IF NOT EXISTS idx_request_logs_created ON request_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_request_logs_path ON request_logs (path);
 CREATE INDEX IF NOT EXISTS idx_request_logs_cliente ON request_logs (cliente_codigo);
+
+-- Modo Planilha
+CREATE TABLE IF NOT EXISTS planilha_importacoes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cliente_codigo TEXT NOT NULL REFERENCES clientes(codigo),
+  versao_layout INTEGER NOT NULL DEFAULT 1,
+  arquivo_nome TEXT,
+  arquivo_hash TEXT,
+  fazenda_codigo TEXT,
+  descricao TEXT,
+  status TEXT NOT NULL DEFAULT 'ok',
+  totais JSONB NOT NULL DEFAULT '{}'::jsonb,
+  erros JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_planilha_cliente_hash
+  ON planilha_importacoes (cliente_codigo, arquivo_hash)
+  WHERE arquivo_hash IS NOT NULL AND arquivo_hash <> '';
+
+CREATE INDEX IF NOT EXISTS idx_planilha_cliente_created
+  ON planilha_importacoes (cliente_codigo, created_at DESC);
+
+ALTER TABLE fornecimentos
+  ADD COLUMN IF NOT EXISTS id_cadastro TEXT;
+ALTER TABLE fornecimentos
+  ADD COLUMN IF NOT EXISTS importacao_id UUID;
+ALTER TABLE fornecimentos
+  ADD COLUMN IF NOT EXISTS peso_inicio DOUBLE PRECISION;
+ALTER TABLE fornecimentos
+  ADD COLUMN IF NOT EXISTS peso_fim DOUBLE PRECISION;
+
+ALTER TABLE fabricacoes
+  ADD COLUMN IF NOT EXISTS importacao_id UUID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_forn_cliente_id_cadastro
+  ON fornecimentos (cliente_codigo, id_cadastro)
+  WHERE id_cadastro IS NOT NULL AND id_cadastro <> '';
+

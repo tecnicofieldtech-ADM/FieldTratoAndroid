@@ -21,6 +21,7 @@ class _GravaTagPageState extends State<GravaTagPage> {
   final _nomeCtrl = TextEditingController();
 
   bool _loading = false;
+  bool _consultando = false;
   String _idFazenda = "";
   String _linhaSel = "";
   String _ultimoEpc = "";
@@ -75,7 +76,7 @@ class _GravaTagPageState extends State<GravaTagPage> {
   }
 
   Future<void> _onLimparTag(GravaTagCurral curral) async {
-    if (_curralLendoId != null) return;
+    if (_curralLendoId != null || _consultando) return;
 
     final tag = (curral.rfid ?? "").trim();
     if (tag.isEmpty) {
@@ -122,8 +123,72 @@ class _GravaTagPageState extends State<GravaTagPage> {
     }
   }
 
+  Future<void> _onConsultarTag() async {
+    if (_curralLendoId != null || _consultando) return;
+
+    final host = (await _cfg.getHostRfid()).trim();
+    final port = await _cfg.getPortaRfid();
+    if (!mounted) return;
+
+    if (host.isEmpty || port <= 0) {
+      _toast("Configure IP e porta do RFID antes de consultar a tag.");
+      return;
+    }
+
+    setState(() => _consultando = true);
+    try {
+      final epc = await showDialog<String?>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _ReadTagDialog(
+          host: host,
+          port: port,
+          titulo: "Consultar TAG",
+          acao: "Consultar",
+        ),
+      );
+
+      if (!mounted) return;
+      if (epc == null || epc.trim().isEmpty) return;
+
+      final epcNorm = epc.trim();
+      setState(() => _ultimoEpc = epcNorm);
+
+      final backend = await _cfg.getBackend();
+      final skipFazendaFilter = ConfigOptions.usesOpenApiLists(backend);
+      final filtroFazenda = skipFazendaFilter ? "" : _idFazenda;
+      final vinculo = await _repo.findCurralByEpc(
+        epcNorm,
+        idFazenda: filtroFazenda,
+      );
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text(vinculo == null ? "Tag sem curral" : "Tag vinculada"),
+          content: Text(
+            vinculo == null
+                ? "A tag $epcNorm não está vinculada a nenhum curral ativo."
+                : "A tag $epcNorm está no curral ${vinculo.nomeLocal}.",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Fechar"),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      _toast("Erro ao consultar tag: $e");
+    } finally {
+      if (mounted) setState(() => _consultando = false);
+    }
+  }
+
   Future<void> _onGravarTag(GravaTagCurral curral) async {
-    if (_curralLendoId != null) return;
+    if (_curralLendoId != null || _consultando) return;
 
     final host = (await _cfg.getHostRfid()).trim();
     final port = await _cfg.getPortaRfid();
@@ -168,13 +233,16 @@ class _GravaTagPageState extends State<GravaTagPage> {
       if (!mounted) return;
 
       if (vinculo != null && vinculo.id != curral.id) {
-        final linhaTxt = vinculo.linha.trim().isEmpty ? "-" : vinculo.linha;
+        final linhaTxt = vinculo.linha.trim();
+        final onde = linhaTxt.isEmpty
+            ? vinculo.nomeLocal
+            : "${vinculo.nomeLocal} (linha $linhaTxt)";
         await showDialog<void>(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text("EPC ja vinculado"),
             content: Text(
-              "O EPC $epcNorm ja esta vinculado ao curral ${vinculo.nomeLocal} (linha $linhaTxt).",
+              "O EPC $epcNorm ja esta vinculado ao curral $onde.",
             ),
             actions: [
               TextButton(
@@ -241,17 +309,38 @@ class _GravaTagPageState extends State<GravaTagPage> {
                 ),
               ],
             ),
+            if (_linhas.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _linhaSel,
+                items: linhasItems,
+                onChanged: (v) {
+                  setState(() => _linhaSel = (v ?? "").trim());
+                  unawaited(_carregarTudo());
+                },
+                decoration: const InputDecoration(
+                  labelText: "Filtrar por linha",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _linhaSel,
-              items: linhasItems,
-              onChanged: (v) {
-                setState(() => _linhaSel = (v ?? "").trim());
-                unawaited(_carregarTudo());
-              },
-              decoration: const InputDecoration(
-                labelText: "Filtrar por linha",
-                border: OutlineInputBorder(),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: (_loading || _curralLendoId != null || _consultando)
+                    ? null
+                    : _onConsultarTag,
+                icon: _consultando
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.nfc),
+                label: Text(
+                  _consultando ? "Lendo TAG..." : "Consultar TAG",
+                ),
               ),
             ),
             const SizedBox(height: 10),
@@ -283,7 +372,8 @@ class _GravaTagPageState extends State<GravaTagPage> {
                           itemBuilder: (_, i) {
                             final c = _currais[i];
                             final tag = (c.rfid ?? "").trim();
-                            final lendo = _curralLendoId == c.id;
+                            final lendoEste = _curralLendoId == c.id;
+                            final ocupado = lendoEste || _consultando;
 
                             return Container(
                               padding: const EdgeInsets.all(12),
@@ -301,11 +391,13 @@ class _GravaTagPageState extends State<GravaTagPage> {
                                       fontWeight: FontWeight.w800,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    "Linha: ${c.linha.isEmpty ? "-" : c.linha}",
-                                    style: const TextStyle(color: Colors.black54),
-                                  ),
+                                  if (c.linha.trim().isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      "Linha: ${c.linha}",
+                                      style: const TextStyle(color: Colors.black54),
+                                    ),
+                                  ],
                                   const SizedBox(height: 4),
                                   Text(
                                     "TAG vinculada: ${tag.isEmpty ? "(sem tag)" : tag}",
@@ -320,7 +412,7 @@ class _GravaTagPageState extends State<GravaTagPage> {
                                       if (tag.isNotEmpty) ...[
                                         Expanded(
                                           child: OutlinedButton.icon(
-                                            onPressed: lendo
+                                            onPressed: ocupado
                                                 ? null
                                                 : () => _onLimparTag(c),
                                             icon: const Icon(Icons.clear),
@@ -332,10 +424,10 @@ class _GravaTagPageState extends State<GravaTagPage> {
                                       Expanded(
                                         flex: tag.isNotEmpty ? 2 : 1,
                                         child: ElevatedButton.icon(
-                                          onPressed: lendo
+                                          onPressed: ocupado
                                               ? null
                                               : () => _onGravarTag(c),
-                                          icon: lendo
+                                          icon: lendoEste
                                               ? const SizedBox(
                                                   width: 16,
                                                   height: 16,
@@ -346,7 +438,7 @@ class _GravaTagPageState extends State<GravaTagPage> {
                                                 )
                                               : const Icon(Icons.nfc),
                                           label: Text(
-                                            lendo
+                                            lendoEste
                                                 ? "Lendo TAG..."
                                                 : tag.isEmpty
                                                     ? "Gravar TAG neste curral"
@@ -373,12 +465,16 @@ class _ReadTagDialog extends StatefulWidget {
   const _ReadTagDialog({
     required this.host,
     required this.port,
-    required this.curralNome,
+    this.curralNome,
+    this.titulo = "Leitura de TAG",
+    this.acao = "Usar esta tag",
   });
 
   final String host;
   final int port;
-  final String curralNome;
+  final String? curralNome;
+  final String titulo;
+  final String acao;
 
   @override
   State<_ReadTagDialog> createState() => _ReadTagDialogState();
@@ -484,14 +580,17 @@ class _ReadTagDialogState extends State<_ReadTagDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final curral = (widget.curralNome ?? "").trim();
     return AlertDialog(
-      title: const Text("Leitura de TAG"),
+      title: Text(widget.titulo),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("Curral: ${widget.curralNome}"),
-          const SizedBox(height: 10),
+          if (curral.isNotEmpty) ...[
+            Text("Curral: $curral"),
+            const SizedBox(height: 10),
+          ],
           Text(_status),
           const SizedBox(height: 10),
           Text(
@@ -516,7 +615,7 @@ class _ReadTagDialogState extends State<_ReadTagDialog> {
               _closing = true;
               Navigator.of(context).pop(_epc);
             },
-            child: const Text("Usar esta tag"),
+            child: Text(widget.acao),
           ),
       ],
     );

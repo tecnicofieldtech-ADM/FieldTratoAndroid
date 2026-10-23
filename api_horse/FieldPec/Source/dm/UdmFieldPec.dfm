@@ -286,7 +286,6 @@ object dmFieldPec: TdmFieldPec
       ' A.TAG_INICIO RFID,'
       ' '#39'0'#39' ID_FAZENDA'
       'FROM CURRAIS A  '
-      'JOIN LOTE_NUTRICIONAL L ON L.ID_LOCAL=A.ID'
       'WHERE A.STATUS=1'
       ''
       ''
@@ -829,7 +828,7 @@ object dmFieldPec: TdmFieldPec
         ' WHERE STATUS =1 and ID_LOCAL=A.ID_LOCAL AND ID_LOTE=A.ID_LOTE A' +
         'ND DATA_FORN=A.DATA_FORN)UltimoTrato'
       'FROM FORNECIMENTO_CONF A'
-      'WHERE STATUS =1 AND DATA_FORN =CURRENT_DATE) Forn')
+      'WHERE STATUS =1 AND CAST(A.DATA_FORN AS DATE) = :DATA_FORN) Forn')
     Left = 410
     Top = 190
   end

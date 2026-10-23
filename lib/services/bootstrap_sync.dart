@@ -166,6 +166,9 @@ class BootstrapSync {
     final api = await _apiFromCfg(cfg);
     final list = await api.getUsuarios(idFazenda);
 
+    final backend = int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
+    final isTgc = ConfigOptions.isTgcBackend(backend);
+
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("CADASTRO_USUARIO");
@@ -195,6 +198,11 @@ class BootstrapSync {
         final idFazFinal =
             idFazRec.isNotEmpty ? idFazRec : idFazenda.trim();
 
+        // TGC: OPERADOR ('1'/'0') identifica o operador de pá na fabricação.
+        final cargo = isTgc
+            ? _pickStr(m, ["operador", "cargo", "role"])
+            : _pickStr(m, ["cargo", "role", "operador"]);
+
         await txn.insert(
           "CADASTRO_USUARIO",
           {
@@ -202,7 +210,7 @@ class BootstrapSync {
             "NOME": _pickStr(m, ["nome", "name"]),
             "LOGIN": login,
             "SENHA": _pickStr(m, ["senha", "password", "pass"]),
-            "CARGO": _pickStr(m, ["cargo", "role", "operador"]),
+            "CARGO": cargo,
             "ID_FAZENDA": idFazFinal,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
@@ -222,6 +230,7 @@ class BootstrapSync {
     final db = await AppDb.instance.db;
     await db.transaction((txn) async {
       await txn.delete("DETALHES_BAIAS");
+      await txn.delete("CADASTRO_CURRAL");
       var inserted = 0;
       final samples = <String>[];
       for (final it in list) {
@@ -282,6 +291,15 @@ class BootstrapSync {
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await txn.insert(
+          "CADASTRO_CURRAL",
+          {
+            "ID": idBaia,
+            "NOME": nomeLocal,
+            "TAG": rfid,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
         inserted++;
         if (samples.length < 5) {
           samples.add("$idBaia|$idFazFinal|$nomeLocal");
@@ -318,7 +336,16 @@ class BootstrapSync {
 
         final nome = _pickStr(m, ["nomedieta", "nome_dieta", "dieta", "nome", "descricao"]);
         final tipo = _pickStr(m, ["tipodieta", "tipo_dieta", "tipo"]);
-        final ms = _toNum(m["msdieta"] ?? m["ms_dieta"] ?? m["ms"]);
+        // TGC/CGPec: MS_DIETA → ms_dieta / msDieta → msdieta apos normalize.
+        final ms = _pickNum(m, [
+          "ms_dieta",
+          "msdieta",
+          "ms",
+          "percentual_ms",
+          "percentualms",
+          "ms_percent",
+          "mspercent",
+        ]);
 
         final idFaz = _pickStr(m, [
           "idfazenda",
@@ -341,15 +368,25 @@ class BootstrapSync {
         );
         inserted++;
         if (samples.length < 5) {
-          samples.add("$id|$idFazFinal|$nome");
+          samples.add("$id|$idFazFinal|$nome|MS=$ms");
         }
       }
 
-      if (kDebugMode) {
-        debugPrint("[BOOT_DIETAS] inseridas=$inserted");
-        if (samples.isNotEmpty) {
-          debugPrint("[BOOT_DIETAS] amostra=${samples.join(" ; ")}");
-        }
+      final comMs = await txn.rawQuery(
+        "SELECT COUNT(*) AS qtd FROM DIETA WHERE COALESCE(MS,0) > 0 AND COALESCE(MS,0) <= 100",
+      );
+      final qtdMs = comMs.isNotEmpty
+          ? int.tryParse("${comMs.first["qtd"]}") ?? 0
+          : 0;
+      debugPrint(
+        "[BOOT_DIETAS] inseridas=$inserted com MS valida=$qtdMs "
+        "amostra=${samples.join(" ; ")}",
+      );
+      if (inserted > 0 && qtdMs == 0) {
+        debugPrint(
+          "[BOOT_DIETAS] AVISO: nenhuma dieta com MS>0. "
+          "Fornecimento TGC pode enviar MS=0 para a API resolver.",
+        );
       }
     });
   }
@@ -478,6 +515,7 @@ class BootstrapSync {
         int.tryParse((cfg["BACKEND"] ?? "0").toString()) ?? 0;
     final isFieldpec = ConfigOptions.isFieldPecBackend(backendCfg);
     final isTgc = ConfigOptions.isTgcBackend(backendCfg);
+    final isPlanilha = ConfigOptions.isPlanilhaBackend(backendCfg);
 
     log?.call("📥 Previsão (API): ${list.length} registros");
 
@@ -485,9 +523,10 @@ class BootstrapSync {
     int inserted = 0;
 
     // --- helper: lê realizado local antes de limpar (pra preservar) ---
-    Future<Map<String, double>> loadRealizadoLocalMap(Transaction txn) async {
-      // chave: "idFornecimento|idBaia|trato|data|idRacao"
-      final map = <String, double>{};
+    Future<({Map<String, double> byId, Map<String, double> byNatural})>
+        loadRealizadoLocalMap(Transaction txn) async {
+      final byId = <String, double>{};
+      final byNatural = <String, double>{};
 
       final rows = await txn.rawQuery("""
         SELECT
@@ -510,11 +549,14 @@ class BootstrapSync {
         final real = _toNum(r["realizado"]).toDouble();
 
         if (idB.isEmpty || d.isEmpty) continue;
-        final key = "$idF|$idB|$t|$d|$rac".toUpperCase();
-        if (real > 0) map[key] = real;
+        if (real <= 0) continue;
+        byId["$idF|$idB|$t|$d|$rac".toUpperCase()] = real;
+        final nat = "$idB|$t|$d|$rac".toUpperCase();
+        final prev = byNatural[nat] ?? 0;
+        if (real > prev) byNatural[nat] = real;
       }
 
-      return map;
+      return (byId: byId, byNatural: byNatural);
     }
 
     // --- helper: delete seletivo (dia/trato/ração) ---
@@ -637,7 +679,8 @@ class BootstrapSync {
         final hasDualPrevisao = previstoOriginalRaw > 0 &&
             previstoRecalculadoRaw > 0 &&
             (previstoOriginalRaw - previstoRecalculadoRaw).abs() > 0.01;
-        final fieldpecPrevisao = isFieldpec || isTgc || hasDualPrevisao;
+        final fieldpecPrevisao =
+            isFieldpec || isTgc || isPlanilha || hasDualPrevisao;
 
         final previstoOriginal = fieldpecPrevisao
             ? (previstoOriginalRaw > 0 ? previstoOriginalRaw : previstoLegacy)
@@ -688,8 +731,12 @@ class BootstrapSync {
         }
 
         // PREVISAO guarda só o acumulado vindo da API; mapa usa também CADASTRO local.
+        // Chave natural cobre previsto replicado (ID local 0 ou ID do dia anterior).
         final key = "$idFornecimento|$idBaia|$trato|$data|$idRacao".toUpperCase();
-        final localReal = realizadoLocal[key] ?? 0.0;
+        final keyNat = "$idBaia|$trato|$data|$idRacao".toUpperCase();
+        final localReal = realizadoLocal.byId[key] ??
+            realizadoLocal.byNatural[keyNat] ??
+            0.0;
         final realizadoFinal = apiRealizado > 0
             ? _mergeRealizadoPosDownload(
                 localReal: localReal,
@@ -751,6 +798,26 @@ class BootstrapSync {
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+
+        // Sessões locais ainda não sincronizadas: aponta para o ID de hoje no Field.
+        if (idFornecimento.isNotEmpty && idFornecimento != "0") {
+          await txn.rawUpdate(
+            """
+            UPDATE CADASTRO_FORNECIMENTO
+               SET ID_FORNECIMENTO = ?
+             WHERE substr(COALESCE(DATA,''), 1, 10) = ?
+               AND TRIM(COALESCE(ID_BAIA,'')) = TRIM(?)
+               AND TRATO = ?
+               AND IFNULL(FLAG_SYNC, 0) = 0
+               AND TRIM(COALESCE(ID_FORNECIMENTO,'')) <> TRIM(?)
+               AND (
+                 TRIM(COALESCE(ID_FORNECIMENTO,'')) IN ('', '0')
+                 OR TRIM(COALESCE(ID_DIETA,'')) = TRIM(?)
+               )
+            """,
+            [idFornecimento, data, idBaia, trato, idFornecimento, idRacao],
+          );
+        }
 
         inserted++;
       }

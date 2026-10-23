@@ -230,6 +230,7 @@
     <button type="button" data-tab="config">Configuração</button>
     <button type="button" data-tab="probe">Testar métodos</button>
     <button type="button" data-tab="data">Conferência</button>
+    <button type="button" data-tab="planilha">Planilha</button>
     <button type="button" data-tab="logs">Logs</button>
   </nav>
 
@@ -420,6 +421,56 @@
       </div>
     </section>
 
+    <section id="tab-planilha" class="tab hidden">
+      <div class="panel">
+        <h2>Modo Planilha</h2>
+        <p class="hint">
+          Baixe o template, preencha as abas e importe. O tablet FieldTrato sincroniza
+          pelos mesmos GETs/POSTs (backend <strong>Planilha</strong>).
+        </p>
+        <div class="row">
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" id="btnPlanilhaTemplate">Baixar template</button>
+          </div>
+          <div>
+            <label>Arquivo .xlsx</label>
+            <input id="planilhaFile" type="file" accept=".xlsx" />
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" class="primary" id="btnPlanilhaImport">Importar</button>
+          </div>
+          <div style="flex:0 0 auto">
+            <label>&nbsp;</label>
+            <button type="button" id="btnPlanilhaReload">Atualizar lista</button>
+          </div>
+        </div>
+        <div class="log-box" id="planilhaLog" style="margin-top:0.85rem">
+          <div class="log-title log-muted">Aguardando importação</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Importações</h2>
+        <p class="hint" id="planilhaAtiva">Nenhuma importação ativa neste cliente.</p>
+        <div style="overflow:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Fazenda</th>
+                <th>Status</th>
+                <th>Totais</th>
+                <th>Data</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="planilhaRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-logs" class="tab hidden">
       <div class="panel">
         <h2>Logs de requisição</h2>
@@ -470,7 +521,8 @@
       ["GET", "/vagao/get"],
       ["GET", "/admin/health"],
       ["GET", "/admin/stats"],
-      ["GET", "/admin/checklist"],
+      ["GET", "/planilha/template"],
+      ["GET", "/planilha/importacoes"],
     ];
 
     function selectedClientCode() {
@@ -697,6 +749,7 @@
         b.classList.toggle("active", b.dataset.tab === name);
       });
       if (name === "clientes") loadClientesSelect().catch(() => {});
+      if (name === "planilha") loadPlanilhas().catch(() => {});
     }
 
     document.querySelectorAll("nav button").forEach((b) => {
@@ -1034,6 +1087,108 @@
 
     document.getElementById("globalClientCode").onchange = () => {
       loadChecklist().catch(console.warn);
+      loadPlanilhas().catch(console.warn);
+    };
+
+    function showPlanilhaLog(html) {
+      const el = document.getElementById("planilhaLog");
+      if (el) el.innerHTML = html;
+    }
+
+    async function loadPlanilhas() {
+      const data = await api(withClientQuery("/planilha/importacoes"));
+      const ativa = data.ativa_id || "";
+      const hint = document.getElementById("planilhaAtiva");
+      if (hint) {
+        hint.textContent = ativa
+          ? "Importação ativa: " + ativa
+          : "Nenhuma importação ativa neste cliente.";
+      }
+      const tb = document.getElementById("planilhaRows");
+      if (!tb) return;
+      const rows = data.importacoes || [];
+      tb.innerHTML = rows.map((r) => {
+        const tot = r.totais && typeof r.totais === "object" ? r.totais : {};
+        const totTxt = Object.entries(tot).map(([k, v]) => k + "=" + v).join(", ");
+        return `<tr>
+          <td><code>${escHtml(String(r.id).slice(0, 8))}…</code></td>
+          <td>${escHtml(r.fazenda_codigo || "")}</td>
+          <td>${escHtml(r.status || "")}${r.id === ativa ? " · ativa" : ""}</td>
+          <td>${escHtml(totTxt)}</td>
+          <td>${fmtDt(r.created_at)}</td>
+          <td><button type="button" class="tiny" data-exp="${escHtml(r.id)}">Baixar resultado</button></td>
+        </tr>`;
+      }).join("") || "<tr><td colspan='6'>Nenhuma importação</td></tr>";
+      tb.querySelectorAll("[data-exp]").forEach((b) => {
+        b.onclick = () => downloadPlanilha("/planilha/exportar/" + b.dataset.exp).catch(alert);
+      });
+    }
+
+    async function downloadPlanilha(path) {
+      const cc = selectedClientCode();
+      const needsClient = /\/planilha\/(exportar|importacoes)\//.test(path);
+      if (needsClient && !cc) {
+        alert("Selecione o cliente no topo do painel.");
+        return;
+      }
+      const headers = {};
+      if (cc) headers["X-Client-Code"] = cc;
+      const r = await fetch(path, { headers });
+      if (!r.ok) throw new Error("Falha no download HTTP " + r.status);
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") || "";
+      const m = /filename="?([^"]+)"?/.exec(cd);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (m && m[1]) || "FieldTrato.xlsx";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    document.getElementById("btnPlanilhaTemplate").onclick = () =>
+      downloadPlanilha("/planilha/template").catch(alert);
+    document.getElementById("btnPlanilhaReload").onclick = () =>
+      loadPlanilhas().catch(alert);
+    document.getElementById("btnPlanilhaImport").onclick = async () => {
+      const input = document.getElementById("planilhaFile");
+      const file = input && input.files && input.files[0];
+      if (!file) {
+        alert("Selecione um arquivo .xlsx.");
+        return;
+      }
+      showPlanilhaLog('<div class="log-title">Importando…</div>');
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const cc = selectedClientCode();
+      const headers = {};
+      if (cc) headers["X-Client-Code"] = cc;
+      try {
+        const r = await fetch("/planilha/importar", { method: "POST", headers, body: fd });
+        const data = await r.json();
+        if (!r.ok || data.success === false) {
+          const errs = (data.erros || []).map((e) =>
+            (e.aba ? e.aba + " " : "") +
+            (e.linha ? "L" + e.linha + " " : "") +
+            (e.campo ? e.campo + ": " : "") +
+            (e.mensagem || ""),
+          );
+          showPlanilhaLog(
+            '<div class="log-title log-err">Importação recusada</div><ul>' +
+              errs.map((t) => "<li>" + escHtml(t) + "</li>").join("") +
+              "</ul>",
+          );
+          return;
+        }
+        showPlanilhaLog(
+          '<div class="log-title log-ok">Importação OK</div>' +
+            '<p>ID ' + escHtml(data.importacao_id) +
+            (data.reused ? " (arquivo já importado, reutilizado)" : "") +
+            "</p><pre>" + escHtml(JSON.stringify(data.totais || {}, null, 2)) + "</pre>",
+        );
+        await loadPlanilhas();
+      } catch (e) {
+        showPlanilhaLog('<div class="log-title log-err">' + escHtml(e.message) + "</div>");
+      }
     };
 
     Promise.all([loadClientesSelect(), loadChecklist(), loadConfig()])
